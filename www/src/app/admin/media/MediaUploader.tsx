@@ -2,13 +2,18 @@
 
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
-import { finishUpload, requestUpload } from "@/app/admin/_actions/shared";
+import { finishUpload, requestUpload, uploadMedia } from "@/app/admin/_actions/shared";
 import { Alert, Button, Input, Select } from "@/components/ui/form";
 
 const ACCEPT = "image/jpeg,image/png,image/webp,image/avif,image/gif,video/mp4,video/webm,audio/mpeg,audio/mp4,audio/x-m4a,audio/ogg,audio/wav,audio/x-wav,application/pdf";
 /** Browsers report a few types under legacy names; send the canonical one (the server checks the bytes anyway). */
 const CANONICAL: Record<string, string> = { "audio/x-m4a": "audio/mp4", "audio/m4a": "audio/mp4", "audio/x-wav": "audio/wav", "audio/wave": "audio/wav", "audio/mp3": "audio/mpeg" };
 const MAX_FILES = 20;
+/** Images up to this size can go through the site when the browser cannot reach R2 directly (server action limit 11 MB). */
+const RELAY_MAX_BYTES = 10 * 1024 * 1024;
+
+/** The browser could not talk to R2 at all: almost always a missing or wrong CORS policy on the bucket. */
+class DirectUploadBlocked extends Error {}
 
 async function sha256Hex(file: File): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
@@ -63,7 +68,7 @@ export function MediaUploader() {
         for (const [k, v] of Object.entries(intent.headers)) req.setRequestHeader(k, v);
         req.upload.onprogress = (ev) => ev.lengthComputable && update(item.key, { progress: Math.round((ev.loaded / ev.total) * 100) });
         req.onload = () => (req.status >= 200 && req.status < 300 ? resolve() : reject(new Error(`Upload failed (HTTP ${req.status}). Check the bucket's CORS policy.`)));
-        req.onerror = () => reject(new Error("Network error, or the bucket's CORS policy does not allow this site."));
+        req.onerror = () => reject(new DirectUploadBlocked(`The browser could not upload to Cloudflare R2: the bucket's CORS policy must allow PUT from ${window.location.origin} (docs/MEDIA.md, deploy/r2/cors.json).`));
         req.onabort = () => reject(new Error("Cancelled."));
         req.send(item.file);
       });
@@ -71,6 +76,16 @@ export function MediaUploader() {
       if (!done.ok) throw new Error(done.error);
       update(item.key, { state: "done", progress: 100 });
     } catch (err) {
+      // Images can still be uploaded through the site (it writes to R2 server-side, so CORS does not apply).
+      if (err instanceof DirectUploadBlocked && item.file.type.startsWith("image/") && item.file.size <= RELAY_MAX_BYTES && item.visibility === "public") {
+        const form = new FormData();
+        form.set("file", item.file);
+        form.set("alt", item.alt);
+        form.set("context", "library");
+        const relayed = await uploadMedia(form).catch(() => null);
+        if (relayed?.ok) return update(item.key, { state: "done", progress: 100 });
+        if (relayed && !relayed.ok) return update(item.key, { state: "error", error: relayed.error });
+      }
       update(item.key, { state: "error", error: (err as Error).message });
     } finally {
       current.current = null;

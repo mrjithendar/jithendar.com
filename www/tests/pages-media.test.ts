@@ -51,3 +51,18 @@ describe("attachment details", () => {
     expect(row).toMatchObject({ alt: "The team at a whiteboard", title: "Team", caption: "Planning, October", description: "Photo: our own" });
   });
 });
+
+describe("bundled posts added after setup", () => {
+  it("are listed until imported, and import as drafts", async () => {
+    vi.stubEnv("CONTENT_DIR", `${process.cwd()}/content`); // the real content/ folder, not the fixtures
+    const { bundledPostsNotImported, importBundledPost } = await import("@/lib/bundled-posts");
+    const before = await bundledPostsNotImported();
+    expect(before).toEqual(expect.arrayContaining([expect.objectContaining({ collection: "blog", slug: "roboshop-ai-microservices" })]));
+    const id = await importBundledPost(admin, "blog", "roboshop-ai-microservices");
+    const [row] = await db.select().from(schema.post);
+    expect(row).toMatchObject({ id, status: "draft", publishedAt: null, authorId: "admin" });
+    expect(row!.title).toMatch(/^Inside RoboShop AI/);
+    expect((await bundledPostsNotImported()).some((b) => b.slug === "roboshop-ai-microservices")).toBe(false);
+    await expect(importBundledPost(admin, "blog", "roboshop-ai-microservices")).rejects.toMatchObject({ status: 409 });
+  });
+});
