@@ -22,17 +22,18 @@ import { clearAutosave, getRevision, listRevisions, saveAutosave } from "@/lib/r
 
 export type SaveIntent = "save" | "publish" | "unpublish";
 export type SaveResult =
-  | { ok: true; id: string; version: number; status: string; savedAt: string; publishedAt: string | null; message: string }
+  | { ok: true; id: string; version: number; status: string; savedAt: string; publishedAt: string | null; message: string; warnings?: string[] }
   | { ok: false; error: string; issues?: string[]; conflict?: { version: number; savedAt: string } };
 
-const ok = (row: PostRow, message: string): SaveResult => ({
+const ok = (row: PostRow & { warnings?: string[] }, message: string): SaveResult => ({
   ok: true,
   id: row.id,
   version: row.version,
   status: row.status,
   savedAt: row.savedAt.toISOString(),
   publishedAt: row.publishedAt?.toISOString() ?? null,
-  message,
+  message: row.warnings?.length ? `${message} ${row.warnings.length} thing(s) to fix before publishing.` : message,
+  ...(row.warnings?.length ? { warnings: row.warnings } : {}),
 });
 
 function failure(error: unknown): SaveResult {
@@ -50,7 +51,7 @@ export async function savePostAction(id: string | null, data: PostFormValue, int
   try {
     const actor = await editorActor();
     if (!id) {
-      const created = await createPost(actor, { ...data, status: data.status === "published" || data.status === "scheduled" ? "draft" : data.status });
+      const created = await createPost(actor, { ...data, status: data.status === "published" || data.status === "scheduled" ? "draft" : data.status }, { incompleteDrafts: true });
       if (intent !== "publish") return ok(created, "Draft saved.");
       const row = await publishPost(actor, created.id, { ...data }, { baseVersion: created.version });
       return ok(row, row.status === "scheduled" ? "Scheduled." : "Published.");
@@ -60,11 +61,11 @@ export async function savePostAction(id: string | null, data: PostFormValue, int
       return ok(row, row.status === "scheduled" ? "Scheduled." : "Published.");
     }
     if (intent === "unpublish") {
-      const row = await updatePost(actor, id, { ...data, status: "draft" }, { baseVersion, reason: "unpublish" });
+      const row = await updatePost(actor, id, { ...data, status: "draft" }, { baseVersion, reason: "unpublish", incompleteDrafts: true });
       return ok(row, "Switched to draft. It is no longer public.");
     }
     // Saving a scheduled or published post keeps its status (Update); drafts stay drafts.
-    const row = await updatePost(actor, id, data, { baseVersion });
+    const row = await updatePost(actor, id, data, { baseVersion, incompleteDrafts: true });
     return ok(row, row.status === "published" ? "Updated." : row.status === "scheduled" ? "Saved. Still scheduled." : "Draft saved.");
   } catch (error) {
     return failure(error);

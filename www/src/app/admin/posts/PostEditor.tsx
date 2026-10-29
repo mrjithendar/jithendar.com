@@ -96,6 +96,8 @@ export function PostEditor({
   const [substantive, setSubstantive] = useState(false);
   const [state, setState] = useState<SaveState>({ kind: "saved" });
   const [issues, setIssues] = useState<string[]>([]);
+  /** A draft was saved but is not ready to publish yet. */
+  const [todo, setTodo] = useState<string[]>([]);
   const [conflict, setConflict] = useState<{ version: number; savedAt: string } | null>(null);
   const [recovery, setRecovery] = useState<Autosaved>(() => (autosaved && !same(autosaved.value, initial) ? autosaved : null));
   const [localDismissed, setLocalDismissed] = useState(false);
@@ -180,6 +182,7 @@ export function PostEditor({
       busy.current = true;
       setState({ kind: "saving" });
       setIssues([]);
+      setTodo([]);
       const payload: PostFormValue = {
         ...current,
         updatedAt: substantive && isLive ? new Date().toISOString() : current.updatedAt,
@@ -206,6 +209,7 @@ export function PostEditor({
       } catch {
         /* ignore */
       }
+      setTodo(r.warnings ?? []);
       setState({ kind: "saved", at: r.savedAt, message: r.message });
       if (!id) router.replace(`/admin/posts/${r.id}`);
     },
@@ -303,6 +307,12 @@ export function PostEditor({
           {issues.length > 0 && (
             <Alert>
               <ul className="list-disc pl-5">{issues.map((i) => <li key={i}>{i}</li>)}</ul>
+            </Alert>
+          )}
+          {todo.length > 0 && issues.length === 0 && (
+            <Alert tone="info">
+              <p className="font-semibold">Draft saved. Fix these before publishing:</p>
+              <ul className="mt-1 list-disc pl-5">{todo.map((i) => <li key={i}>{i}</li>)}</ul>
             </Alert>
           )}
           {isLive && dirty && <p className="text-sm text-amber-700 dark:text-amber-300">Changes are not public until you click Update.</p>}

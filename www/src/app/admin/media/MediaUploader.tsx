@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { finishUpload, requestUpload, uploadMedia } from "@/app/admin/_actions/shared";
 import { Alert, Button, Input, Select } from "@/components/ui/form";
 
@@ -109,6 +109,22 @@ export function MediaUploader() {
     router.refresh();
   }
 
+  // Paste anywhere on the page (Cmd/Ctrl+V): copied files or a screenshot join the upload list.
+  const addRef = useRef(add);
+  useEffect(() => {
+    addRef.current = add;
+  });
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const files = e.clipboardData?.files;
+      if (!files?.length || busy) return;
+      e.preventDefault();
+      addRef.current(files);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [busy]);
+
   const pending = queue.filter((x) => x.state === "ready" || x.state === "error").length;
 
   return (
@@ -126,11 +142,11 @@ export function MediaUploader() {
         }}
         className={`flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors ${over ? "border-accent bg-accent-soft" : "border-line-strong"}`}
       >
-        <p className="text-base font-semibold text-fg">Drop files to upload</p>
+        <p className="text-base font-semibold text-fg">Drop or paste files to upload</p>
         <p className="text-sm text-fg-subtle">or</p>
         <Button type="button" variant="secondary" onClick={() => input.current?.click()} disabled={busy}>Select files</Button>
         <input ref={input} type="file" multiple accept={ACCEPT} className="sr-only" tabIndex={-1} aria-hidden="true" onChange={(e) => { if (e.target.files?.length) add(e.target.files); e.target.value = ""; }} />
-        <p className="mt-1 text-xs text-fg-subtle">Images up to 10 MB · MP4/WebM up to 200 MB · MP3/M4A/Ogg/WAV up to 50 MB · PDF up to 20 MB · up to {MAX_FILES} at a time.</p>
+        <p className="mt-1 text-xs text-fg-subtle">Paste a screenshot or copied files with ⌘V / Ctrl+V anywhere on this page. Images up to 10 MB · MP4/WebM up to 200 MB · MP3/M4A/Ogg/WAV up to 50 MB · PDF up to 20 MB · up to {MAX_FILES} at a time.</p>
       </div>
       {notice && <Alert tone="info">{notice}</Alert>}
 

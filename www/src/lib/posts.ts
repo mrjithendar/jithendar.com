@@ -67,8 +67,15 @@ async function authorSlugFor(userId: string): Promise<string> {
   return p.slug;
 }
 
-/** Validate with the exact schema the public site reads with, plus database-level checks. */
-async function validate(input: ParsedInput, authorId: string, selfId?: string) {
+/** Problems that block even a draft: the URL and dangerous links. Everything else only blocks publishing. */
+const BLOCKS_DRAFTS = /^slug|uses a scheme that is not allowed/;
+
+/**
+ * Validate with the exact schema the public site reads with, plus database-level checks.
+ * With `incompleteDrafts` (the admin editor), drafts are saved even when incomplete, like WordPress: their
+ * problems come back as `warnings` and are enforced at review, scheduling or publishing. The API stays strict.
+ */
+async function validate(input: ParsedInput, authorId: string, selfId?: string, incompleteDrafts = false) {
   const author = await authorSlugFor(authorId);
   // `collection` and `body` are stored on the row but are not frontmatter fields (the schema is strict).
   const { collection: _collection, body: _body, ...frontmatter } = input;
@@ -105,13 +112,35 @@ async function validate(input: ParsedInput, authorId: string, selfId?: string) {
     const db = await getDb();
     const rows = await db.select({ collection: schema.post.collection, slug: schema.post.slug, id: schema.post.id }).from(schema.post);
     const known = new Set(rows.filter((r) => r.id !== selfId).map((r) => `${r.collection}/${r.slug}`));
-    for (const ref of input.related) if (!known.has(ref)) issues.push(`related: "${ref}" does not exist`);
+    // Posts still waiting in content/ (not imported yet, see Admin → Posts) are valid targets too; readers only
+    // ever see related posts that are published.
+    if (input.related.some((ref) => !known.has(ref))) {
+      try {
+        const { contentRoot, loadContent } = await import("./content/load");
+        for (const a of loadContent(contentRoot()).articles) known.add(`${a.collection}/${a.slug}`);
+      } catch {
+        /* bundled content unavailable: only database posts count */
+      }
+    }
+    const self = selfId ? rows.find((r) => r.id === selfId) : undefined;
+    for (const ref of input.related) {
+      if (self && ref === `${self.collection}/${self.slug}`) issues.push("related: a post cannot be related to itself");
+      else if (!known.has(ref)) issues.push(`related: "${ref}" does not exist (check the spelling, or remove it under Related posts)`);
+    }
   }
-  if (issues.length > 0) throw new PostError("The post is not valid.", 400, issues);
-  return result.success ? result.data : undefined;
+  const draft = incompleteDrafts && input.status === "draft";
+  const blocking = draft ? issues.filter((i) => BLOCKS_DRAFTS.test(i)) : issues;
+  if (blocking.length > 0) throw new PostError(draft ? "This draft cannot be saved." : "The post is not valid.", 400, blocking);
+  if (result.success) return { data: result.data, warnings: issues };
+  // An incomplete draft: store what the author typed (the public site never reads drafts).
+  const partial = { ...input, author, canonicalUrl: input.canonicalUrl || undefined, featuredImage: input.featuredImage ?? undefined, sponsor: input.sponsor || undefined, socialImage: input.socialImage ?? undefined };
+  return { data: partial as unknown as NonNullable<typeof result.data>, warnings: issues };
 }
 
-function toRow(input: ParsedInput, data: NonNullable<Awaited<ReturnType<typeof validate>>>) {
+/** A saved post, plus what still has to be fixed before it can be published (drafts only). */
+export type SavedPost = PostRow & { warnings?: string[] };
+
+function toRow(input: ParsedInput, data: Awaited<ReturnType<typeof validate>>["data"]) {
   return {
     collection: input.collection,
     slug: data.slug,
@@ -208,17 +237,17 @@ export async function listPosts(actor: Actor, filter: { status?: string; collect
     .offset(filter.offset ?? 0);
 }
 
-export async function createPost(actor: Actor, raw: unknown): Promise<PostRow> {
+export async function createPost(actor: Actor, raw: unknown, opts: { incompleteDrafts?: boolean } = {}): Promise<SavedPost> {
   if (actor.role === "user") throw new PostError("Not allowed.", 403);
   const input = postInput.parse(raw);
-  const data = (await validate(input, actor.id))!;
+  const { data, warnings } = await validate(input, actor.id, undefined, opts.incompleteDrafts);
   const db = await getDb();
   try {
     const [row] = await db.insert(schema.post).values({ ...toRow(input, data), authorId: actor.id }).returning();
     await recordRevision(db, "post", row!.id, row!.version, "create", snapshot(row!), actor.id);
     await audit(actor, "post.create", row!.id, { slug: row!.slug, status: row!.status });
     await afterChange(null, row!);
-    return row!;
+    return Object.assign(row!, { warnings });
   } catch (error) {
     if (uniqueViolation(error)) throw new PostError(`A ${input.collection} post with slug "${data.slug}" already exists.`, 409);
     throw error;
@@ -242,7 +271,7 @@ const snapshot = (row: PostRow) => {
  * Partial update: fields not supplied keep their current values. With `baseVersion`, the save only
  * succeeds if nobody committed since the editor loaded that version (optimistic concurrency).
  */
-export async function updatePost(actor: Actor, id: string, patch: unknown, opts: { baseVersion?: number; reason?: string } = {}): Promise<PostRow> {
+export async function updatePost(actor: Actor, id: string, patch: unknown, opts: { baseVersion?: number; reason?: string; incompleteDrafts?: boolean } = {}): Promise<SavedPost> {
   const current = await getPostRow(actor, id);
   if (current.deletedAt) throw new PostError("This post is in the trash. Restore it first.", 409);
   if (opts.baseVersion !== undefined && opts.baseVersion !== current.version) throw new ConflictError({ version: current.version, savedAt: current.savedAt.toISOString() });
@@ -253,7 +282,7 @@ export async function updatePost(actor: Actor, id: string, patch: unknown, opts:
     updatedAt: iso(current.updatedAt),
     ...(typeof patch === "object" && patch ? patch : {}),
   });
-  const data = (await validate(merged, current.authorId, id))!;
+  const { data, warnings } = await validate(merged, current.authorId, id, opts.incompleteDrafts);
   const db = await getDb();
   try {
     const [row] = await db
@@ -272,7 +301,7 @@ export async function updatePost(actor: Actor, id: string, patch: unknown, opts:
     await clearAutosave(actor, "post", id);
     await audit(actor, "post.update", id, { slug: row.slug, status: row.status, version: row.version });
     await afterChange(current, row);
-    return row;
+    return Object.assign(row, { warnings });
   } catch (error) {
     if (uniqueViolation(error)) throw new PostError(`A ${merged.collection} post with slug "${data.slug}" already exists.`, 409);
     throw error;

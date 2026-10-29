@@ -7,6 +7,7 @@ import { EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor, useEd
 import { BubbleMenu } from "@tiptap/react/menus";
 import { Markdown } from "@tiptap/markdown";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { uploadMedia } from "@/app/admin/_actions/shared";
 import { Alert, Button, Field, Input, Select, Textarea } from "@/components/ui/form";
 import { editorExtensions, fidelity, isSafeUrl, ProtectedBlock } from "@/lib/editor/markdown";
 import { embedUrl } from "@/lib/mdx/shortcodes";
@@ -237,7 +238,7 @@ function Tool({ label, active, onClick, children, disabled }: { label: string; a
 const LANGUAGES = ["", "bash", "shell", "ts", "tsx", "js", "jsx", "json", "yaml", "python", "go", "java", "rust", "sql", "dockerfile", "hcl", "toml", "html", "css", "diff", "text"];
 const Sep = () => <span className="mx-1 h-5 w-px shrink-0 bg-slate-200 dark:bg-white/10" aria-hidden="true" />;
 
-function Toolbar({ editor, onInsert, onLink, onImageAlt }: { editor: Editor; onInsert: () => void; onLink: () => void; onImageAlt: () => void }) {
+function Toolbar({ editor, onInsert, onLink, onImage, onImageAlt }: { editor: Editor; onInsert: () => void; onLink: () => void; onImage: () => void; onImageAlt: () => void }) {
   const s = useEditorState({
     editor,
     selector: ({ editor: e }) => ({
@@ -260,7 +261,7 @@ function Toolbar({ editor, onInsert, onLink, onImageAlt }: { editor: Editor; onI
   });
   const c = () => editor.chain().focus();
   return (
-    <div role="toolbar" aria-label="Formatting" className="flex items-center gap-0.5 overflow-x-auto [scrollbar-width:thin]">
+    <div role="toolbar" aria-label="Formatting" className="flex flex-wrap items-center gap-0.5">
       <Tool label="Insert block (or type / )" onClick={onInsert}>＋</Tool>
       <select
         aria-label="Block type"
@@ -281,6 +282,7 @@ function Toolbar({ editor, onInsert, onLink, onImageAlt }: { editor: Editor; onI
       <Tool label="Strikethrough" active={s.strike} onClick={() => c().toggleStrike().run()}><s>S</s></Tool>
       <Tool label="Inline code (Ctrl/⌘ E)" active={s.code} onClick={() => c().toggleCode().run()}>{"</>"}</Tool>
       <Tool label="Link (Ctrl/⌘ K)" active={s.link} onClick={onLink}>🔗</Tool>
+      <Tool label="Image: choose, upload or generate (you can also paste or drop one)" onClick={onImage}>🖼</Tool>
       <Sep />
       <Tool label="Bulleted list" active={s.bullet} onClick={() => c().toggleBulletList().run()}>•</Tool>
       <Tool label="Numbered list" active={s.ordered} onClick={() => c().toggleOrderedList().run()}>1.</Tool>
@@ -320,6 +322,27 @@ type Mode = "visual" | "source";
  * Visual block editor over Markdown (the stored format). Opens in source mode when the visual editor
  * could not represent the document exactly (see lib/editor/markdown.ts), and asks before switching.
  */
+const PASTABLE = new Set(["image/jpeg", "image/png", "image/webp", "image/avif", "image/gif"]);
+const MAX_PASTE_BYTES = 10 * 1024 * 1024;
+
+/** The first image among pasted or dropped files (screenshots paste as "image.png"). */
+function imageFrom(files: FileList | null | undefined): File | null {
+  return [...(files ?? [])].find((f) => PASTABLE.has(f.type)) ?? null;
+}
+
+/** "Screenshot 2026-10-29 at 10.15.png" → "Screenshot 2026 10 29 at 10.15": a starting point the author should improve. */
+function altFromName(name: string): string {
+  const base = name.replace(/\.[a-z0-9]+$/i, "").replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+  return /^image$/i.test(base) ? "" : base;
+}
+
+async function pixelSize(url: string): Promise<{ width: number; height: number }> {
+  const img = new Image();
+  img.src = url;
+  await img.decode().catch(() => undefined);
+  return { width: img.naturalWidth, height: img.naturalHeight };
+}
+
 export function BlockEditor({
   value,
   onChange,
@@ -338,7 +361,9 @@ export function BlockEditor({
   const [mode, setMode] = useState<Mode>(check.lossless ? "visual" : "source");
   const [picker, setPicker] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [imageDialog, setImageDialog] = useState<{ src: string; alt: string; width: number; height: number } | null>(null);
+  /** `file` is set for a pasted or dropped image: it is uploaded (with the alt text) when the author clicks Insert. */
+  const [imageDialog, setImageDialog] = useState<{ src: string; alt: string; width: number; height: number; file?: File } | null>(null);
+  const [pasteError, setPasteError] = useState<string | null>(null);
   const [ask, setAsk] = useState<(AskRequest & { values: Record<string, string>; error?: string }) | null>(null);
   const [slash, setSlash] = useState<{ query: string; index: number; from: number } | null>(null);
   const [inserter, setInserter] = useState(false);
@@ -347,6 +372,39 @@ export function BlockEditor({
   useEffect(() => {
     slashRef.current = slash;
   }, [slash]);
+
+  /** A pasted or dropped image: preview it locally, ask for alt text, upload on Insert. */
+  async function openPasted(file: File) {
+    setPasteError(null);
+    if (file.size > MAX_PASTE_BYTES) return setPasteError("Images must be 10 MB or smaller.");
+    const src = URL.createObjectURL(file);
+    const { width, height } = await pixelSize(src);
+    setImageDialog({ src, alt: altFromName(file.name), width, height, file });
+  }
+  const openPastedRef = useRef(openPasted);
+  useEffect(() => {
+    openPastedRef.current = openPasted;
+  });
+
+  function closeImageDialog() {
+    if (imageDialog?.file) URL.revokeObjectURL(imageDialog.src);
+    setImageDialog(null);
+  }
+
+  async function confirmImage(img: { src: string; alt: string; caption: string; align: string; size: string }): Promise<string | null> {
+    if (imageDialog?.file) {
+      const form = new FormData();
+      form.set("file", imageDialog.file);
+      form.set("alt", img.alt);
+      form.set("context", mediaContext);
+      const r = await uploadMedia(form).catch(() => null);
+      if (!r) return "Upload failed. Check your connection and try again.";
+      if (!r.ok) return r.error;
+      insertImage({ ...img, src: r.src });
+    } else insertImage(img);
+    closeImageDialog();
+    return null;
+  }
 
   const ui: InserterUi = { pickImage: () => setPicker(true), ask: (q) => setAsk({ ...q, values: {} }) };
   const uiRef = useRef(ui);
@@ -367,6 +425,24 @@ export function BlockEditor({
     content: check.lossless ? value : "",
     contentType: "markdown",
     editorProps: {
+      // Paste a screenshot or copied image, or drop an image file: upload it to the media library (after the
+      // alt-text step) instead of letting the browser embed a data: URL the site would reject.
+      handlePaste: (_view, event) => {
+        const file = imageFrom(event.clipboardData?.files);
+        if (!file) return false;
+        event.preventDefault();
+        void openPastedRef.current(file);
+        return true;
+      },
+      handleDrop: (view, event, _slice, moved) => {
+        const file = moved ? null : imageFrom(event.dataTransfer?.files);
+        if (!file) return false;
+        event.preventDefault();
+        const at = view.posAtCoords({ left: event.clientX, top: event.clientY });
+        if (at) view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(at.pos))));
+        void openPastedRef.current(file);
+        return true;
+      },
       attributes: {
         class: "prose prose-slate max-w-none min-h-[420px] px-4 py-4 sm:px-6 sm:py-5 focus:outline-none dark:prose-invert",
         "aria-label": "Post content",
@@ -464,6 +540,11 @@ export function BlockEditor({
           </Alert>
         </div>
       )}
+      {pasteError && (
+        <div className="mb-3">
+          <Alert>{pasteError}</Alert>
+        </div>
+      )}
       <div className="rounded-xl border border-line bg-surface">
         <div className="z-10 flex flex-wrap items-center gap-2 rounded-t-xl border-b border-line bg-surface px-2 py-1.5 transition-[top] duration-200 motion-reduce:transition-none sm:sticky sm:top-[calc(var(--spacing-header)+var(--editor-bar,3.8rem))] [[data-editor-focus]_&]:sm:top-[var(--editor-bar,3.8rem)]">
           <div role="tablist" aria-label="Editing mode" className="flex shrink-0 rounded-lg bg-surface-sunken p-0.5">
@@ -475,7 +556,7 @@ export function BlockEditor({
             ))}
           </div>
           <div className="min-w-0 flex-1">
-            {mode === "visual" && editor && <Toolbar editor={editor} onInsert={() => setInserter(true)} onLink={setLink} onImageAlt={setImageAlt} />}
+            {mode === "visual" && editor && <Toolbar editor={editor} onInsert={() => setInserter(true)} onLink={setLink} onImage={() => setPicker(true)} onImageAlt={setImageAlt} />}
             {mode === "source" && (
               <div className="flex gap-1">
                 <Tool label="Insert image" onClick={() => setPicker(true)}>🖼</Tool>
@@ -514,6 +595,8 @@ export function BlockEditor({
         )}
         {mode === "source" && (
           <textarea value={value} onChange={(e) => { latest.current = e.target.value; onChange(e.target.value); }} spellCheck aria-label="Markdown source"
+            onPaste={(e) => { const f = imageFrom(e.clipboardData.files); if (f) { e.preventDefault(); void openPasted(f); } }}
+            onDrop={(e) => { const f = imageFrom(e.dataTransfer.files); if (f) { e.preventDefault(); void openPasted(f); } }}
             className="block min-h-[420px] w-full resize-y bg-transparent px-4 py-4 font-mono text-sm leading-6 text-ink focus:outline-none sm:px-6 sm:py-5 dark:text-slate-100" />
         )}
 
@@ -535,7 +618,7 @@ export function BlockEditor({
           options={generate} replacing={false} acceptLabel="Insert image"
           onAccept={(img) => { setGenerating(false); setImageDialog({ src: img.src, alt: img.alt, width: img.width, height: img.height }); }} />
       )}
-      {imageDialog && <ImageDialog image={imageDialog} onClose={() => setImageDialog(null)} onInsert={(img) => { insertImage(img); setImageDialog(null); }} />}
+      {imageDialog && <ImageDialog image={imageDialog} uploading={Boolean(imageDialog.file)} onClose={closeImageDialog} onInsert={confirmImage} />}
 
       {ask && (
         <Dialog open onClose={() => setAsk(null)} title={ask.title} size="md"
@@ -581,15 +664,26 @@ function InserterDialog({ open, onClose, onPick }: { open: boolean; onClose: () 
   );
 }
 
-function ImageDialog({ image, onClose, onInsert }: { image: { src: string; alt: string; width: number; height: number }; onClose: () => void; onInsert: (v: { src: string; alt: string; caption: string; align: string; size: string }) => void }) {
+function ImageDialog({ image, uploading = false, onClose, onInsert }: {
+  image: { src: string; alt: string; width: number; height: number };
+  /** The image is a pasted/dropped file that is uploaded on Insert. */
+  uploading?: boolean;
+  onClose: () => void;
+  /** Resolves to an error message, or null when the image was inserted. */
+  onInsert: (v: { src: string; alt: string; caption: string; align: string; size: string }) => Promise<string | null>;
+}) {
   const [alt, setAlt] = useState(image.alt);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [caption, setCaption] = useState("");
   const [align, setAlign] = useState("center");
   const [size, setSize] = useState("large");
   return (
     <Dialog open onClose={onClose} title="Image details" size="md"
-      footer={<div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="button" disabled={!alt.trim()} onClick={() => onInsert({ src: image.src, alt: alt.trim(), caption: caption.trim(), align, size })}>Insert</Button></div>}>
+      footer={<div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="button" loading={busy} disabled={!alt.trim()} onClick={async () => { setBusy(true); setError(await onInsert({ src: image.src, alt: alt.trim(), caption: caption.trim(), align, size })); setBusy(false); }}>{busy ? "Uploading…" : uploading ? "Upload and insert" : "Insert"}</Button></div>}>
       <div className="space-y-4">
+        {error && <Alert>{error}</Alert>}
+        {uploading && <p className="text-sm text-fg-muted">Pasted image: it is added to the media library when you insert it.</p>}
         {/* eslint-disable-next-line @next/next/no-img-element -- editor preview */}
         <img src={image.src} alt="" width={image.width || undefined} height={image.height || undefined} className={`mx-auto h-auto rounded-lg border border-line ${size === "small" ? "max-w-[40%]" : size === "medium" ? "max-w-[70%]" : "w-full"}`} />
         <Field label="Alt text" htmlFor="img-alt" hint="Required. Describe what the image shows."><Input id="img-alt" value={alt} onChange={(e) => setAlt(e.target.value)} maxLength={300} data-autofocus /></Field>

@@ -72,8 +72,11 @@ describe("post service", () => {
   });
 
   it("reports invalid fields, duplicate slugs and unknown categories clearly", async () => {
-    await expect(createPost(admin, { ...valid, title: "Short" })).rejects.toMatchObject({ issues: expect.arrayContaining([expect.stringMatching(/^title:/)]) });
-    await expect(createPost(admin, { ...valid, category: "gardening" })).rejects.toMatchObject({ issues: expect.arrayContaining([expect.stringMatching(/category/)]) });
+    // Enforced for the API and from review onwards; an editor draft is saved and gets the same messages as warnings.
+    await expect(createPost(admin, { ...valid, title: "Short" })).rejects.toMatchObject({ status: 400 });
+    await expect(createPost(admin, { ...valid, status: "review", title: "Short" }, { incompleteDrafts: true })).rejects.toMatchObject({ issues: expect.arrayContaining([expect.stringMatching(/^title:/)]) });
+    await expect(createPost(admin, { ...valid, status: "review", category: "gardening" })).rejects.toMatchObject({ issues: expect.arrayContaining([expect.stringMatching(/category/)]) });
+    expect((await createPost(admin, { ...valid, slug: "short-draft", title: "Short" }, { incompleteDrafts: true })).warnings).toEqual(expect.arrayContaining([expect.stringMatching(/^title:/)]));
     await createPost(admin, valid);
     await expect(createPost(admin, valid)).rejects.toMatchObject({ status: 409 });
   });
@@ -85,5 +88,26 @@ describe("post service", () => {
     expect(r?.toPath).toBe("/blog/a-renamed-post");
     await deletePost(admin, p.id);
     expect(await db.select().from(schema.post)).toHaveLength(0);
+  });
+});
+
+describe("drafts and related posts", () => {
+  it("saves an incomplete draft with warnings, but refuses to publish it", async () => {
+    const { createPost, publishPost } = await import("@/lib/posts");
+    const draft = await createPost(admin, { ...valid, slug: "half-written", description: "Too short", related: ["blog/no-such-post"] }, { incompleteDrafts: true });
+    expect(draft.status).toBe("draft");
+    expect(draft.warnings).toEqual(expect.arrayContaining([expect.stringMatching(/^description/), expect.stringMatching(/related: "blog\/no-such-post" does not exist/)]));
+    await expect(publishPost(admin, draft.id, {})).rejects.toMatchObject({ status: 400, issues: expect.arrayContaining([expect.stringMatching(/^description/)]) });
+    // The URL and unsafe links block even a draft.
+    await expect(createPost(admin, { ...valid, slug: "Not A Slug!" }, { incompleteDrafts: true })).rejects.toMatchObject({ issues: [expect.stringMatching(/^slug/)] });
+    await expect(createPost(admin, { ...valid, slug: "unsafe-link", body: "[x](javascript:alert(1))" }, { incompleteDrafts: true })).rejects.toMatchObject({ issues: [expect.stringMatching(/scheme that is not allowed/)] });
+  });
+
+  it("accepts related links to posts still waiting in content/, never to itself", async () => {
+    const { createPost, publishPost, updatePost } = await import("@/lib/posts");
+    const post = await createPost(admin, { ...valid, related: ["blog/deploy-nextjs-kubernetes-github-actions"] });
+    expect(post.warnings).toEqual([]);
+    expect((await publishPost(admin, post.id, {})).status).toBe("published");
+    await expect(updatePost(admin, post.id, { related: [`blog/${valid.slug}`] })).rejects.toMatchObject({ issues: [expect.stringMatching(/cannot be related to itself/)] });
   });
 });
