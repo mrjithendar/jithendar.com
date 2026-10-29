@@ -14,7 +14,9 @@ Run it on the CI host as the user the jobs should run as (with `sudo` rights), o
 ## What it does
 
 1. Downloads the official runner (v2.337.0) once and checks its SHA-256.
-2. Installs the runner's OS libraries with GitHub's own `bin/installdependencies.sh` (dnf, yum or apt).
+2. Installs the runner's OS libraries: on dnf/yum hosts `libicu openssl-libs krb5-libs zlib libstdc++ libgcc`
+   (GitHub's `installdependencies.sh` also wants `lttng-ust`, which CentOS Stream does not ship); elsewhere GitHub's
+   `bin/installdependencies.sh`. Then checks the runner starts before registering it.
 3. For each runner: unpacks it into `~/actions-runners/jithendar-com/<n>`, registers it as `<hostname>-<n>` with a
    short-lived registration token, labels it for SELinux if enforcing, and installs and starts its systemd service.
 4. Warns when the host cannot run this repository's jobs (see Requirements).

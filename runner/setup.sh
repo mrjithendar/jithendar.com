@@ -107,6 +107,19 @@ selinux_label() {
   sudo restorecon -RF "$1"
 }
 
+# The .NET libraries the runner needs. On dnf/yum hosts they are installed directly: GitHub's
+# installdependencies.sh also requires lttng-ust, which CentOS Stream / RHEL do not ship (the runner does not need it).
+install_deps() {
+  local pm
+  for pm in dnf yum; do
+    if command -v "$pm" >/dev/null; then
+      sudo "$pm" install -y libicu openssl-libs krb5-libs zlib libstdc++ libgcc >/dev/null
+      return
+    fi
+  done
+  sudo "$1/bin/installdependencies.sh" >/dev/null
+}
+
 install_slot() {
   local dir name reg
   dir=$(slot_dir "$1")
@@ -119,10 +132,12 @@ install_slot() {
     mkdir -p "$dir"
     [[ -x $dir/config.sh ]] || tar --no-same-owner -xzf "$TARBALL" -C "$dir"
     if [[ ! -f $BASE/.deps-installed ]]; then
-      say "Installing the runner's OS dependencies (GitHub's installdependencies.sh)"
-      sudo "$dir/bin/installdependencies.sh" >/dev/null
+      say "Installing the runner's OS libraries"
+      install_deps "$dir"
       touch "$BASE/.deps-installed"
     fi
+    # Fail here, before asking GitHub for a token, if the runner cannot start on this host.
+    (cd "$dir" && ./config.sh --version >/dev/null) || die "the runner cannot start on this host (missing libraries?); see the output above"
     reg=$(runner_token registration-token)
     # --replace takes over a runner of the same name left in GitHub by an earlier install.
     (cd "$dir" && ACTIONS_RUNNER_INPUT_TOKEN=$reg ./config.sh --unattended --replace \
