@@ -1,0 +1,229 @@
+# PostgreSQL: StatefulSet, Service, NetworkPolicy (needs Secret jithendar-postgres)
+# Exported from the live mk4 cluster (namespace jithendar) on 2026-10-29; cluster-generated fields removed.
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app: jithendar-postgres
+    app.kubernetes.io/part-of: jithendar-com
+  name: jithendar-postgres
+  namespace: jithendar
+spec:
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  podManagementPolicy: OrderedReady
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: jithendar-postgres
+  serviceName: jithendar-postgres
+  template:
+    metadata:
+      labels:
+        app: jithendar-postgres
+        app.kubernetes.io/part-of: jithendar-com
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - args:
+        - "-c"
+        - shared_buffers=128MB
+        - "-c"
+        - max_connections=50
+        - "-c"
+        - log_min_duration_statement=500
+        - "-c"
+        - log_line_prefix=%m [%p] %q%u@%d
+        env:
+        - name: POSTGRES_DB
+          value: jithendar
+        - name: POSTGRES_USER
+          value: jithendar
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              key: password
+              name: jithendar-postgres
+        image: postgres:18-alpine
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - "-U"
+            - jithendar
+            - "-d"
+            - jithendar
+            - "-h"
+            - 127.0.0.1
+          failureThreshold: 3
+          periodSeconds: 30
+          successThreshold: 1
+          timeoutSeconds: 1
+        name: postgres
+        ports:
+        - containerPort: 5432
+          name: postgres
+          protocol: TCP
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - "-U"
+            - jithendar
+            - "-d"
+            - jithendar
+            - "-h"
+            - 127.0.0.1
+          failureThreshold: 3
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        resources:
+          limits:
+            cpu: '1'
+            memory: 1Gi
+          requests:
+            cpu: 100m
+            memory: 256Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsGroup: 70
+          runAsNonRoot: true
+          runAsUser: 70
+        startupProbe:
+          exec:
+            command:
+            - pg_isready
+            - "-U"
+            - jithendar
+            - "-d"
+            - jithendar
+            - "-h"
+            - 127.0.0.1
+          failureThreshold: 60
+          periodSeconds: 5
+          successThreshold: 1
+          timeoutSeconds: 1
+        terminationMessagePath: "/dev/termination-log"
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: "/var/lib/postgresql"
+          name: data
+        - mountPath: "/var/run/postgresql"
+          name: run
+        - mountPath: "/tmp"
+          name: tmp
+      dnsPolicy: ClusterFirst
+      enableServiceLinks: false
+      initContainers:
+      - command:
+        - sh
+        - "-c"
+        - chown 70:70 /var/lib/postgresql && chmod 0750 /var/lib/postgresql
+        image: postgres:18-alpine
+        imagePullPolicy: IfNotPresent
+        name: data-permissions
+        resources:
+          limits:
+            cpu: 100m
+            memory: 32Mi
+          requests:
+            cpu: 10m
+            memory: 16Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            add:
+            - CHOWN
+            - FOWNER
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: false
+          runAsUser: 0
+        terminationMessagePath: "/dev/termination-log"
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: "/var/lib/postgresql"
+          name: data
+      nodeSelector:
+        kubernetes.io/hostname: mk4-m03
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 60
+      volumes:
+      - emptyDir: {}
+        name: run
+      - emptyDir:
+          sizeLimit: 256Mi
+        name: tmp
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 1
+      partition: 0
+    type: RollingUpdate
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 10Gi
+      storageClassName: standard
+      volumeMode: Filesystem
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: jithendar-postgres
+  name: jithendar-postgres
+  namespace: jithendar
+spec:
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+  - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+  - name: postgres
+    port: 5432
+    protocol: TCP
+    targetPort: postgres
+  selector:
+    app: jithendar-postgres
+  sessionAffinity: None
+  type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jithendar-postgres
+  namespace: jithendar
+spec:
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: jithendar-com
+    ports:
+    - port: 5432
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app: jithendar-postgres
+  policyTypes:
+  - Ingress
+  - Egress

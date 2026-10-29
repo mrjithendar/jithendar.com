@@ -1,0 +1,149 @@
+# Redis: Deployment, Service, NetworkPolicy (needs Secret jithendar-redis)
+# Exported from the live mk4 cluster (namespace jithendar) on 2026-10-29; cluster-generated fields removed.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: jithendar-redis
+    app.kubernetes.io/part-of: jithendar-com
+  name: jithendar-redis
+  namespace: jithendar
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: jithendar-redis
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: jithendar-redis
+        app.kubernetes.io/part-of: jithendar-com
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - args:
+        - exec redis-server --requirepass "$REDIS_PASSWORD" --maxmemory 64mb --maxmemory-policy
+          allkeys-lru --save "" --appendonly no --protected-mode yes
+        command:
+        - sh
+        - "-c"
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              key: password
+              name: jithendar-redis
+        - name: REDISCLI_AUTH
+          valueFrom:
+            secretKeyRef:
+              key: password
+              name: jithendar-redis
+        image: redis:7.4-alpine
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          failureThreshold: 3
+          periodSeconds: 30
+          successThreshold: 1
+          timeoutSeconds: 1
+        name: redis
+        ports:
+        - containerPort: 6379
+          name: redis
+          protocol: TCP
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          failureThreshold: 3
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        resources:
+          limits:
+            cpu: 500m
+            memory: 128Mi
+          requests:
+            cpu: 20m
+            memory: 32Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        terminationMessagePath: "/dev/termination-log"
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: "/data"
+          name: data
+      dnsPolicy: ClusterFirst
+      enableServiceLinks: false
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext:
+        runAsGroup: 999
+        runAsNonRoot: true
+        runAsUser: 999
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - emptyDir:
+          sizeLimit: 64Mi
+        name: data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: jithendar-redis
+  name: jithendar-redis
+  namespace: jithendar
+spec:
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+  - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+  - name: redis
+    port: 6379
+    protocol: TCP
+    targetPort: redis
+  selector:
+    app: jithendar-redis
+  sessionAffinity: None
+  type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jithendar-redis
+  namespace: jithendar
+spec:
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: jithendar-com
+    ports:
+    - port: 6379
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app: jithendar-redis
+  policyTypes:
+  - Ingress
+  - Egress

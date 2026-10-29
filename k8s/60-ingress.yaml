@@ -1,0 +1,100 @@
+# Ingress: jithendar.com and www (HTTPS + HTTP redirect routes)
+# Exported from the live mk4 cluster (namespace jithendar) on 2026-10-29; cluster-generated fields removed.
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.middlewares: jithendar-compress@kubernetescrd
+    traefik.ingress.kubernetes.io/router.tls: 'true'
+  name: jithendar-com
+  namespace: jithendar
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: jithendar.com
+    http:
+      paths:
+      - backend:
+          service:
+            name: jithendar-com
+            port:
+              name: http
+        path: "/"
+        pathType: Prefix
+  tls:
+  - hosts:
+    - jithendar.com
+    secretName: jithendar-com-tls
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.middlewares: jithendar-https-redirect@kubernetescrd
+  name: jithendar-com-http
+  namespace: jithendar
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: jithendar.com
+    http:
+      paths:
+      - backend:
+          service:
+            name: jithendar-com
+            port:
+              name: http
+        path: "/"
+        pathType: Prefix
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.middlewares: jithendar-www-redirect@kubernetescrd
+    traefik.ingress.kubernetes.io/router.tls: 'true'
+  name: jithendar-com-www
+  namespace: jithendar
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: www.jithendar.com
+    http:
+      paths:
+      - backend:
+          service:
+            name: jithendar-com
+            port:
+              name: http
+        path: "/"
+        pathType: Prefix
+  tls:
+  - hosts:
+    - www.jithendar.com
+    secretName: jithendar-com-tls
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.middlewares: jithendar-www-redirect@kubernetescrd
+  name: jithendar-com-www-http
+  namespace: jithendar
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: www.jithendar.com
+    http:
+      paths:
+      - backend:
+          service:
+            name: jithendar-com
+            port:
+              name: http
+        path: "/"
+        pathType: Prefix

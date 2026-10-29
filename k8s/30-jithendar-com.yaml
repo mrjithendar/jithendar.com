@@ -1,0 +1,254 @@
+# Site: Deployment, Service, PodDisruptionBudget, NetworkPolicy (needs Secrets jithendar-com-env and ecr-pull)
+# Exported from the live mk4 cluster (namespace jithendar) on 2026-10-29; cluster-generated fields removed.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: jithendar-com
+    app.kubernetes.io/part-of: jithendar-com
+  name: jithendar-com
+  namespace: jithendar
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: jithendar-com
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: jithendar-com
+        app.kubernetes.io/part-of: jithendar-com
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - env:
+        - name: APP_ENV
+          value: production
+        - name: SITE_URL
+          value: https://jithendar.com
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://otel-collector.observability:4318
+        - name: OTEL_SERVICE_NAME
+          value: jithendar-com
+        - name: LOG_LEVEL
+          value: info
+        - name: GEMINI_IMAGE_SIZE
+          value: 1K
+        - name: GEMINI_IMAGE_TIMEOUT_MS
+          value: '90000'
+        - name: GEMINI_IMAGE_USER_HOURLY_LIMIT
+          value: '10'
+        - name: GEMINI_IMAGE_USER_CONCURRENCY
+          value: '1'
+        - name: GEMINI_IMAGE_DAILY_LIMIT
+          value: '50'
+        envFrom:
+        - secretRef:
+            name: jithendar-com-env
+        - configMapRef:
+            name: jithendar-com-public
+            optional: true
+        image: 881026659929.dkr.ecr.us-east-1.amazonaws.com/jithendar-com@sha256:latest
+        imagePullPolicy: Always
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - sleep
+              - '5'
+        livenessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: "/api/health"
+            port: http
+            scheme: HTTP
+          periodSeconds: 20
+          successThreshold: 1
+          timeoutSeconds: 3
+        name: web
+        ports:
+        - containerPort: 3000
+          name: http
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: "/api/health"
+            port: http
+            scheme: HTTP
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 3
+        resources:
+          limits:
+            cpu: '1'
+            memory: 512Mi
+          requests:
+            cpu: 50m
+            memory: 128Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        startupProbe:
+          failureThreshold: 30
+          httpGet:
+            path: "/api/health"
+            port: http
+            scheme: HTTP
+          periodSeconds: 2
+          successThreshold: 1
+          timeoutSeconds: 1
+        terminationMessagePath: "/dev/termination-log"
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: "/tmp"
+          name: tmp
+        - mountPath: "/app/.next/cache"
+          name: next-cache
+      dnsPolicy: ClusterFirst
+      enableServiceLinks: false
+      imagePullSecrets:
+      - name: ecr-pull
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext:
+        runAsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+      - labelSelector:
+          matchLabels:
+            app: jithendar-com
+        maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+      volumes:
+      - emptyDir:
+          sizeLimit: 64Mi
+        name: tmp
+      - emptyDir:
+          sizeLimit: 256Mi
+        name: next-cache
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: jithendar-com
+  name: jithendar-com
+  namespace: jithendar
+spec:
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+  - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+  - name: http
+    port: 80
+    protocol: TCP
+    targetPort: http
+  selector:
+    app: jithendar-com
+  sessionAffinity: None
+  type: ClusterIP
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: jithendar-com
+  namespace: jithendar
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: jithendar-com
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jithendar-com
+  namespace: jithendar
+spec:
+  egress:
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+    to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+  - ports:
+    - port: 5432
+      protocol: TCP
+    to:
+    - podSelector:
+        matchLabels:
+          app: jithendar-postgres
+  - ports:
+    - port: 6379
+      protocol: TCP
+    to:
+    - podSelector:
+        matchLabels:
+          app: jithendar-redis
+  - ports:
+    - port: 4318
+      protocol: TCP
+    to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: observability
+      podSelector:
+        matchLabels:
+          app: otel-collector
+  - ports:
+    - port: 443
+      protocol: TCP
+    - port: 465
+      protocol: TCP
+    - port: 587
+      protocol: TCP
+    - port: 22
+      protocol: TCP
+    to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+        - 100.64.0.0/10
+        - 169.254.0.0/16
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: traefik
+    ports:
+    - port: 3000
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app: jithendar-com
+  policyTypes:
+  - Ingress
+  - Egress
