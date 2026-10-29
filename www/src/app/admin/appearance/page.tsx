@@ -1,9 +1,8 @@
 import type { Metadata } from "next";
 import { integrations, adsTxt } from "@/config/integrations";
-import { enabledProviders } from "@/lib/auth-providers";
 import { getCategories } from "@/lib/categories";
 import { getAuthors, getPages, getPublishedContent } from "@/lib/content";
-import { geminiImageConfig } from "@/lib/gemini";
+import { activeProviders, resolveGeminiImageConfig } from "@/lib/integrations";
 import { mailConfigured } from "@/lib/mail";
 import { requireRole } from "@/lib/session";
 import { getDraft, getPublishedConfig } from "@/lib/site-config/store";
@@ -54,8 +53,8 @@ export default async function AppearancePage({ searchParams }: { searchParams: P
       storage,
       mail,
       turnstile: Boolean(turnstileSiteKey() && turnstileSecret()),
-      gemini: Boolean(geminiImageConfig()),
-      oauth: enabledProviders(),
+      gemini: Boolean(await resolveGeminiImageConfig()),
+      oauth: await activeProviders(),
       googleVerification: i.verification.google.length,
       bingVerification: i.verification.bing.length,
       ga4: Boolean(process.env.GA4_MEASUREMENT_ID?.trim()),

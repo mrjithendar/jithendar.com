@@ -46,6 +46,7 @@ export function GeneralPanel() {
         <Toggle path="general.features.comments" label="Comments" hint="Signed-in readers can comment and reply under posts. Each post can also lock or close its discussion (Admin → Comments → Discussions)." />
         <Toggle path="general.discussion.requireApproval" label="New reader comments need approval" hint="When on, readers' comments appear after a moderator approves them. Authors' and admins' comments never wait." />
         <NumberField path="general.discussion.editWindowMinutes" label="Readers can edit their comments for" min={0} max={43200} step={30} unit=" min" hint="0 means no time limit. Comments can always be deleted by their author." />
+        <NumberField path="general.discussion.humanCheckHours" label="Remember a passed human check for" min={0} max={720} step={1} unit=" h" hint="Signed-in readers who passed Cloudflare Turnstile (at sign-in or on a comment) are not asked again for this long. 0 asks on every comment. Authors and admins are never asked." />
         <Toggle path="general.features.registration" label="Reader sign-up" hint="New accounts by email or Google/GitHub. Existing users can always sign in." />
         <Toggle path="general.features.contactForm" label="Contact form" hint="Shown on /contact; messages arrive in Admin → Messages." />
       </Panel>

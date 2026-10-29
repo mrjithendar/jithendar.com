@@ -250,6 +250,41 @@ export async function listObjects(prefix: string, continuationToken?: string, ma
 }
 
 /**
+ * Object operations on another bucket of the same R2 account (backups can live in a private bucket of their
+ * own); `bucket` empty means the media bucket. Uses the media storage credentials, so the R2 API token must
+ * be allowed to write that bucket too.
+ */
+export async function bucketOps(bucket = "") {
+  const { c, s3 } = await requireR2();
+  const Bucket = bucket.trim() || c.bucket;
+  return {
+    bucket: Bucket,
+    sameAsMedia: Bucket === c.bucket,
+    mediaIsPublic: Boolean(c.publicBaseUrl),
+    put: async (key: string, body: Buffer, contentType = "application/octet-stream") => {
+      await s3.send(new PutObjectCommand({ Bucket, Key: key, Body: body, ContentType: contentType, CacheControl: "private, no-store" }));
+    },
+    list: async (prefix: string) => {
+      const keys: { key: string; size: number; lastModified: string | null }[] = [];
+      let token: string | undefined;
+      do {
+        const r = await s3.send(new ListObjectsV2Command({ Bucket, Prefix: prefix, ContinuationToken: token }));
+        for (const o of r.Contents ?? []) if (o.Key) keys.push({ key: o.Key, size: Number(o.Size ?? 0), lastModified: o.LastModified?.toISOString() ?? null });
+        token = r.IsTruncated ? r.NextContinuationToken : undefined;
+      } while (token);
+      return keys;
+    },
+    remove: async (key: string) => {
+      await s3.send(new DeleteObjectCommand({ Bucket, Key: key }));
+    },
+    get: async (key: string) => {
+      const r = await s3.send(new GetObjectCommand({ Bucket, Key: key }));
+      return Buffer.from(await r.Body!.transformToByteArray());
+    },
+  };
+}
+
+/**
  * Short-lived URL the browser PUTs one file to. Content-Type and Content-Length are part of the
  * signature, so the upload fails unless it is exactly the declared type and size.
  */

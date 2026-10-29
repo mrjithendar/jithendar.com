@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 1200" width="560" height="1200" role="img" aria-labelledby="roboshop-ai-overview-title roboshop-ai-overview-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="roboshop-ai-overview-title">RoboShop AI service map</title>
+<desc id="roboshop-ai-overview-desc">Browser traffic enters through Traefik and the web NGINX service. NGINX sends /api requests to ai-gateway and /moks requests to the optional Moks AI agent. A private mcp-server serves MCP clients and calls the gateway with the caller&#x27;s session. The gateway calls the Moks engine for chat and calls the user, catalogue, cart, payment, shipping and currency services over HTTP. Each service&#x27;s data store or provider is shown on it. Paid orders leave the gateway&#x27;s outbox as RabbitMQ events consumed by shipping-service and kafka-bridge.</desc>
+<defs><marker id="arrow-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker><marker id="arrow-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="13" markerHeight="13" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#be123c"/></marker><marker id="arrow-telemetry" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#15803d"/></marker><marker id="arrow-dlq" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#be123c"/></marker></defs>
+<rect width="100%" height="100%" rx="18" fill="#ffffff"/>
+<text x="24" y="40" font-size="20" font-weight="700" fill="#0f172a" text-anchor="start">RoboShop AI: service map</text>
+<text x="24" y="62" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">Requests, data ownership and the paid-order event.</text>
+<rect x="12" y="80" width="536" height="104" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="29" y="132.0" transform="rotate(-90 29 132.0)" font-size="11" font-weight="700" fill="#475569" text-anchor="middle" letter-spacing="1">CLIENTS</text>
+<rect x="48" y="100" width="200" height="64" rx="10" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+<text x="148.0" y="117.0" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">Browser</text>
+<text x="148.0" y="137.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">storefront pages</text>
+<text x="148.0" y="157.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">+ Moks widget</text>
+<rect x="336" y="100" width="200" height="64" rx="10" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+<text x="436.0" y="117.0" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">MCP client</text>
+<text x="436.0" y="137.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">IDE, desktop app, script</text>
+<text x="436.0" y="157.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">stdio or private /mcp</text>
+<rect x="12" y="196" width="536" height="100" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="29" y="246.0" transform="rotate(-90 29 246.0)" font-size="11" font-weight="700" fill="#475569" text-anchor="middle" letter-spacing="1">EDGE</text>
+<rect x="48" y="219" width="170" height="54" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+<text x="133.0" y="241.0" font-size="15" font-weight="700" fill="#1e1b4b" text-anchor="middle">Traefik ingress</text>
+<text x="133.0" y="261.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">TLS, strips /roboshop</text>
+<rect x="266" y="219" width="180" height="54" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+<text x="356.0" y="241.0" font-size="15" font-weight="700" fill="#1e1b4b" text-anchor="middle">web (NGINX)</text>
+<text x="356.0" y="261.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">storefront + proxy</text>
+<path d="M133,164 L133,219" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<path d="M218,246 L266,246" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<path d="M500,164 L500,480" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<rect x="12" y="308" width="536" height="258" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="29" y="437.0" transform="rotate(-90 29 437.0)" font-size="11" font-weight="700" fill="#475569" text-anchor="middle" letter-spacing="1">ENTRY AND ORCHESTRATION</text>
+<rect x="48" y="340" width="150" height="80" rx="10" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="123.0" y="365.0" font-size="15" font-weight="700" fill="#2e1065" text-anchor="middle">moks</text>
+<text x="123.0" y="385.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">Python · AI agent</text>
+<text x="123.0" y="405.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">LangGraph engine</text>
+<rect x="132" y="331" width="58" height="18" rx="9" fill="#ffffff" stroke="#6d28d9" stroke-width="1.2"/>
+<text x="161" y="344" font-size="10.5" font-weight="600" fill="#6d28d9" text-anchor="middle" font-style="italic">optional</text>
+<rect x="258" y="340" width="190" height="112" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="2.4"/>
+<text x="353.0" y="368.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">ai-gateway</text>
+<text x="353.0" y="388.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">Python · public API,</text>
+<text x="353.0" y="408.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">sessions, ledger, outbox</text>
+<rect x="272.6" y="420.0" width="64.2" height="21" rx="10.5" fill="#fffbeb" stroke="#b45309" stroke-width="1.2"/>
+<text x="304.70000000000005" y="434.5" font-size="11.5" font-weight="600" fill="#451a03" text-anchor="middle">MongoDB</text>
+<rect x="342.8" y="420.0" width="90.6" height="21" rx="10.5" fill="#fffbeb" stroke="#b45309" stroke-width="1.2"/>
+<text x="388.1" y="434.5" font-size="11.5" font-weight="600" fill="#451a03" text-anchor="middle">JSON ledger</text>
+<rect x="48" y="470" width="150" height="56" rx="10" fill="#f1f5f9" stroke="#64748b" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="123.0" y="493.0" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">Bedrock or Ollama</text>
+<text x="123.0" y="513.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">chosen by super admin</text>
+<rect x="132" y="461" width="58" height="18" rx="9" fill="#ffffff" stroke="#64748b" stroke-width="1.2"/>
+<text x="161" y="474" font-size="10.5" font-weight="600" fill="#64748b" text-anchor="middle" font-style="italic">optional</text>
+<rect x="392" y="480" width="144" height="70" rx="10" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.6"/>
+<text x="464.0" y="500.0" font-size="15" font-weight="700" fill="#2e1065" text-anchor="middle">mcp-server</text>
+<text x="464.0" y="520.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">Python · private</text>
+<text x="464.0" y="540.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">MCP tools</text>
+<path d="M356,273 L356,340" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<text x="364" y="316" font-size="12" font-weight="600" fill="#1e293b" text-anchor="start" paint-order="stroke" stroke="#ffffff" stroke-width="5" stroke-linejoin="round">/api/*</text>
+<path d="M290,273 L290,302 L123,302 L123,340" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<text x="206" y="298" font-size="12" font-weight="600" fill="#1e293b" text-anchor="middle" paint-order="stroke" stroke="#ffffff" stroke-width="5" stroke-linejoin="round">/moks/*</text>
+<path d="M258,384 L198,384" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<text x="228" y="360" font-size="12" font-weight="600" fill="#1e293b" text-anchor="middle" paint-order="stroke" stroke="#ffffff" stroke-width="5" stroke-linejoin="round">/internal</text>
+<text x="228" y="375" font-size="12" font-weight="600" fill="#1e293b" text-anchor="middle" paint-order="stroke" stroke="#ffffff" stroke-width="5" stroke-linejoin="round">/chat</text>
+<path d="M123,420 L123,470" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<text x="131" y="450" font-size="12" font-weight="600" fill="#1e293b" text-anchor="start" paint-order="stroke" stroke="#ffffff" stroke-width="5" stroke-linejoin="round">model call</text>
+<path d="M420,480 L420,452" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<text x="412" y="472" font-size="12" font-weight="600" fill="#1e293b" text-anchor="end" paint-order="stroke" stroke="#ffffff" stroke-width="5" stroke-linejoin="round">caller&#x27;s session</text>
+<rect x="12" y="578" width="536" height="334" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="29" y="745.0" transform="rotate(-90 29 745.0)" font-size="11" font-weight="700" fill="#475569" text-anchor="middle" letter-spacing="1">DOMAIN SERVICES</text>
+<path d="M292,452 L292,592" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<text x="300" y="540" font-size="12" font-weight="600" fill="#1e293b" text-anchor="start" paint-order="stroke" stroke="#ffffff" stroke-width="5" stroke-linejoin="round">HTTP</text>
+<rect x="48" y="600" width="236" height="80" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6"/>
+<text x="166.0" y="622.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">user-service</text>
+<text x="166.0" y="642.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">Python · accounts, MFA</text>
+<rect x="110.8" y="654.0" width="110.4" height="21" rx="10.5" fill="#fffbeb" stroke="#b45309" stroke-width="1.2"/>
+<text x="166.0" y="668.5" font-size="11.5" font-weight="600" fill="#451a03" text-anchor="middle">MongoDB: users</text>
+<rect x="300" y="600" width="236" height="80" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6"/>
+<text x="418.0" y="622.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">catalogue-service</text>
+<text x="418.0" y="642.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">Node.js · product reads</text>
+<rect x="352.9" y="654.0" width="130.2" height="21" rx="10.5" fill="#fffbeb" stroke="#b45309" stroke-width="1.2"/>
+<text x="418.0" y="668.5" font-size="11.5" font-weight="600" fill="#451a03" text-anchor="middle">MongoDB: products</text>
+<rect x="48" y="692" width="236" height="80" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6"/>
+<text x="166.0" y="714.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">cart-service</text>
+<text x="166.0" y="734.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">Python · cart lines</text>
+<rect x="140.5" y="746.0" width="51.0" height="21" rx="10.5" fill="#fffbeb" stroke="#b45309" stroke-width="1.2"/>
+<text x="166.0" y="760.5" font-size="11.5" font-weight="600" fill="#451a03" text-anchor="middle">Redis</text>
+<rect x="300" y="692" width="236" height="80" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6"/>
+<text x="418.0" y="714.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">payment-service</text>
+<text x="418.0" y="734.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">Node.js · Razorpay adapter</text>
+<rect x="382.6" y="746.0" width="70.8" height="21" rx="10.5" fill="#f1f5f9" stroke="#64748b" stroke-width="1.2"/>
+<text x="418.0" y="760.5" font-size="11.5" font-weight="600" fill="#0f172a" text-anchor="middle">Razorpay</text>
+<rect x="48" y="784" width="236" height="80" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6"/>
+<text x="166.0" y="806.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">shipping-service</text>
+<text x="166.0" y="826.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">Java · quotes, shipments</text>
+<rect x="124.0" y="838.0" width="84.0" height="21" rx="10.5" fill="#fffbeb" stroke="#b45309" stroke-width="1.2"/>
+<text x="166.0" y="852.5" font-size="11.5" font-weight="600" fill="#451a03" text-anchor="middle">PostgreSQL</text>
+<rect x="300" y="784" width="236" height="80" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="418.0" y="806.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">currency-service</text>
+<text x="418.0" y="826.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">Go · exchange rates</text>
+<rect x="382.6" y="838.0" width="70.8" height="21" rx="10.5" fill="#f1f5f9" stroke="#64748b" stroke-width="1.2"/>
+<text x="418.0" y="852.5" font-size="11.5" font-weight="600" fill="#0f172a" text-anchor="middle">ECB feed</text>
+<rect x="470" y="775" width="58" height="18" rx="9" fill="#ffffff" stroke="#047857" stroke-width="1.2"/>
+<text x="499" y="788" font-size="10.5" font-weight="600" fill="#047857" text-anchor="middle" font-style="italic">optional</text>
+<text x="48" y="884" font-size="11.5" font-weight="400" fill="#64748b" text-anchor="start">web also proxies /api/currency/rates directly to currency-service.</text>
+<text x="48" y="900" font-size="11.5" font-weight="400" fill="#64748b" text-anchor="start">The MongoDB chips are separate collections in one shared instance.</text>
+<rect x="12" y="924" width="536" height="144" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="29" y="996.0" transform="rotate(-90 29 996.0)" font-size="11" font-weight="700" fill="#475569" text-anchor="middle" letter-spacing="1">EVENTS</text>
+<text x="48" y="946" font-size="12" font-weight="400" fill="#475569" text-anchor="start">Paid orders publish order.paid; consumers deduplicate by event ID.</text>
+<rect x="48" y="962" width="120" height="56" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6"/>
+<text x="108.0" y="985.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">ai-gateway</text>
+<text x="108.0" y="1005.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">ledger outbox</text>
+<rect x="206" y="962" width="130" height="56" rx="10" fill="#fff1f2" stroke="#be123c" stroke-width="1.6"/>
+<text x="271.0" y="985.0" font-size="15" font-weight="700" fill="#4c0519" text-anchor="middle">RabbitMQ</text>
+<text x="271.0" y="1005.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">roboshop.orders</text>
+<rect x="380" y="954" width="156" height="46" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6"/>
+<text x="458.0" y="972.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">shipping-service</text>
+<text x="458.0" y="992.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">→ PostgreSQL</text>
+<rect x="380" y="1010" width="156" height="46" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6"/>
+<text x="458.0" y="1028.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">kafka-bridge</text>
+<text x="458.0" y="1048.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">→ Kafka</text>
+<path d="M168,990 L206,990" fill="none" stroke="#be123c" stroke-width="3.2" stroke-linejoin="round" marker-end="url(#arrow-async)"/>
+<path d="M336,982 L358,982 L358,977 L380,977" fill="none" stroke="#be123c" stroke-width="3.2" stroke-linejoin="round" marker-end="url(#arrow-async)"/>
+<path d="M336,998 L358,998 L358,1033 L380,1033" fill="none" stroke="#be123c" stroke-width="3.2" stroke-linejoin="round" marker-end="url(#arrow-async)"/>
+<rect x="12" y="1080" width="536" height="108" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="29" y="1134.0" transform="rotate(-90 29 1134.0)" font-size="11" font-weight="700" fill="#475569" text-anchor="middle" letter-spacing="1">LEGEND</text>
+<path d="M48,1108 L78,1108" stroke="#475569" stroke-width="1.8" marker-end="url(#arrow-sync)"/>
+<text x="88" y="1112.5" font-size="12.5" font-weight="500" fill="#334155" text-anchor="start">Synchronous HTTP</text>
+<path d="M220.4,1108 L250.4,1108" stroke="#be123c" stroke-width="3.2" marker-end="url(#arrow-async)"/>
+<text x="260.4" y="1112.5" font-size="12.5" font-weight="500" fill="#334155" text-anchor="start">Asynchronous event</text>
+<rect x="48" y="1130" width="26" height="16" rx="4" fill="#ffffff" stroke="#64748b" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="82" y="1142.5" font-size="12.5" font-weight="500" fill="#334155" text-anchor="start">Optional / configurable</text>
+<rect x="262.70000000000005" y="1130" width="26" height="16" rx="8" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="296.70000000000005" y="1142.5" font-size="12.5" font-weight="500" fill="#334155" text-anchor="start">Data store</text>
+<rect x="48" y="1160" width="26" height="16" rx="8" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+<text x="82" y="1172.5" font-size="12.5" font-weight="500" fill="#334155" text-anchor="start">External provider</text>
+<path d="M221.3,1168 L251.3,1168" stroke="#15803d" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#arrow-telemetry)"/>
+<text x="261.3" y="1172.5" font-size="12.5" font-weight="500" fill="#334155" text-anchor="start">Telemetry (Figure 4)</text>
+</svg>

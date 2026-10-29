@@ -40,4 +40,11 @@ export type CommentView = {
   replies: CommentView[];
 };
 
-export type CommentPage = { state: DiscussionState; threads: CommentView[]; nextCursor: string | null; total: number };
+export type CommentPage = {
+  state: DiscussionState;
+  threads: CommentView[];
+  nextCursor: string | null;
+  total: number;
+  /** From /api/comments only: whether the viewer's next comment needs a Turnstile check. */
+  needsVerification?: boolean;
+};

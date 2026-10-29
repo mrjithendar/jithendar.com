@@ -19,7 +19,16 @@ const ts = (name: string) => timestamp(name, { withTimezone: true, mode: "date" 
 
 // --- Better Auth (email + password, admin plugin, database rate limiting) -------------
 
-export type SocialLinks = { github?: string; linkedin?: string; x?: string };
+export type SocialLinks = {
+  github?: string;
+  linkedin?: string;
+  x?: string;
+  youtube?: string;
+  instagram?: string;
+  facebook?: string;
+  bluesky?: string;
+  mastodon?: string;
+};
 
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
@@ -38,6 +47,8 @@ export const user = pgTable("user", {
   banned: boolean("banned").default(false),
   banReason: text("ban_reason"),
   banExpires: ts("ban_expires"),
+  /** Last passed Turnstile check (sign-in or comment); comments skip the check for a while after it. */
+  humanVerifiedAt: ts("human_verified_at"),
 });
 
 export const session = pgTable(
@@ -174,6 +185,7 @@ export const page = pgTable("page", {
   savedAt: ts("saved_at").notNull().defaultNow(),
   seoTitle: text("seo_title"),
   seoDescription: text("seo_description"),
+  featuredImage: jsonb("featured_image").$type<FeaturedImage | null>(),
   noindex: boolean("noindex").notNull().default(false),
   /** Order in the "Publication info" navigation (lower first). */
   sortOrder: integer("sort_order").notNull().default(100),
@@ -378,6 +390,10 @@ export const media = pgTable(
     width: integer("width"),
     height: integer("height"),
     alt: text("alt").notNull().default(""),
+    /** Attachment details (as in WordPress): a title for the library, a caption shown under the image, private notes. */
+    title: text("title").notNull().default(""),
+    caption: text("caption").notNull().default(""),
+    description: text("description").notNull().default(""),
     uploadedBy: text("uploaded_by").references(() => user.id, { onDelete: "set null" }),
     createdAt: ts("created_at").notNull().defaultNow(),
   },
@@ -445,9 +461,14 @@ export const auditLog = pgTable(
     action: text("action").notNull(),
     target: text("target"),
     detail: jsonb("detail"),
+    /** Client IP and user agent of the request that caused the entry (when there was one). */
+    ip: text("ip"),
+    userAgent: text("user_agent"),
+    /** info | notice | warning | critical (see lib/audit.ts). */
+    severity: text("severity").notNull().default("info"),
     createdAt: ts("created_at").notNull().defaultNow(),
   },
-  (t) => [index("audit_created_idx").on(t.createdAt)],
+  (t) => [index("audit_created_idx").on(t.createdAt), index("audit_action_created_idx").on(t.action, t.createdAt), index("audit_ip_created_idx").on(t.ip, t.createdAt)],
 );
 
 

@@ -7,7 +7,7 @@ import { getAuth } from "@/lib/auth";
 import { authErrorMessage } from "@/lib/auth-errors";
 import { log } from "@/lib/log";
 import { PostError } from "@/lib/posts";
-import { profileInput, removeAvatar, setAvatar, updateAccountProfile } from "@/lib/profile";
+import { profileInput, removeAvatar, setAvatar, SOCIAL_FIELDS, updateAccountProfile } from "@/lib/profile";
 import { hit } from "@/lib/rate-limit";
 import { getSessionUser } from "@/lib/session";
 
@@ -36,7 +36,7 @@ export async function updateProfileAction(form: FormData): Promise<AccountResult
   if (!user) return SIGNED_OUT;
   if (!(await hit(`profile:${user.id}`, 20, 600))) return TOO_MANY;
   const field = (k: string) => (typeof form.get(k) === "string" ? (form.get(k) as string) : "");
-  const input = { name: field("name"), bio: field("bio"), website: field("website"), github: field("github"), linkedin: field("linkedin"), x: field("x") };
+  const input = { name: field("name"), bio: field("bio"), website: field("website"), ...Object.fromEntries(SOCIAL_FIELDS.map((f) => [f.key, field(f.key)])) };
   const check = profileInput.safeParse(input);
   if (!check.success) {
     const fieldErrors: Record<string, string> = {};

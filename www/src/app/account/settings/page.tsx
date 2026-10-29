@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Alert, buttonClass } from "@/components/ui/form";
 import { FRESH_SESSION_SECONDS } from "@/lib/auth";
-import { enabledProviders, providerLabels } from "@/lib/auth-providers";
+import { providerLabels } from "@/lib/auth-providers";
+import { activeProviders } from "@/lib/integrations";
 import { authErrorMessage } from "@/lib/auth-errors";
 import { formatDate } from "@/lib/dates";
 import { connectedAccounts } from "@/lib/profile";
@@ -39,7 +40,7 @@ export default async function AccountSettingsPage({ searchParams }: { searchPara
       >
         <ConnectedAccounts
           accounts={accounts.map((a) => ({ id: a.id, providerId: a.providerId, connectedAt: formatDate(a.createdAt.toISOString()) }))}
-          available={enabledProviders()}
+          available={await activeProviders()}
           fresh={fresh}
         />
       </Section>

@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 900" width="800" height="900" role="img" aria-labelledby="roboshop-ai-ai-paths-title roboshop-ai-ai-paths-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="roboshop-ai-ai-paths-title">RoboShop AI: Moks and MCP request paths</title>
+<desc id="roboshop-ai-ai-paths-desc">Path A: the browser widget sends a message through web to the Moks widget routes, which call ai-gateway /api/chat with the user&#x27;s session. The gateway adds history references, unavailable SKUs and the active model configuration, then calls the Moks engine. The engine reads the catalogue from catalogue-service, checks the configuration revision with the gateway and calls Bedrock or Ollama. Path B: an MCP client calls the private mcp-server with the user&#x27;s session; mcp-server calls the gateway, which re-authorizes the call. Moks does not use MCP.</desc>
+<defs><marker id="arrow-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker><marker id="arrow-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="13" markerHeight="13" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#be123c"/></marker><marker id="arrow-telemetry" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#15803d"/></marker><marker id="arrow-dlq" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#be123c"/></marker></defs>
+<rect width="100%" height="100%" rx="18" fill="#ffffff"/>
+<text x="40" y="44" font-size="21" font-weight="700" fill="#0f172a" text-anchor="start">AI request paths</text>
+<text x="40" y="66" font-size="13" font-weight="400" fill="#475569" text-anchor="start">Two independent entry points. Moks never calls the MCP server.</text>
+<rect x="24" y="84" width="752" height="520" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="40" y="106" font-size="11.5" font-weight="700" fill="#475569" text-anchor="start">A. MOKS SHOPPING ASSISTANT</text>
+<text x="40" y="123" font-size="12" font-weight="400" fill="#64748b" text-anchor="start">Browser widget → gateway → agent engine. Both moks boxes are one Deployment.</text>
+<rect x="40" y="140" width="150" height="64" rx="10" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+<text x="115.0" y="167.0" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">Browser</text>
+<text x="115.0" y="187.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">Moks widget</text>
+<rect x="230" y="140" width="150" height="64" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+<text x="305.0" y="167.0" font-size="15" font-weight="700" fill="#1e1b4b" text-anchor="middle">web (NGINX)</text>
+<text x="305.0" y="187.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">/moks/chat</text>
+<rect x="420" y="140" width="150" height="64" rx="10" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.6"/>
+<text x="495.0" y="167.0" font-size="15" font-weight="700" fill="#2e1065" text-anchor="middle">moks</text>
+<text x="495.0" y="187.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">widget routes</text>
+<rect x="610" y="140" width="150" height="64" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6"/>
+<text x="685.0" y="167.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">ai-gateway</text>
+<text x="685.0" y="187.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">/api/chat</text>
+<path d="M190,172 L230,172" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<path d="M380,172 L420,172" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<path d="M570,172 L610,172" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<circle cx="205" cy="160" r="10" fill="#0f172a"/>
+<text x="205" y="164.2" font-size="11.5" font-weight="700" fill="#ffffff" text-anchor="middle">1</text>
+<circle cx="395" cy="160" r="10" fill="#0f172a"/>
+<text x="395" y="164.2" font-size="11.5" font-weight="700" fill="#ffffff" text-anchor="middle">2</text>
+<circle cx="585" cy="160" r="10" fill="#0f172a"/>
+<text x="585" y="164.2" font-size="11.5" font-weight="700" fill="#ffffff" text-anchor="middle">3</text>
+<rect x="610" y="268" width="150" height="64" rx="10" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.6"/>
+<text x="685.0" y="285.0" font-size="15" font-weight="700" fill="#2e1065" text-anchor="middle">moks</text>
+<text x="685.0" y="305.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">engine</text>
+<text x="685.0" y="325.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">/internal/chat</text>
+<path d="M668,204 L668,268" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<circle cx="652" cy="236" r="10" fill="#0f172a"/>
+<text x="652" y="240.2" font-size="11.5" font-weight="700" fill="#ffffff" text-anchor="middle">4</text>
+<path d="M702,268 L702,204" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<circle cx="718" cy="236" r="10" fill="#0f172a"/>
+<text x="718" y="240.2" font-size="11.5" font-weight="700" fill="#ffffff" text-anchor="middle">6</text>
+<rect x="420" y="268" width="150" height="64" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6"/>
+<text x="495.0" y="295.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">catalogue-service</text>
+<text x="495.0" y="315.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">/api/products</text>
+<path d="M610,300 L570,300" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<circle cx="590" cy="285" r="10" fill="#0f172a"/>
+<text x="590" y="289.2" font-size="11.5" font-weight="700" fill="#ffffff" text-anchor="middle">5</text>
+<rect x="610" y="380" width="150" height="64" rx="10" fill="#f1f5f9" stroke="#64748b" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="685.0" y="407.0" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">Bedrock or Ollama</text>
+<text x="685.0" y="427.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">admin-selected</text>
+<rect x="694" y="371" width="58" height="18" rx="9" fill="#ffffff" stroke="#64748b" stroke-width="1.2"/>
+<text x="723" y="384" font-size="10.5" font-weight="600" fill="#64748b" text-anchor="middle" font-style="italic">optional</text>
+<path d="M685,332 L685,380" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<circle cx="668" cy="356" r="10" fill="#0f172a"/>
+<text x="668" y="360.2" font-size="11.5" font-weight="700" fill="#ffffff" text-anchor="middle">7</text>
+<text x="40" y="470.0" font-size="12.2" font-weight="400" fill="#334155" text-anchor="start">1. Widget sends only the message; the browser cannot supply history or a user ID.</text>
+<text x="40" y="488.5" font-size="12.2" font-weight="400" fill="#334155" text-anchor="start">2. NGINX forwards /moks/* to the Moks widget routes (direct /api/chat is blocked).</text>
+<text x="40" y="507.0" font-size="12.2" font-weight="400" fill="#334155" text-anchor="start">3. Moks checks the session and Origin, then calls gateway /api/chat with the session cookie.</text>
+<text x="40" y="525.5" font-size="12.2" font-weight="400" fill="#334155" text-anchor="start">4. Gateway adds saved product references, unavailable SKUs and the model config + revision.</text>
+<text x="40" y="544.0" font-size="12.2" font-weight="400" fill="#334155" text-anchor="start">5. Engine reads the catalogue and filters evidence: stock, budget, currency, at most four products.</text>
+<text x="40" y="562.5" font-size="12.2" font-weight="400" fill="#334155" text-anchor="start">6. Before generating, the engine confirms the config revision with the gateway.</text>
+<text x="40" y="581.0" font-size="12.2" font-weight="400" fill="#334155" text-anchor="start">7. One provider call (optional failover). The gateway then re-applies stock and saves the turn.</text>
+<text x="40" y="362" font-size="12.5" font-weight="700" fill="#2e1065" text-anchor="start">LangGraph:</text>
+<text x="40" y="380" font-size="12.5" font-weight="400" fill="#334155" text-anchor="start">search_catalogue →</text>
+<text x="40" y="398" font-size="12.5" font-weight="400" fill="#334155" text-anchor="start">ground_evidence →</text>
+<text x="40" y="416" font-size="12.5" font-weight="400" fill="#334155" text-anchor="start">generate_answer</text>
+<text x="40" y="438" font-size="12.5" font-weight="400" fill="#334155" text-anchor="start">No tools, no cart or order actions.</text>
+<rect x="24" y="620" width="752" height="200" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="40" y="642" font-size="11.5" font-weight="700" fill="#475569" text-anchor="start">B. MCP TOOLS</text>
+<text x="40" y="659" font-size="12" font-weight="400" fill="#64748b" text-anchor="start">Private ClusterIP Service, no ingress. Local stdio or a port-forward.</text>
+<rect x="40" y="676" width="150" height="64" rx="10" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+<text x="115.0" y="703.0" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">MCP client</text>
+<text x="115.0" y="723.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">stdio or /mcp</text>
+<rect x="230" y="676" width="150" height="64" rx="10" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.6"/>
+<text x="305.0" y="703.0" font-size="15" font-weight="700" fill="#2e1065" text-anchor="middle">mcp-server</text>
+<text x="305.0" y="723.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">schemas, limits</text>
+<rect x="420" y="676" width="150" height="64" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6"/>
+<text x="495.0" y="703.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">ai-gateway</text>
+<text x="495.0" y="723.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">re-authorizes</text>
+<rect x="610" y="676" width="150" height="64" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6"/>
+<text x="685.0" y="693.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">domain services</text>
+<text x="685.0" y="713.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">user, catalogue,</text>
+<text x="685.0" y="733.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">cart, shipping</text>
+<path d="M190,708 L230,708" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<path d="M380,708 L420,708" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<path d="M570,708 L610,708" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<text x="40" y="766" font-size="12.2" font-weight="400" fill="#334155" text-anchor="start">The bearer token is the caller&#x27;s own RoboShop session, checked on every request.</text>
+<text x="40" y="784" font-size="12.2" font-weight="400" fill="#334155" text-anchor="start">Ten read tools and update_cart are registered; admin write tools need MCP_ENABLE_ADMIN_WRITES</text>
+<text x="40" y="802" font-size="12.2" font-weight="400" fill="#334155" text-anchor="start">and a signed, one-time confirmation. There are no payment, order or refund tools.</text>
+<rect x="24" y="836" width="752" height="50" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="40" y="858" font-size="11.5" font-weight="700" fill="#475569" text-anchor="start">LEGEND</text>
+<path d="M120,862 L150,862" stroke="#475569" stroke-width="1.8" marker-end="url(#arrow-sync)"/>
+<text x="160" y="866.5" font-size="12.5" font-weight="500" fill="#334155" text-anchor="start">Synchronous HTTP / MCP</text>
+<rect x="333.8" y="854" width="26" height="16" rx="4" fill="#ffffff" stroke="#64748b" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="367.8" y="866.5" font-size="12.5" font-weight="500" fill="#334155" text-anchor="start">Optional / configurable</text>
+</svg>

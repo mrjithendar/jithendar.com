@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Container } from "@/components/Container";
@@ -40,6 +41,20 @@ export async function PageView({ page, notice, after }: { page: Page; notice?: R
         )}
       </PageHeader>
       <Container className="pt-8 sm:pt-12">
+        {fm.featuredImage && (
+          <figure className="mb-8 overflow-hidden rounded-xl border border-line bg-surface-sunken sm:mb-12">
+            <Image
+              src={fm.featuredImage.src}
+              alt={fm.featuredImage.alt}
+              width={fm.featuredImage.width}
+              height={fm.featuredImage.height}
+              sizes="(min-width: 1280px) 1200px, 100vw"
+              priority
+              className="aspect-[21/9] w-full object-cover"
+              style={{ objectPosition: `${fm.featuredImage.focalX ?? 50}% ${fm.featuredImage.focalY ?? 50}%` }}
+            />
+          </figure>
+        )}
         <div className="grid grid-cols-[minmax(0,1fr)] gap-8 lg:grid-cols-[14rem_minmax(0,1fr)] lg:gap-16">
           <nav aria-label="Publication info" className="min-w-0 lg:sticky lg:top-[calc(var(--spacing-header)+2rem)] lg:self-start">
             <ul className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-2 [scrollbar-width:thin] lg:mx-0 lg:flex-col lg:gap-1 lg:overflow-visible lg:px-0 lg:pb-0">

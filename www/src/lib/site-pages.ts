@@ -1,9 +1,12 @@
 import { and, eq, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/db";
+import type { FeaturedImage } from "@/db/schema";
 import { audit } from "./audit";
 import { invalidateContent } from "./content";
 import { isoDateTime, pageFrontmatter } from "./content/schema";
+import { imageRefs } from "./images";
+import { resolveImage } from "./media";
 import type { Actor } from "./posts";
 import { PostError } from "./posts";
 import { recordRedirect } from "./redirects";
@@ -24,6 +27,7 @@ const pageInput = z.object({
   updatedAt: isoDateTime.nullish(),
   seoTitle: z.string().nullish(),
   seoDescription: z.string().nullish(),
+  featuredImage: z.unknown().nullish(),
   noindex: z.boolean().default(false),
   sortOrder: z.number().int().min(0).max(10_000).default(100),
 });
@@ -32,7 +36,7 @@ function canEdit(actor: Actor) {
   if (actor.role !== "admin" && actor.role !== "author") throw new PostError("Not allowed.", 403);
 }
 
-function validate(raw: unknown) {
+async function validate(raw: unknown) {
   const input = pageInput.parse(raw);
   // `body` is stored on the row but is not a frontmatter field (the schema is strict).
   const parsed = pageFrontmatter.safeParse({
@@ -42,20 +46,27 @@ function validate(raw: unknown) {
     updatedAt: input.updatedAt ?? undefined,
     seoTitle: input.seoTitle?.trim() || undefined,
     seoDescription: input.seoDescription?.trim() || undefined,
+    featuredImage: input.featuredImage ?? undefined,
     noindex: input.noindex,
     sortOrder: input.sortOrder,
   });
   const issues = parsed.success ? [] : parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
   for (const link of unsafeLinks(input.body)) issues.push(`body: link "${link}" uses a scheme that is not allowed`);
+  // Same image rules as posts: every image has alt text and is a site image.
+  for (const ref of imageRefs(input.body)) {
+    if (!ref.alt?.trim()) issues.push(`body: image ${ref.src} needs alt text`);
+    if (/^(https?:)?\/\//i.test(ref.src)) issues.push(`body: remote image ${ref.src} is not allowed; upload it to Media`);
+  }
+  if (parsed.success && parsed.data.featuredImage && !(await resolveImage(parsed.data.featuredImage.src))) issues.push(`featuredImage: ${parsed.data.featuredImage.src} not found`);
   if (RESERVED_PAGE_SLUGS.has(input.slug)) issues.push(`slug: "${input.slug}" is reserved by the site`);
   if (issues.length > 0) throw new PostError("The page is not valid.", 400, issues);
-  return input;
+  return { ...input, featuredImage: parsed.success ? (parsed.data.featuredImage ?? null) : null };
 }
 
 /** Save a page. With `baseVersion`, refuses to overwrite a newer save (optimistic concurrency). */
 export async function savePage(actor: Actor, originalSlug: string | null, raw: unknown, opts: { baseVersion?: number } = {}) {
   canEdit(actor);
-  const input = validate(raw);
+  const input = await validate(raw);
   const db = await getDb();
   const values = {
     slug: input.slug,
@@ -65,6 +76,7 @@ export async function savePage(actor: Actor, originalSlug: string | null, raw: u
     updatedAt: input.updatedAt ? new Date(input.updatedAt) : null,
     seoTitle: input.seoTitle?.trim() || null,
     seoDescription: input.seoDescription?.trim() || null,
+    featuredImage: input.featuredImage,
     noindex: input.noindex,
     sortOrder: input.sortOrder,
     savedAt: new Date(),
@@ -139,6 +151,7 @@ export type PageFormValue = {
   updatedAt: string | null;
   seoTitle: string | null;
   seoDescription: string | null;
+  featuredImage: FeaturedImage | null;
   noindex: boolean;
   sortOrder: number;
 };
@@ -153,6 +166,7 @@ export function pageRowToForm(row: Record<string, unknown>): PageFormValue {
     updatedAt: d ? new Date(String(d instanceof Date ? d.toISOString() : d)).toISOString() : null,
     seoTitle: (row.seoTitle ?? row.seo_title ?? null) as string | null,
     seoDescription: (row.seoDescription ?? row.seo_description ?? null) as string | null,
+    featuredImage: (row.featuredImage ?? row.featured_image ?? null) as FeaturedImage | null,
     noindex: Boolean(row.noindex),
     sortOrder: Number(row.sortOrder ?? row.sort_order ?? 100),
   };

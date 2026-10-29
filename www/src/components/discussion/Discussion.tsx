@@ -44,6 +44,8 @@ export function Discussion({ postId, path, initial, siteKey, timeZone }: { postI
   const [live, setLive] = useState("");
   const [highlight, setHighlight] = useState<string | null>(null);
   const [sessionEnded, setSessionEnded] = useState(false);
+  // Signed-in readers who passed Turnstile recently are not asked again (the server decides; see lib/human-check).
+  const [verify, setVerify] = useState(true);
   const formatTime = useMemo(() => timeFormatter(timeZone), [timeZone]);
   const viewerId = session?.user.id ?? null;
   const loadedFor = useRef<string | null | undefined>(undefined);
@@ -78,6 +80,7 @@ export function Discussion({ postId, path, initial, siteKey, timeZone }: { postI
         setNextCursor(page.nextCursor);
         setTotal(page.total);
         setState(page.state);
+        if (page.needsVerification !== undefined) setVerify(page.needsVerification);
         setStatus("ready");
         if (target && containsComment(list, target)) {
           setHighlight(target);
@@ -144,6 +147,7 @@ export function Discussion({ postId, path, initial, siteKey, timeZone }: { postI
     const r = handleResult(await postCommentAction({ postId, parentId: parent?.id ?? null, body, clientKey, token }));
     if (!r.ok) return { ok: false as const, error: r.error };
     if (r.thread) setThreads((t) => upsertThread(t, r.thread!, sort));
+    setVerify(r.needsVerification);
     if (r.status === "approved") setTotal((n) => n + 1);
     setNotice({ tone: r.status === "approved" ? "success" : "info", text: r.message ?? "Posted." });
     setLive(r.message ?? "");
@@ -236,8 +240,8 @@ export function Discussion({ postId, path, initial, siteKey, timeZone }: { postI
               <Composer
                 label={`Comment as ${session.user.name}`}
                 submitLabel="Post comment"
-                siteKey={siteKey}
-                verify
+                siteKey={verify ? siteKey : undefined}
+                verify={verify}
                 onSubmit={(body, token, key) => post(body, token, key, null)}
               />
               {state.requireApproval && <p className="mt-3 text-xs text-fg-subtle">Comments from readers appear after a moderator approves them.</p>}
@@ -274,7 +278,7 @@ export function Discussion({ postId, path, initial, siteKey, timeZone }: { postI
           <ol className={`space-y-8 ${status === "loading" ? "opacity-60" : ""}`} aria-label="Comments">
             {threads.map((c) => (
               <li key={c.id}>
-                <CommentItem comment={c} level={0} path={path} siteKey={siteKey} formatTime={formatTime} highlight={highlight} signInHref={signInHref} signedIn={signedIn} handlers={handlers} />
+                <CommentItem comment={c} level={0} path={path} siteKey={verify ? siteKey : undefined} formatTime={formatTime} highlight={highlight} signInHref={signInHref} signedIn={signedIn} handlers={handlers} />
               </li>
             ))}
           </ol>

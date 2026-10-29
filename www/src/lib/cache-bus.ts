@@ -1,7 +1,7 @@
 import { getRedis, getRedisSubscriber } from "./redis";
 
 /** Per-process caches register here; invalidation clears locally and tells the other replicas via Redis. */
-type Kind = "content" | "categories" | "settings";
+type Kind = "content" | "categories" | "settings" | "integrations";
 const CHANNEL = "jithendar:invalidate";
 const handlers = new Map<Kind, Set<() => void>>();
 const origin = crypto.randomUUID();

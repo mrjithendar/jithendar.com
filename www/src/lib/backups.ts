@@ -1,4 +1,3 @@
-import { DeleteObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { desc, eq, sql } from "drizzle-orm";
 import { gzipSync } from "node:zlib";
 import { z } from "zod";
@@ -9,35 +8,37 @@ import { log } from "./log";
 import type { Actor } from "./posts";
 import { PostError } from "./posts";
 import { encryptWithPassphrase, seal, unseal, type Sealed } from "./secrets";
+import { bucketOps, storageReady } from "./storage";
 
 /**
- * Encrypted site backups to S3-compatible storage, SFTP and Google Drive.
+ * Encrypted site backups to Cloudflare R2 (the media storage account; optionally a separate private bucket).
  * Contents: content, configuration and accounts WITHOUT password hashes, sessions, API-key hashes or stored
  * credentials. Each file is gzip + AES-256-GCM with a passphrase only the owner knows.
+ *
+ * Objects: {bucket}/jithendar/backups/jithendar-backup-{yyyymmdd-hhmmss}.json.gz.enc
  */
 const KEY = "backups";
 const PREFIX = "jithendar-backup-";
+export const BACKUP_ROOT = "jithendar/backups";
 const LOCK_ID = 7_250_032;
 
-type S3Dest = { enabled: boolean; endpoint: string; region: string; bucket: string; prefix: string; forcePathStyle: boolean; accessKeyId: string; secret: Sealed };
-type SftpDest = { enabled: boolean; host: string; port: number; username: string; path: string; password: Sealed | null; privateKey: Sealed | null };
-type DriveDest = { enabled: boolean; folderId: string; credentials: Sealed };
+type R2Dest = { enabled: boolean; bucket: string };
 export type BackupConfig = {
   passphrase: Sealed | null;
   schedule: "off" | "daily" | "weekly";
   hourUtc: number;
   retention: number;
-  s3: S3Dest | null;
-  sftp: SftpDest | null;
-  gdrive: DriveDest | null;
+  r2: R2Dest | null;
 };
 
-const empty: BackupConfig = { passphrase: null, schedule: "off", hourUtc: 21, retention: 14, s3: null, sftp: null, gdrive: null };
+const empty: BackupConfig = { passphrase: null, schedule: "off", hourUtc: 21, retention: 14, r2: null };
 
 export async function readBackupConfig(): Promise<BackupConfig> {
   const db = await getDb();
   const [row] = await db.select().from(schema.setting).where(eq(schema.setting.key, KEY));
-  return { ...empty, ...((row?.value as Partial<BackupConfig>) ?? {}) };
+  const v = (row?.value as Partial<BackupConfig> | undefined) ?? {};
+  // Older rows may still hold s3/sftp/gdrive destinations (removed): only the known fields are kept.
+  return { passphrase: v.passphrase ?? empty.passphrase, schedule: v.schedule ?? empty.schedule, hourUtc: v.hourUtc ?? empty.hourUtc, retention: v.retention ?? empty.retention, r2: v.r2 ?? null };
 }
 
 async function writeConfig(c: BackupConfig, userId: string) {
@@ -56,9 +57,8 @@ export async function backupSummary() {
     schedule: c.schedule,
     hourUtc: c.hourUtc,
     retention: c.retention,
-    s3: c.s3 && { enabled: c.s3.enabled, endpoint: c.s3.endpoint, region: c.s3.region, bucket: c.s3.bucket, prefix: c.s3.prefix, forcePathStyle: c.s3.forcePathStyle, accessKeyId: c.s3.accessKeyId },
-    sftp: c.sftp && { enabled: c.sftp.enabled, host: c.sftp.host, port: c.sftp.port, username: c.sftp.username, path: c.sftp.path, auth: c.sftp.privateKey ? "key" : "password" },
-    gdrive: c.gdrive && { enabled: c.gdrive.enabled, folderId: c.gdrive.folderId },
+    storageReady: await storageReady(),
+    r2: c.r2 && { enabled: c.r2.enabled, bucket: c.r2.bucket },
   };
 }
 
@@ -87,161 +87,73 @@ export async function saveGeneral(actor: Actor, raw: unknown) {
   await audit(actor, "backup.configure", "general", { schedule: parsed.data.schedule, retention: parsed.data.retention });
 }
 
-const keep = (input: string, existing: Sealed | null | undefined) => (input ? seal(input) : existing ?? null);
+const BUCKET = /^$|^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/;
 
-export async function saveDestination(actor: Actor, kind: "s3" | "sftp" | "gdrive", f: Record<string, string | boolean>) {
+/** Turn the R2 destination on or off and choose its bucket ("" = the media bucket). */
+export async function saveDestination(actor: Actor, f: { enabled: boolean; bucket: string }) {
   admin(actor);
+  const bucket = f.bucket.trim().toLowerCase();
+  if (!BUCKET.test(bucket)) throw new PostError("Bucket names are 3–63 lowercase letters, digits and hyphens.");
+  if (f.enabled && !(await storageReady())) throw new PostError("Configure Cloudflare R2 in Storage & email first.");
   const c = await readBackupConfig();
-  const s = (k: string) => String(f[k] ?? "").trim();
-  if (kind === "s3") {
-    const secret = keep(s("secret"), c.s3?.secret);
-    if (!s("bucket") || !s("accessKeyId") || !secret) throw new PostError("Bucket, access key ID and secret are required.");
-    c.s3 = { enabled: f.enabled === true, endpoint: s("endpoint"), region: s("region") || "us-east-1", bucket: s("bucket"), prefix: s("prefix").replace(/\/+$/, ""), forcePathStyle: f.forcePathStyle === true, accessKeyId: s("accessKeyId"), secret };
-  } else if (kind === "sftp") {
-    const password = keep(s("password"), c.sftp?.password);
-    const privateKey = keep(s("privateKey"), c.sftp?.privateKey);
-    if (!s("host") || !s("username") || (!password && !privateKey)) throw new PostError("Host, username and a password or private key are required.");
-    c.sftp = { enabled: f.enabled === true, host: s("host"), port: Number(s("port") || 22), username: s("username"), path: s("path") || ".", password, privateKey };
-  } else {
-    const credentials = keep(s("credentials"), c.gdrive?.credentials);
-    if (!s("folderId") || !credentials) throw new PostError("Folder ID and credentials JSON are required.");
-    if (s("credentials")) {
-      try {
-        const t = (JSON.parse(s("credentials")) as { type?: string }).type;
-        if (t !== "service_account" && t !== "authorized_user") throw new Error();
-      } catch {
-        throw new PostError('Credentials must be a service-account JSON or an "authorized_user" JSON with a refresh token.');
-      }
-    }
-    c.gdrive = { enabled: f.enabled === true, folderId: s("folderId"), credentials };
-  }
-  await writeConfig(c, actor.id);
-  await audit(actor, "backup.destination", kind, { enabled: f.enabled === true });
+  await writeConfig({ ...c, r2: { enabled: f.enabled, bucket } }, actor.id);
+  await audit(actor, "backup.destination", "r2", { enabled: f.enabled, bucket: bucket || "(media bucket)" });
 }
 
-// --- Destinations -----------------------------------------------------------------
+// --- Destination ---------------------------------------------------------------------------
 
 type Target = { name: string; put: (file: string, data: Buffer) => Promise<void>; prune: (retention: number) => Promise<number> };
 
-function s3Target(d: S3Dest): Target {
-  const client = new S3Client({
-    region: d.region,
-    ...(d.endpoint ? { endpoint: d.endpoint } : {}),
-    forcePathStyle: d.forcePathStyle,
-    credentials: { accessKeyId: d.accessKeyId, secretAccessKey: unseal(d.secret) },
-  });
-  const key = (f: string) => [d.prefix, f].filter(Boolean).join("/");
+async function r2Target(d: R2Dest): Promise<Target> {
+  const ops = await bucketOps(d.bucket);
+  const key = (f: string) => `${BACKUP_ROOT}/${f}`;
   return {
-    name: "s3",
-    put: async (file, data) => {
-      await client.send(new PutObjectCommand({ Bucket: d.bucket, Key: key(file), Body: data, ContentType: "application/octet-stream" }));
-    },
+    name: "r2",
+    put: (file, data) => ops.put(key(file), data),
     prune: async (retention) => {
-      const out = await client.send(new ListObjectsV2Command({ Bucket: d.bucket, Prefix: key(PREFIX) }));
-      const old = (out.Contents ?? []).map((o) => o.Key!).filter(Boolean).sort().reverse().slice(retention);
-      for (const k of old) await client.send(new DeleteObjectCommand({ Bucket: d.bucket, Key: k }));
+      const old = (await ops.list(key(PREFIX))).map((o) => o.key).sort().reverse().slice(retention);
+      for (const k of old) await ops.remove(k);
       return old.length;
     },
   };
 }
 
-function sftpTarget(d: SftpDest): Target {
-  const connect = async () => {
-    const { default: SftpClient } = await import("ssh2-sftp-client");
-    const sftp = new SftpClient();
-    await sftp.connect({
-      host: d.host,
-      port: d.port,
-      username: d.username,
-      ...(d.privateKey ? { privateKey: unseal(d.privateKey) } : { password: unseal(d.password!) }),
-      readyTimeout: 15_000,
-    });
-    return sftp;
-  };
-  const p = (f: string) => `${d.path.replace(/\/+$/, "")}/${f}`;
-  return {
-    name: "sftp",
-    put: async (file, data) => {
-      const sftp = await connect();
-      try {
-        await sftp.put(data, p(file));
-      } finally {
-        await sftp.end();
-      }
-    },
-    prune: async (retention) => {
-      const sftp = await connect();
-      try {
-        const files = (await sftp.list(d.path)).map((f) => f.name).filter((n) => n.startsWith(PREFIX)).sort().reverse().slice(retention);
-        for (const f of files) await sftp.delete(p(f));
-        return files.length;
-      } finally {
-        await sftp.end();
-      }
-    },
-  };
+async function targets(c: BackupConfig, onlyEnabled = true): Promise<Target[]> {
+  if (!c.r2 || (onlyEnabled && !c.r2.enabled)) return [];
+  return [await r2Target(c.r2)];
 }
 
-function driveTarget(d: DriveDest): Target {
-  const token = async () => {
-    const { GoogleAuth } = await import("google-auth-library");
-    const auth = new GoogleAuth({ credentials: JSON.parse(unseal(d.credentials)), scopes: ["https://www.googleapis.com/auth/drive.file"] });
-    const t = await (await auth.getClient()).getAccessToken();
-    if (!t.token) throw new Error("Google did not return an access token.");
-    return t.token;
-  };
-  const api = "https://www.googleapis.com/drive/v3/files";
-  return {
-    name: "gdrive",
-    put: async (file, data) => {
-      const boundary = `jk${Date.now()}`;
-      const meta = JSON.stringify({ name: file, parents: [d.folderId] });
-      const body = Buffer.concat([
-        Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: application/octet-stream\r\n\r\n`),
-        data,
-        Buffer.from(`\r\n--${boundary}--`),
-      ]);
-      const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${await token()}`, "Content-Type": `multipart/related; boundary=${boundary}` },
-        body,
-        signal: AbortSignal.timeout(120_000),
-      });
-      if (!res.ok) throw new Error(`Google Drive upload failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
-    },
-    prune: async (retention) => {
-      const t = await token();
-      const q = encodeURIComponent(`'${d.folderId}' in parents and name contains '${PREFIX}' and trashed = false`);
-      const res = await fetch(`${api}?q=${q}&orderBy=name desc&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=files(id,name)`, {
-        headers: { Authorization: `Bearer ${t}` },
-      });
-      if (!res.ok) throw new Error(`Google Drive list failed (${res.status})`);
-      const old = ((await res.json()) as { files: { id: string }[] }).files.slice(retention);
-      for (const f of old) await fetch(`${api}/${f.id}?supportsAllDrives=true`, { method: "DELETE", headers: { Authorization: `Bearer ${t}` } });
-      return old.length;
-    },
-  };
-}
-
-function targets(c: BackupConfig, onlyEnabled = true): Target[] {
-  const out: Target[] = [];
-  if (c.s3 && (!onlyEnabled || c.s3.enabled)) out.push(s3Target(c.s3));
-  if (c.sftp && (!onlyEnabled || c.sftp.enabled)) out.push(sftpTarget(c.sftp));
-  if (c.gdrive && (!onlyEnabled || c.gdrive.enabled)) out.push(driveTarget(c.gdrive));
-  return out;
-}
-
-/** Write and remove a small probe file to prove a destination works. */
-export async function testDestination(actor: Actor, kind: "s3" | "sftp" | "gdrive") {
+/** Write and remove a small probe object to prove the bucket is writable. */
+export async function testDestination(actor: Actor) {
   admin(actor);
   const c = await readBackupConfig();
-  const t = targets(c, false).find((x) => x.name === kind);
-  if (!t) throw new PostError("Save this destination first.");
+  if (!c.r2) throw new PostError("Save the destination first.");
   try {
-    await t.put(`${PREFIX}connection-test.txt`, Buffer.from("ok"));
+    const ops = await bucketOps(c.r2.bucket);
+    const probe = `${BACKUP_ROOT}/connection-test-${Date.now()}.txt`;
+    await ops.put(probe, Buffer.from("ok"), "text/plain");
+    await ops.remove(probe);
   } catch (e) {
     throw new PostError(`Connection test failed: ${(e as Error).message}`);
   }
+}
+
+/** Backups stored in R2, newest first (for the admin list). */
+export async function listStoredBackups(): Promise<{ key: string; name: string; size: number; lastModified: string | null }[]> {
+  const c = await readBackupConfig();
+  if (!c.r2 || !(await storageReady())) return [];
+  const ops = await bucketOps(c.r2.bucket);
+  return (await ops.list(`${BACKUP_ROOT}/${PREFIX}`))
+    .map((o) => ({ ...o, name: o.key.slice(BACKUP_ROOT.length + 1) }))
+    .sort((a, b) => b.name.localeCompare(a.name));
+}
+
+/** Bytes of one stored backup (admin download). Only names this site writes are accepted. */
+export async function readStoredBackup(name: string): Promise<Buffer> {
+  if (!/^jithendar-backup-\d{8}-\d{6}\.json\.gz\.enc$/.test(name)) throw new PostError("Unknown backup.", 404);
+  const c = await readBackupConfig();
+  if (!c.r2) throw new PostError("Backups are not configured.", 404);
+  return (await bucketOps(c.r2.bucket)).get(`${BACKUP_ROOT}/${name}`);
 }
 
 // --- Building and running -----------------------------------------------------------
@@ -272,7 +184,7 @@ export async function buildBackup(): Promise<{ filename: string; data: Buffer }>
     version: 1,
     createdAt: new Date().toISOString(),
     appVersion: process.env.GIT_SHA ?? "dev",
-    note: "Excludes password hashes, sessions, API-key hashes and stored credentials. Media bytes live in S3; this holds their metadata.",
+    note: "Excludes password hashes, sessions, API-key hashes and stored credentials. Media bytes live in R2; this holds their metadata.",
     settings: site?.value ?? null,
     tables,
   };
@@ -287,8 +199,8 @@ export async function runBackup(trigger: "manual" | "scheduled", actor?: Actor) 
   const results: { destination: string; ok: boolean; detail: string }[] = [];
   try {
     const c = await readBackupConfig();
-    const dests = targets(c);
-    if (dests.length === 0) throw new PostError("Enable at least one destination.");
+    const dests = await targets(c);
+    if (dests.length === 0) throw new PostError("Turn on the Cloudflare R2 destination first.");
     const { filename, data } = await buildBackup();
     for (const d of dests) {
       try {

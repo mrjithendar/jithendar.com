@@ -86,7 +86,9 @@ are wrapped in a focusable horizontal scroll region; code blocks scroll inside t
   `{ model, input, response_format: { type: "image", mime_type: "image/jpeg", aspect_ratio, image_size }, store: false }`;
   image read from `steps[].content[]` blocks of `type: "image"` (base64 `data`). Checked against Google's
   published OpenAPI description on 2026-10-29. Plain `fetch` (no SDK dependency) so cancellation aborts the request.
-- Model: `GEMINI_IMAGE_MODEL`, required — nothing is hard-coded. On 2026-10-29 Google's models page listed
+- Key and model: **Admin → Integrations** (key sealed in the database; saving verifies it with a free
+  `GET v1beta/models/{model}` request, nothing is generated). `GEMINI_API_KEY`/`GEMINI_IMAGE_MODEL`/`GEMINI_IMAGE_SIZE`
+  remain a fallback until the admin entry is saved. Nothing is hard-coded. On 2026-10-29 Google's models page listed
   `gemini-3.1-flash-image` (Nano Banana 2) and `gemini-nano-banana-2.1` as stable image models.
 - Limits (env): `GEMINI_IMAGE_USER_HOURLY_LIMIT` (10), `GEMINI_IMAGE_USER_CONCURRENCY` (1), `GEMINI_IMAGE_DAILY_LIMIT`
   (50, whole site), `GEMINI_IMAGE_TIMEOUT_MS` (90 000). Counted in Postgres, so they hold across replicas.
@@ -99,6 +101,22 @@ are wrapped in a focusable horizontal scroll region; code blocks scroll inside t
   `media/images/…`, creates the media row and puts it in the editor (the post changes only when saved;
   nothing is published). **Discard**/close deletes it; unaccepted results are deleted after 1 hour by the
   app and after 1 day by the R2 lifecycle rule (backstop).
+
+## Media library (Admin → Media)
+
+WordPress-style: grid or list view; filters by type, month and “missing alt text”; search over file name, alt
+text, title and caption; drag-and-drop upload of up to 20 files at once (alt text pre-filled from the file name
+and required for images before upload); **Attachment details** (preview, file facts, uploader, alt text, title,
+caption, description, where the file is used with edit links, copy URL/Markdown, previous/next); bulk select
+and delete (files still used by a post, page or the site settings are always kept). Pages have featured images
+like posts (shown under the page title and used as the share image).
+
+## Backups (Admin → Backups)
+
+Cloudflare R2 only (S3, SFTP and Google Drive destinations were removed on 2026-10-29). Backups reuse the media
+R2 account and token and are written to `jithendar/backups/jithendar-backup-{yyyymmdd-hhmmss}.json.gz.enc` in
+the media bucket or, recommended, a separate private bucket (the token needs Object Read & Write on it).
+Stored backups can be downloaded from the same page; the retention setting prunes older ones.
 
 ## Setup (in order) — requires manual configuration
 

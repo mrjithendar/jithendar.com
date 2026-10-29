@@ -31,7 +31,16 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     title,
     description,
     alternates: { canonical: absoluteUrl(path) },
-    openGraph: { type: "website", url: absoluteUrl(path), siteName: site.name, locale: site.locale, title, description },
+    openGraph: {
+      type: "website",
+      url: absoluteUrl(path),
+      siteName: site.name,
+      locale: site.locale,
+      title,
+      description,
+      ...(fm.featuredImage ? { images: [{ url: absoluteUrl(fm.featuredImage.src), width: fm.featuredImage.width, height: fm.featuredImage.height, alt: fm.featuredImage.alt }] } : {}),
+    },
+    ...(fm.featuredImage ? { twitter: { card: "summary_large_image", images: [absoluteUrl(fm.featuredImage.src)] } } : {}),
     ...(fm.noindex ? { robots: { index: false, follow: true } } : {}),
   };
 }

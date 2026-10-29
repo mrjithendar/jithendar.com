@@ -9,6 +9,7 @@ import type { Actor } from "./posts";
 import { PostError } from "./posts";
 import { hit } from "./rate-limit";
 import { getSettings } from "./settings";
+import { needsHumanCheck, rememberHuman } from "./human-check";
 import { verifyTurnstile } from "./turnstile";
 
 export * from "./comment-types";
@@ -315,7 +316,7 @@ const CLIENT_KEY = /^[A-Za-z0-9_-]{8,64}$/;
 export type SubmitInput = { postId: string; parentId?: string | null; body: unknown; clientKey?: string | null; turnstileToken: string | null; ip?: string | null };
 
 /**
- * Signed-in readers comment or reply after a Turnstile check. With approval required (Admin → Appearance),
+ * Signed-in readers comment or reply after a Turnstile check (remembered for a while, see lib/human-check). With approval required (Admin → Appearance),
  * readers' comments wait for moderation; authors' and admins' are published at once.
  * Protections: 5 comments per 10 minutes per account, the same text twice within 10 minutes is refused, and
  * a resubmitted form (same client key) returns the first comment instead of creating another.
@@ -340,7 +341,11 @@ export async function submitComment(user: { id: string; role: string }, input: S
     return { id: first.id, status: first.status === "approved" ? "approved" : "pending", duplicate: true };
   }
 
-  if (!(await verifyTurnstile(input.turnstileToken, input.ip))) throw new PostError("Please complete the human verification again.", 400);
+  // Readers who passed Turnstile recently (sign-in or an earlier comment) are not asked again (lib/human-check).
+  if (await needsHumanCheck(user)) {
+    if (!(await verifyTurnstile(input.turnstileToken, input.ip))) throw new PostError("Please complete the human verification again.", 400);
+    await rememberHuman(user.id);
+  }
 
   let parent: { id: string; rootId: string | null; depth: number } | null = null;
   if (input.parentId) {

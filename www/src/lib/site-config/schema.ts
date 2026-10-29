@@ -130,6 +130,11 @@ const general = z.object({
     requireApproval: z.boolean(),
     /** How long authors can edit their comment after posting (0 = no limit). */
     editWindowMinutes: z.number().int().min(0).max(43200),
+    /**
+     * After a signed-in reader passes Cloudflare Turnstile (at sign-in or on a comment), their comments skip the
+     * check for this many hours (0 = check every comment). Authors and admins are never asked.
+     */
+    humanCheckHours: z.number().int().min(0).max(720),
   }),
   maintenance: z.object({ enabled: z.boolean(), message: text(300), retryAfterMinutes: z.number().int().min(5).max(1440) }),
 });
@@ -480,7 +485,7 @@ export function defaultConfig(): SiteConfig {
       contact: { email: "", location: "" },
       social: { github: "https://github.com/mrjithendar", x: "https://x.com/imjithendar", linkedin: "https://www.linkedin.com/in/jithendardharmapuri", youtube: "", mastodon: "" },
       features: { comments: true, registration: true, contactForm: true },
-      discussion: { requireApproval: true, editWindowMinutes: 1440 },
+      discussion: { requireApproval: true, editWindowMinutes: 1440, humanCheckHours: 24 },
       maintenance: { enabled: false, message: "We are making improvements and will be back shortly.", retryAfterMinutes: 30 },
     },
     branding: { showWordmark: true, logoLight: null, logoDark: null, logoMobile: null, favicon: null, appleIcon: null, socialImage: null },

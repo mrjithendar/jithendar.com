@@ -1,0 +1,41 @@
+%%{init: {"theme": "base", "flowchart": {"curve": "basis", "nodeSpacing": 26, "rankSpacing": 56, "padding": 12}, "themeVariables": {"fontFamily": "arial, sans-serif", "fontSize": "15px", "primaryTextColor": "#0f172a", "lineColor": "#15803d", "clusterBkg": "#ffffff", "clusterBorder": "#cbd5e1", "edgeLabelBackground": "#ffffff"}}}%%
+%% RoboShop AI: telemetry paths (Figure 4). Arrows follow the data; Prometheus and Alloy pull. Observability manifests live in the tools repository (observability/).
+%% Evidence: tools observability/README.md, minikube/roboshop/roboshop-config-configmap.yaml,
+%% services/moks/lib/runtime.py (Langfuse export), services/*/lib/runtime.* (OTLP, /metrics, JSON logs).
+flowchart LR
+  subgraph apps["roboshop-ai namespace"]
+    direction TB
+    svcs["<b>Every service</b><br/>JSON logs · /metrics · OTLP spans<br/>W3C traceparent propagated"]
+    moks["<b>moks</b><br/>gen_ai model spans<br/>(also part of every service)"]
+  end
+
+  subgraph obs["Observability stack (deployed from the tools repo)"]
+    direction TB
+    otel["<b>OpenTelemetry Collector</b><br/>strips sensitive attributes"]
+    jaeger[("<b>Jaeger</b><br/>in-memory traces")]
+    prom["<b>Prometheus</b><br/>scrape job: roboshop"]
+    alloy["<b>Alloy</b><br/>tails pod logs"]
+    loki[("<b>Loki</b>")]
+    grafana["<b>Grafana</b><br/>dashboards, Explore"]
+  end
+
+  langfuse["<b>Langfuse Cloud</b><br/>optional, needs credentials"]
+
+  svcs -.->|"OTLP/HTTP :4318"| otel
+  otel -.-> jaeger
+  svcs -.->|"scraped /metrics"| prom
+  svcs -.->|"pod logs"| alloy
+  alloy -.-> loki
+  prom -.->|"queries"| grafana
+  loki -.-> grafana
+  moks -.->|"optional, metadata only"| langfuse
+
+  classDef svc fill:#ecfdf5,stroke:#047857,stroke-width:1.5px,color:#064e3b
+  classDef ai fill:#f5f3ff,stroke:#6d28d9,stroke-width:1.5px,color:#2e1065
+  classDef obsNode fill:#f0fdf4,stroke:#15803d,stroke-width:1.5px,color:#14532d
+  classDef external fill:#f1f5f9,stroke:#64748b,stroke-width:1.5px,color:#0f172a,stroke-dasharray:6 4
+
+  class svcs svc
+  class moks ai
+  class otel,jaeger,prom,alloy,loki,grafana obsNode
+  class langfuse external

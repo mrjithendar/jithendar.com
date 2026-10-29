@@ -1,40 +1,23 @@
-import { and, count, desc, eq, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, gte, ilike, lt, or, sql, type SQL } from "drizzle-orm";
 import Link from "next/link";
 import { Flash, type FlashParams } from "@/components/admin/Flash";
 import { AdminHeader, Card } from "@/components/admin/ui";
-import { Alert } from "@/components/ui/form";
+import { Alert, Button, Input, Select } from "@/components/ui/form";
 import { getDb, schema } from "@/db";
-import { staffActor } from "@/lib/admin";
-import { flash } from "@/lib/flash";
-import { deleteMedia, mediaSrc, mediaUsage, updateMediaAlt } from "@/lib/media";
-import { MediaItemActions } from "./MediaItemActions";
+import { rowsOf } from "@/db/rows";
+import { mediaSrc, mediaUsage, MEDIA_DETAIL_LIMITS } from "@/lib/media";
 import { requireRole } from "@/lib/session";
 import { MEDIA_KINDS, storageReady } from "@/lib/storage";
+import { MediaLibrary, type LibraryItem } from "./MediaLibrary";
 import { MediaUploader } from "./MediaUploader";
 
 export const metadata = { title: "Media" };
 
 const PAGE_SIZE = 48;
+const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+const TZ = "Asia/Kolkata";
 
-async function remove(form: FormData) {
-  "use server";
-  const actor = await staffActor();
-  await flash(String(form.get("back") || "/admin/media"), async () => {
-    await deleteMedia(actor, String(form.get("id")));
-    return "File deleted.";
-  });
-}
-
-async function saveAlt(form: FormData) {
-  "use server";
-  const actor = await staffActor();
-  await flash(String(form.get("back") || "/admin/media"), async () => {
-    await updateMediaAlt(actor, String(form.get("id")), String(form.get("alt") ?? ""));
-    return "Alt text saved.";
-  });
-}
-
-const size = (n: number) => (n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`);
+const size = (n: number) => (n > 1024 * 1024 * 1024 ? `${(n / 1024 ** 3).toFixed(2)} GB` : n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`);
 
 /** The Markdown an author pastes to use the file. */
 function snippet(m: { id: string; filename: string; kind: string; alt: string }) {
@@ -45,97 +28,159 @@ function snippet(m: { id: string; filename: string; kind: string; alt: string })
   return `[${m.alt || m.filename}](${src})`;
 }
 
-const ICON: Record<string, string> = { videos: "🎬", audio: "🎧", documents: "📄" };
+const monthLabel = (ym: string) => new Date(`${ym}-15T00:00:00Z`).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
 
+/**
+ * Media library, modelled on WordPress: grid or list view, filters by type, month and missing alt text, search,
+ * attachment details (alt text, title, caption, description, where it is used), bulk delete, drag-and-drop upload.
+ */
 export default async function MediaPage({ searchParams }: { searchParams: FlashParams }) {
   await requireRole("admin", "author");
   const sp = await searchParams;
   const kind = MEDIA_KINDS.find((k) => k === sp.kind);
+  const month = sp.month && MONTH.test(sp.month) ? sp.month : undefined;
+  const q = (sp.q ?? "").trim().slice(0, 100);
+  const missingAlt = sp.alt === "missing";
+  const view = sp.view === "list" ? "list" : "grid";
   const page = Math.max(1, Math.floor(Number(sp.page) || 1));
+  const m = schema.media;
+  const like = q ? `%${q.replace(/[%_\\]/g, "\\$&")}%` : undefined;
+  const monthStart = month ? sql`(${`${month}-01`}::date::timestamp at time zone ${TZ})` : undefined;
+  const where: SQL | undefined = and(
+    eq(m.status, "ready"),
+    kind ? eq(m.kind, kind) : undefined,
+    like ? or(ilike(m.filename, like), ilike(m.alt, like), ilike(m.title, like), ilike(m.caption, like)) : undefined,
+    missingAlt ? and(eq(m.kind, "images"), eq(m.alt, "")) : undefined,
+    monthStart ? and(gte(m.createdAt, monthStart), lt(m.createdAt, sql`${monthStart} + interval '1 month'`)) : undefined,
+  );
+
   const db = await getDb();
-  const where: SQL | undefined = and(eq(schema.media.status, "ready"), kind ? eq(schema.media.kind, kind) : undefined);
-  const [items, [total], ready] = await Promise.all([
-    db.select().from(schema.media).where(where).orderBy(desc(schema.media.createdAt)).limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE),
-    db.select({ n: count() }).from(schema.media).where(where),
+  const [rows, [total], ready, months, [totals]] = await Promise.all([
+    db
+      .select({ media: m, uploader: schema.user.name })
+      .from(m)
+      .leftJoin(schema.user, eq(schema.user.id, m.uploadedBy))
+      .where(where)
+      .orderBy(desc(m.createdAt))
+      .limit(PAGE_SIZE)
+      .offset((page - 1) * PAGE_SIZE),
+    db.select({ n: count() }).from(m).where(where),
     storageReady(),
+    db
+      .execute(sql`select to_char(created_at at time zone ${TZ}, 'YYYY-MM') as ym, count(*)::int as n from media where status = 'ready' group by 1 order by 1 desc limit 60`)
+      .then((r) => rowsOf<{ ym: string; n: number }>(r)),
+    db
+      .select({
+        files: count(),
+        bytes: sql<number>`coalesce(sum(${m.sizeBytes}), 0)::bigint`,
+        noAlt: sql<number>`count(*) filter (where ${m.kind} = 'images' and ${m.alt} = '')::int`,
+      })
+      .from(m)
+      .where(eq(m.status, "ready")),
   ]);
   const pages = Math.max(1, Math.ceil((total?.n ?? 0) / PAGE_SIZE));
-  const usage = await mediaUsage(items.map((m) => m.id));
-  const href = (k: string | undefined, p = 1) => {
-    const q = new URLSearchParams({ ...(k ? { kind: k } : {}), ...(p > 1 ? { page: String(p) } : {}) }).toString();
-    return q ? `/admin/media?${q}` : "/admin/media";
+  const usage = await mediaUsage(rows.map((r) => r.media.id));
+  const items: LibraryItem[] = rows.map(({ media: x, uploader }) => ({
+    id: x.id,
+    src: mediaSrc(x),
+    filename: x.filename,
+    kind: x.kind,
+    contentType: x.contentType,
+    alt: x.alt,
+    title: x.title,
+    caption: x.caption,
+    description: x.description,
+    width: x.width,
+    height: x.height,
+    size: size(x.sizeBytes),
+    visibility: x.visibility,
+    onLegacyStorage: x.storageBackend !== "r2",
+    uploadedAt: x.createdAt.toISOString(),
+    uploadedBy: uploader ?? "—",
+    uses: usage.get(x.id) ?? 0,
+    snippet: snippet(x),
+  }));
+
+  const params = (over: Record<string, string | undefined>) => {
+    const merged = { kind, month, q: q || undefined, alt: missingAlt ? "missing" : undefined, view: view === "list" ? "list" : undefined, page: undefined, ...over };
+    const qs = new URLSearchParams(Object.entries(merged).filter((e): e is [string, string] => Boolean(e[1]))).toString();
+    return qs ? `/admin/media?${qs}` : "/admin/media";
   };
-  const here = href(kind, page);
+  const noAlt = Number(totals?.noAlt ?? 0);
 
   return (
     <>
-      <AdminHeader title="Media" description="Images, video, audio and PDFs in Cloudflare R2. Links (/media/…) never change, even if the storage does." />
+      <AdminHeader
+        title="Media library"
+        description={
+          <>
+            {totals?.files ?? 0} file(s) · {size(Number(totals?.bytes ?? 0))} in Cloudflare R2. Links (<code className="text-xs">/media/…</code>) never change, even if the storage does.
+          </>
+        }
+      />
       <Flash ok={sp.ok} error={sp.error} />
       {ready ? (
-        <Card className="mb-8">
+        <Card className="mb-6">
           <MediaUploader />
         </Card>
       ) : (
-        <div className="mb-8">
+        <div className="mb-6">
           <Alert tone="info">
             Uploads are disabled until media storage is configured. <Link href="/admin/storage" className="font-semibold underline">Configure Cloudflare R2</Link>.
           </Alert>
         </div>
       )}
 
-      <nav aria-label="Filter by type" className="-mx-1 mb-6 flex gap-2 overflow-x-auto px-1 pb-1">
-        {[undefined, ...MEDIA_KINDS].map((k) => (
-          <Link
-            key={k ?? "all"}
-            href={href(k)}
-            aria-current={k === kind ? "page" : undefined}
-            className={`shrink-0 rounded-full px-4 py-2 text-sm font-medium capitalize ${k === kind ? "bg-fg text-canvas" : "bg-white text-fg-muted ring-1 ring-slate-200 dark:bg-white/5 dark:ring-white/10"}`}
-          >
-            {k ?? "All"}
-          </Link>
-        ))}
-      </nav>
-
-      {items.length === 0 ? (
-        <p className="text-sm text-slate-500">No files here yet.</p>
-      ) : (
-        <ul className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
-          {items.map((m) => {
-            const src = mediaSrc(m);
-            const code = snippet(m);
-            return (
-              <li key={m.id} className="flex flex-col overflow-hidden rounded-xl border border-line bg-surface">
-                {m.kind === "images" && m.visibility === "public" ? (
-                  // eslint-disable-next-line @next/next/no-img-element -- admin thumbnail
-                  <img src={src} alt={m.alt} loading="lazy" width={m.width ?? undefined} height={m.height ?? undefined} className="aspect-[4/3] w-full bg-slate-100 object-cover dark:bg-white/5" />
-                ) : (
-                  <a href={src} target="_blank" rel="noopener" className="flex aspect-[4/3] w-full items-center justify-center bg-slate-100 text-4xl dark:bg-white/5">
-                    <span aria-hidden="true">{ICON[m.kind] ?? "🖼️"}</span>
-                    <span className="sr-only">Open {m.filename}</span>
-                  </a>
-                )}
-                <div className="flex flex-1 flex-col gap-1 p-3 text-xs">
-                  <p className="truncate font-medium text-fg" title={m.alt || m.filename}>{m.alt || m.filename}</p>
-                  <p className="text-slate-500">
-                    {m.width && m.height ? `${m.width}×${m.height} · ` : ""}
-                    {size(m.sizeBytes)} · {m.kind}
-                    {m.visibility === "private" ? " · private" : ""}
-                    {m.storageBackend !== "r2" ? " · on S3" : ""}
-                  </p>
-                  <code className="block truncate text-[11px] text-slate-500" title={code}>{code}</code>
-                  <MediaItemActions id={m.id} alt={m.alt} uses={usage.get(m.id) ?? 0} back={here} saveAlt={saveAlt} remove={remove} />
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+      {noAlt > 0 && !missingAlt && (
+        <div className="mb-6">
+          <Alert tone="info">
+            {noAlt} image(s) have no alt text, so screen readers and search engines cannot describe them.{" "}
+            <Link href={params({ alt: "missing", kind: undefined })} className="font-semibold underline">Review them</Link>.
+          </Alert>
+        </div>
       )}
+
+      <form className="mb-6 flex flex-wrap items-end gap-2 rounded-xl border border-line bg-surface p-3" role="search" aria-label="Filter media">
+        {view === "list" && <input type="hidden" name="view" value="list" />}
+        <label className="sr-only" htmlFor="f-kind">Type</label>
+        <div className="w-full min-[420px]:w-44">
+          <Select id="f-kind" name="kind" defaultValue={kind ?? ""}>
+            <option value="">All media items</option>
+            {MEDIA_KINDS.map((k) => <option key={k} value={k}>{k[0]!.toUpperCase() + k.slice(1)}</option>)}
+          </Select>
+        </div>
+        <label className="sr-only" htmlFor="f-month">Month</label>
+        <div className="w-full min-[420px]:w-52">
+          <Select id="f-month" name="month" defaultValue={month ?? ""}>
+            <option value="">All dates</option>
+            {months.map((x) => <option key={x.ym} value={x.ym}>{monthLabel(x.ym)} ({x.n})</option>)}
+          </Select>
+        </div>
+        <label className="flex min-h-10 items-center gap-2 px-2 text-sm text-fg-muted">
+          <input type="checkbox" name="alt" value="missing" defaultChecked={missingAlt} /> Missing alt text
+        </label>
+        <div className="ml-auto flex min-w-0 flex-1 gap-2 sm:max-w-xs">
+          <label className="sr-only" htmlFor="f-q">Search media</label>
+          <Input id="f-q" name="q" type="search" defaultValue={q} placeholder="Search media…" />
+          <Button type="submit" variant="secondary">Filter</Button>
+        </div>
+      </form>
+
+      <MediaLibrary
+        items={items}
+        view={view}
+        viewHrefs={{ grid: params({ view: undefined, page: page > 1 ? String(page) : undefined }), list: params({ view: "list", page: page > 1 ? String(page) : undefined }) }}
+        limits={MEDIA_DETAIL_LIMITS}
+        total={total?.n ?? 0}
+        filtered={Boolean(kind || month || q || missingAlt)}
+        clearHref="/admin/media"
+      />
 
       {pages > 1 && (
         <nav aria-label="Pages" className="mt-8 flex items-center justify-between gap-4 text-sm">
-          {page > 1 ? <Link href={href(kind, page - 1)} className="rounded-lg px-3 py-2 font-medium underline">← Newer</Link> : <span />}
-          <span className="text-slate-500">Page {page} of {pages}</span>
-          {page < pages ? <Link href={href(kind, page + 1)} className="rounded-lg px-3 py-2 font-medium underline">Older →</Link> : <span />}
+          {page > 1 ? <Link href={params({ page: page - 1 > 1 ? String(page - 1) : undefined })} className="rounded-lg px-3 py-2 font-medium underline">← Newer</Link> : <span />}
+          <span className="text-fg-subtle">Page {page} of {pages}</span>
+          {page < pages ? <Link href={params({ page: String(page + 1) })} className="rounded-lg px-3 py-2 font-medium underline">Older →</Link> : <span />}
         </nav>
       )}
     </>

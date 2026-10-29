@@ -41,9 +41,9 @@ const nextConfig: NextConfig = {
   // Server actions accept image uploads up to 10 MB (plus multipart overhead); larger files
   // (video, audio, PDF) go straight to R2 with presigned URLs and never pass through the app.
   experimental: { isrFlushToDisk: false, serverActions: { bodySizeLimit: "11mb" } },
-  // ssh2 (SFTP backups) ships optional native add-ons; PGlite (local dev only) loads its WASM from a
-  // file URL that bundling breaks. Load both from node_modules instead of bundling.
-  serverExternalPackages: ["ssh2", "ssh2-sftp-client", "cpu-features", "@electric-sql/pglite"],
+  // PGlite (local dev only) loads its WASM from a file URL that bundling breaks: load it from
+  // node_modules instead of bundling.
+  serverExternalPackages: ["@electric-sql/pglite"],
   async redirects() {
     return redirects.map(({ source, destination }) => ({ source, destination, permanent: true }));
   },

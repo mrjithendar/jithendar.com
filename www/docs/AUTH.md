@@ -79,10 +79,16 @@ the apex URL is registered.
 
 ## Configuration
 
+**Admin → Integrations** (preferred, since 2026-10-29): enter each provider's client ID and secret, tick
+“Allow sign-in”, Save. The page shows the exact callback URL to register. Secrets are sealed with
+`SETTINGS_ENCRYPTION_KEY` (table `setting`, key `integrations`) and never shown again; saving rebuilds the
+Better Auth instance on every replica (Redis invalidation), so no restart is needed. Once a provider is saved
+there, that entry wins over the environment variables, including “off”; **Use environment instead** forgets it.
+
 | Variable | Where | Notes |
 |---|---|---|
-| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Secret `jithendar-com-env` | Both required to show the button |
-| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | Secret `jithendar-com-env` | Both required to show the button |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Secret `jithendar-com-env` (fallback) | Used until Google is saved in Admin → Integrations |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | Secret `jithendar-com-env` (fallback) | Used until GitHub is saved in Admin → Integrations |
 | `BETTER_AUTH_SECRET` | Secret (exists) | Also encrypts stored provider tokens (`encryptOAuthTokens`) |
 | `SITE_URL` | Deployment env (`https://jithendar.com`) | Better Auth base URL; callback URLs derive from it |
 | `AVATAR_MAX_BYTES`, `AVATAR_MAX_DIMENSION`, `AVATAR_MIN_DIMENSION` | Optional env | Defaults 2 MB, 4096 px, 64 px |
@@ -103,12 +109,46 @@ Local development: copy `.env.example` to `.env.local`, set `SITE_URL=http://loc
 `1x00000000000000000000AA` / `1x0000000000000000000000000000000AA` always pass) and the development OAuth
 clients, then `npm run dev`.
 
+## Sign-in audit
+
+Every sign-in lands in Admin → Audit log with IP (first `X-Forwarded-For` hop) and user agent:
+
+| Action | Severity | Source |
+|---|---|---|
+| `auth.login` | info; notice from a new IP; warning for a staff account from a new IP or after ≥3 failures | Better Auth `session.create` hook (password, Google, GitHub) |
+| `auth.login_failed` | warning; critical from the 5th failure for an address (or 10th from an IP) within 15 min | `/api/auth/[...all]` route reads the response |
+| `auth.rate_limited`, `auth.captcha_failed`, `auth.banned_login` | warning / critical | same (these never reach Better Auth's hooks) |
+| `auth.social_failed`, `auth.signup_failed`, `auth.password_reset_requested`, `auth.password_changed`, `auth.password_change_failed` | notice / warning | same |
+
+Passwords are never read: only the `email` field of the JSON body is taken from a clone of the request.
+The audit page's “Security, last 24 hours” section and the dashboard flag credential stuffing (one IP, ≥3
+accounts), brute force (≥10 failures from one IP), targeted accounts (≥5 failures, or from ≥3 IPs) and
+suspicious successful sign-ins (`src/lib/security.ts`). They only point at entries; blocking is done by
+Better Auth's rate limits and Turnstile, or by hand (ban, Traefik/Cloudflare deny list). CSV export:
+`/api/admin/audit?…` with the same filters (spreadsheet formula characters are neutralised).
+
+## Remembered human check for comments
+
+A passed Turnstile check (password sign-in, sign-up or a comment) sets `user.human_verified_at`. Comments skip
+Turnstile while that is younger than Admin → Appearance → Features → “Remember a passed human check for”
+(default 24 h, 0 = every comment). Authors and admins are never asked. Rate limits, duplicate detection and
+moderation still apply. Social sign-ins do not pass Turnstile, so those readers are asked on their first comment.
+
+## Profile pictures and links
+
+Account → Profile: upload a picture (re-encoded to 512 px WebP in R2; a Google/GitHub picture is used until then)
+and links to GitHub, LinkedIn, X, YouTube, Instagram, Facebook, Bluesky (host-checked https URLs) and Mastodon
+(any https server, `/@name` path). Links are private to the account; the public byline is the author profile.
+
 ## Database migration
 
 `src/db/migrations/0006_account_profile.sql` adds `bio` (default `''`), `website` and `social_links`
 (default `{}`) to `user`. It is additive with defaults and runs automatically at start-up (advisory-locked).
 Rollback: deploy the previous image; it ignores the new columns. Linked Google/GitHub identities use
 Better Auth's existing `account` table (no schema change).
+
+`0009_admin_security.sql` (additive): `audit_log.ip`, `user_agent`, `severity` (+ indexes on action/IP and
+time), `user.human_verified_at`, `page.featured_image`, `media.title`, `caption`, `description`.
 
 ## Errors users can see
 

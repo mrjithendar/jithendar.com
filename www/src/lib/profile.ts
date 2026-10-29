@@ -10,12 +10,28 @@ import { deleteObject, putObject, IMMUTABLE, storageReady } from "./storage";
 
 export const PROFILE_LIMITS = { name: 80, bio: 280, url: 200 } as const;
 
-/** Hosts accepted for each social link; the stored value is always a normalised https URL. */
-const SOCIAL_HOSTS: Record<keyof SocialLinks, string[]> = {
+/** Hosts accepted for each social link; the stored value is always a normalised https URL. Mastodon is federated (any host). */
+const SOCIAL_HOSTS: Record<Exclude<keyof SocialLinks, "mastodon">, string[]> = {
   github: ["github.com"],
   linkedin: ["linkedin.com", "www.linkedin.com"],
   x: ["x.com", "twitter.com"],
+  youtube: ["youtube.com", "www.youtube.com", "m.youtube.com"],
+  instagram: ["instagram.com", "www.instagram.com"],
+  facebook: ["facebook.com", "www.facebook.com", "m.facebook.com"],
+  bluesky: ["bsky.app"],
 };
+
+/** Profile link fields in the order the form shows them. */
+export const SOCIAL_FIELDS = [
+  { key: "github", label: "GitHub", placeholder: "https://github.com/you" },
+  { key: "linkedin", label: "LinkedIn", placeholder: "https://www.linkedin.com/in/you" },
+  { key: "x", label: "X", placeholder: "https://x.com/you" },
+  { key: "youtube", label: "YouTube", placeholder: "https://www.youtube.com/@you" },
+  { key: "instagram", label: "Instagram", placeholder: "https://www.instagram.com/you" },
+  { key: "facebook", label: "Facebook", placeholder: "https://www.facebook.com/you" },
+  { key: "bluesky", label: "Bluesky", placeholder: "https://bsky.app/profile/you.bsky.social" },
+  { key: "mastodon", label: "Mastodon", placeholder: "https://mastodon.social/@you" },
+] as const satisfies readonly { key: keyof SocialLinks; label: string; placeholder: string }[];
 
 /** Control and bidi-override characters are never accepted in names or bios (they can disguise text). */
 const UNSAFE_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f‪-‮⁦-⁩]/;
@@ -70,6 +86,12 @@ export const profileInput = z
     github: optionalUrl("GitHub", SOCIAL_HOSTS.github),
     linkedin: optionalUrl("LinkedIn", SOCIAL_HOSTS.linkedin),
     x: optionalUrl("X", SOCIAL_HOSTS.x),
+    youtube: optionalUrl("YouTube", SOCIAL_HOSTS.youtube),
+    instagram: optionalUrl("Instagram", SOCIAL_HOSTS.instagram),
+    facebook: optionalUrl("Facebook", SOCIAL_HOSTS.facebook),
+    bluesky: optionalUrl("Bluesky", SOCIAL_HOSTS.bluesky),
+    // Federated: any https server, but the path must look like a profile (/@name).
+    mastodon: optionalUrl("Mastodon").refine((v) => !v || (v.startsWith("https://") && /^\/@[\w.]+\/?$/.test(new URL(v).pathname)), "Mastodon must be an https://server/@name link."),
   })
   .strip();
 
@@ -114,8 +136,8 @@ export async function getAccountProfile(userId: string): Promise<AccountProfile 
 export async function updateAccountProfile(userId: string, raw: unknown): Promise<AccountProfile> {
   const parsed = profileInput.safeParse(raw);
   if (!parsed.success) throw new PostError("Check the highlighted fields.", 400, parsed.error.issues.map((i) => i.message));
-  const { name, bio, website, github, linkedin, x } = parsed.data;
-  const socialLinks: SocialLinks = { ...(github ? { github } : {}), ...(linkedin ? { linkedin } : {}), ...(x ? { x } : {}) };
+  const { name, bio, website, ...links } = parsed.data;
+  const socialLinks = Object.fromEntries(Object.entries(links).filter(([, v]) => v)) as SocialLinks;
   const db = await getDb();
   await db.update(schema.user).set({ name, bio, website: website ?? null, socialLinks, updatedAt: new Date() }).where(eq(schema.user.id, userId));
   const profile = await getAccountProfile(userId);

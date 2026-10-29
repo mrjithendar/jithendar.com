@@ -1,3 +1,4 @@
+import { imageGenerationStatus } from "@/lib/image-generation";
 import { requireRole } from "@/lib/session";
 import { bundledPages, pageRowToForm } from "@/lib/site-pages";
 import { PageEditor } from "../PageEditor";
@@ -9,5 +10,5 @@ export default async function NewPage({ searchParams }: { searchParams: Promise<
   await requireRole("admin", "author");
   const { from } = await searchParams;
   const draft = from ? (await bundledPages()).get(from) : undefined;
-  return <PageEditor originalSlug={null} initial={draft ?? pageRowToForm({})} />;
+  return <PageEditor originalSlug={null} initial={draft ?? pageRowToForm({})} imageGeneration={await imageGenerationStatus()} />;
 }

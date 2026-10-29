@@ -4,7 +4,7 @@ import { getDb, schema } from "@/db";
 import { rowsOf } from "@/db/rows";
 import { emailSummary } from "./mail";
 import { getRedis } from "./redis";
-import { geminiImageConfig } from "./gemini";
+import { resolveGeminiImageConfig } from "./integrations";
 import { generationUsage } from "./image-generation";
 import { checkStorage } from "./storage";
 import { turnstileSecret, turnstileSiteKey } from "./turnstile";
@@ -85,8 +85,8 @@ export async function systemChecks(): Promise<{ app: Record<string, string>; che
       };
     }),
     timed("Image generation (Gemini)", async () => {
-      const c = geminiImageConfig();
-      if (!c) return { status: "not configured", detail: "set GEMINI_API_KEY and GEMINI_IMAGE_MODEL to enable “Generate image”" };
+      const c = await resolveGeminiImageConfig();
+      if (!c) return { status: "not configured", detail: "add a Gemini API key in Admin → Integrations to enable “Generate image”" };
       const usage = await generationUsage();
       const total = Object.values(usage).reduce((a, b) => a + b, 0);
       const failed = (usage.failed ?? 0) + (usage.cancelled ?? 0);

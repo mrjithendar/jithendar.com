@@ -232,7 +232,7 @@ export function CommentItem({
                 label={`Reply to ${author.name}`}
                 submitLabel="Post reply"
                 siteKey={siteKey}
-                verify
+                verify={Boolean(siteKey)}
                 autoFocus
                 onCancel={() => setMode("view")}
                 onSubmit={async (body, token, key) => {

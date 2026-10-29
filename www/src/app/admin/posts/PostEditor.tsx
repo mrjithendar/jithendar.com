@@ -391,12 +391,12 @@ export function PostEditor({
             </Field>
           </Panel>
 
-          <Panel title="Search appearance">
+          <Panel title="Search appearance" open>
             <SearchPreview url={`jithendar.com${publicPath}`} title={v.seoTitle || v.title} description={v.seoDescription || v.description} />
             <Field label="SEO title (optional)" htmlFor="seoTitle" hint={`${(v.seoTitle ?? "").length} characters. Defaults to the post title.`}>
               <Input id="seoTitle" value={v.seoTitle ?? ""} maxLength={110} onChange={(e) => set("seoTitle", e.target.value || null)} />
             </Field>
-            <Field label="Meta description (optional)" htmlFor="seoDescription" hint={`${(v.seoDescription ?? "").length}/160. Defaults to the summary.`}>
+            <Field label="Meta description" optional htmlFor="seoDescription" hint={`${(v.seoDescription ?? "").length}/160 (50–160). Shown in search results; defaults to the summary.`}>
               <Textarea id="seoDescription" rows={3} maxLength={160} value={v.seoDescription ?? ""} onChange={(e) => set("seoDescription", e.target.value || null)} />
             </Field>
             <label className="flex items-start gap-2 text-sm">

@@ -3,9 +3,9 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { LogoMark } from "@/components/Logo";
 import { Alert } from "@/components/ui/form";
-import { enabledProviders } from "@/lib/auth-providers";
 import { authErrorMessage } from "@/lib/auth-errors";
 import { safeNext } from "@/lib/safe-next";
+import { activeProviders } from "@/lib/integrations";
 import { getSessionUser } from "@/lib/session";
 import { getSettings } from "@/lib/settings";
 import { turnstileSiteKey } from "@/lib/turnstile";
@@ -26,7 +26,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   if (user && !confirming) redirect(next);
 
   const settings = await getSettings();
-  const providers = enabledProviders();
+  const providers = await activeProviders();
   const siteKey = turnstileSiteKey();
   const errorPath = `/login?next=${encodeURIComponent(next)}${confirming ? "&reauth=1" : ""}`;
   const message = authErrorMessage(error);

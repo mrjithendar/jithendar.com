@@ -23,7 +23,7 @@ separate Discourse instance. Code: `src/lib/comments.ts` (service), `src/lib/com
 | Rule | Where |
 |---|---|
 | Session required for every write; user id only from the session | `src/app/_actions/comments.ts` |
-| Turnstile on new comments and replies | `submitComment` |
+| Turnstile on new comments and replies (skipped for staff, and for readers who passed it within `humanCheckHours`) | `submitComment`, `lib/human-check.ts` |
 | 2–5000 characters; 5 comments / 10 min per account; same text twice in 10 min refused; resubmitted form (client key) returns the first comment | `submitComment` |
 | Reply parent must be an approved comment **on the same post** (also a composite foreign key in the database) | `submitComment`, migration 0008 |
 | Edit: own comment, discussion open, within the edit window (admins: no limit); 20 edits / 10 min | `editComment` |

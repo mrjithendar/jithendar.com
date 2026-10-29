@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { Alert } from "@/components/ui/form";
 import { avatarLimits } from "@/lib/avatar";
 import { formatDate } from "@/lib/dates";
-import { getAccountProfile, PROFILE_LIMITS } from "@/lib/profile";
+import { getAccountProfile, PROFILE_LIMITS, SOCIAL_FIELDS } from "@/lib/profile";
 import { requireUser } from "@/lib/session";
 import { storageReady } from "@/lib/storage";
 import { AvatarEditor } from "./AvatarEditor";
@@ -25,20 +25,19 @@ export default async function AccountProfilePage({ searchParams }: { searchParam
     <div className="space-y-6">
       {denied && <Alert>Your account does not have access to that area.</Alert>}
 
-      <Section id="avatar-title" title="Avatar" description="Shown in the header and next to your comments.">
+      <Section id="avatar-title" title="Profile picture" description="Shown in the header and next to your comments. A Google or GitHub picture is used until you upload your own.">
         <AvatarEditor name={profile.name} image={profile.image} enabled={await storageReady()} maxMb={Math.round((limits.maxBytes / (1024 * 1024)) * 10) / 10} />
       </Section>
 
       <Section id="profile-title" title="Profile" description="Your display name appears next to your comments. Your bio and links stay private to your account.">
         <ProfileForm
           limits={PROFILE_LIMITS}
+          social={SOCIAL_FIELDS.map((f) => ({ ...f }))}
           initial={{
             name: profile.name,
             bio: profile.bio,
             website: profile.website ?? "",
-            github: profile.socialLinks.github ?? "",
-            linkedin: profile.socialLinks.linkedin ?? "",
-            x: profile.socialLinks.x ?? "",
+            ...Object.fromEntries(SOCIAL_FIELDS.map((f) => [f.key, profile.socialLinks[f.key] ?? ""])),
           }}
         />
       </Section>

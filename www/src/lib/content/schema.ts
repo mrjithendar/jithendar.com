@@ -124,6 +124,8 @@ export const pageFrontmatter = z.strictObject({
   updatedAt: isoDateTime.optional(),
   seoTitle: z.string().trim().min(2).max(110).optional(),
   seoDescription: z.string().trim().min(50).max(160).optional(),
+  /** Shown under the page header and used as the social sharing image. */
+  featuredImage: featuredImage.optional(),
   noindex: z.boolean().default(false),
   sortOrder: z.number().int().default(100),
 });

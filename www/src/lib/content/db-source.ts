@@ -83,6 +83,7 @@ export async function loadContentFromDb(): Promise<ContentStore> {
       updatedAt: iso(row.updatedAt),
       seoTitle: row.seoTitle ?? undefined,
       seoDescription: row.seoDescription ?? undefined,
+      featuredImage: row.featuredImage ?? undefined,
       noindex: row.noindex,
       sortOrder: row.sortOrder,
     });

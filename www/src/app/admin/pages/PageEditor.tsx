@@ -4,6 +4,8 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { CoverImagePicker } from "@/components/admin/CoverImagePicker";
+import type { GenerateOptions } from "@/components/admin/GenerateImageDialog";
 import { Panel, PreviewDialog, RevisionsPanel, SaveIndicator, SearchPreview, type SaveState } from "@/components/admin/editor/EditorChrome";
 import { Alert, Button, Field, Input, Textarea } from "@/components/ui/form";
 import type { PageFormValue } from "@/lib/site-pages";
@@ -30,6 +32,7 @@ export function PageEditor({
   version: initialVersion = 1,
   autosaved = null,
   bundled = null,
+  imageGeneration = { enabled: false, aspectRatios: [] },
 }: {
   originalSlug: string | null;
   initial: PageFormValue;
@@ -37,6 +40,8 @@ export function PageEditor({
   autosaved?: { value: PageFormValue; savedAt: string; baseVersion: number } | null;
   /** The bundled draft from content/pages/ when it differs from what is saved. */
   bundled?: PageFormValue | null;
+  /** Whether "Generate image" is available (Gemini configured in Admin → Integrations and R2 ready). */
+  imageGeneration?: GenerateOptions;
 }) {
   const router = useRouter();
   const [v, setV] = useState(initial);
@@ -182,10 +187,22 @@ export function PageEditor({
               <Input id="sortOrder" type="number" min={0} max={10000} value={v.sortOrder} onChange={(e) => set("sortOrder", Number(e.target.value) || 0)} />
             </Field>
           </Panel>
-          <Panel title="Search appearance">
+          <Panel title="Featured image" open>
+            <CoverImagePicker
+              label="Featured image"
+              value={v.featuredImage}
+              onChange={(img) => set("featuredImage", img)}
+              context={`pages/${v.slug || "draft"}`}
+              generate={{ ...imageGeneration, title: v.title, summary: v.description }}
+            />
+            <p className="text-xs text-fg-subtle">Shown below the page title and used when the page is shared. Alt text is required.</p>
+          </Panel>
+          <Panel title="Search appearance" open>
             <SearchPreview url={`jithendar.com/${v.slug}`} title={v.seoTitle || v.title} description={v.seoDescription || v.description} />
             <Field label="SEO title (optional)" htmlFor="seoTitle"><Input id="seoTitle" value={v.seoTitle ?? ""} maxLength={110} onChange={(e) => set("seoTitle", e.target.value || null)} /></Field>
-            <Field label="Meta description (optional)" htmlFor="seoDescription"><Textarea id="seoDescription" rows={3} maxLength={160} value={v.seoDescription ?? ""} onChange={(e) => set("seoDescription", e.target.value || null)} /></Field>
+            <Field label="Meta description" htmlFor="seoDescription" optional hint={`${(v.seoDescription ?? "").length}/160 (50–160). Shown in search results; defaults to the description above.`}>
+              <Textarea id="seoDescription" rows={3} maxLength={160} value={v.seoDescription ?? ""} onChange={(e) => set("seoDescription", e.target.value || null)} />
+            </Field>
             <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-0.5" checked={v.noindex} onChange={(e) => set("noindex", e.target.checked)} /> <span>Hide from search engines (noindex)</span></label>
           </Panel>
           {originalSlug && (

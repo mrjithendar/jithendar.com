@@ -4,7 +4,8 @@ import { getDb, schema } from "@/db";
 import type { FeaturedImage } from "@/db/schema";
 import { rowsOf } from "@/db/rows";
 import { audit } from "./audit";
-import { ASPECT_RATIOS, generateImage, geminiImageConfig, ImageGenError, type AspectRatio, type GeminiImageConfig } from "./gemini";
+import { ASPECT_RATIOS, generateImage, ImageGenError, type AspectRatio, type GeminiImageConfig } from "./gemini";
+import { resolveGeminiImageConfig } from "./integrations";
 import { log } from "./log";
 import { inspectImage, mediaSrc, recordImage, sanitizeFilename } from "./media";
 import type { Actor } from "./posts";
@@ -37,7 +38,7 @@ export function generationLimits(env: Record<string, string | undefined> = proce
 
 /** For the editor: whether to show the button (configured + storage ready). Never exposes keys. */
 export async function imageGenerationStatus(): Promise<{ enabled: boolean; reason?: string; aspectRatios: readonly AspectRatio[] }> {
-  if (!geminiImageConfig()) return { enabled: false, reason: "Image generation is not configured (GEMINI_API_KEY and GEMINI_IMAGE_MODEL).", aspectRatios: ASPECT_RATIOS };
+  if (!(await resolveGeminiImageConfig())) return { enabled: false, reason: "Image generation is not configured (Admin → Integrations).", aspectRatios: ASPECT_RATIOS };
   if (!(await storageReady())) return { enabled: false, reason: "Configure media storage (R2) first.", aspectRatios: ASPECT_RATIOS };
   return { enabled: true, aspectRatios: ASPECT_RATIOS };
 }
@@ -58,7 +59,7 @@ export async function startGeneration(
   opts: { signal?: AbortSignal; config?: GeminiImageConfig | null; fetchImpl?: typeof fetch; limits?: GenerationLimits; now?: number } = {},
 ): Promise<GenerationResult> {
   if (!staff(actor)) throw new PostError("Not allowed.", 403);
-  const config = opts.config === undefined ? geminiImageConfig() : opts.config;
+  const config = opts.config === undefined ? await resolveGeminiImageConfig() : opts.config;
   if (!config) throw new PostError("Image generation is not configured.", 503);
   if (!(await storageReady())) throw new PostError("Media storage (Cloudflare R2) is not configured.", 409);
   const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";

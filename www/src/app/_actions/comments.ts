@@ -12,6 +12,7 @@ import {
   submitComment,
   type CommentView,
 } from "@/lib/comments";
+import { needsHumanCheck } from "@/lib/human-check";
 import { PostError } from "@/lib/posts";
 import { hit } from "@/lib/rate-limit";
 import { getSessionUser, type SessionUser } from "@/lib/session";
@@ -54,6 +55,7 @@ export async function postCommentAction(input: { postId: string; parentId?: stri
       id: r.id,
       status: r.status,
       thread: await threadOf(input.postId, r.id, user),
+      needsVerification: await needsHumanCheck(user),
       message: r.status === "approved" ? "Your comment is published." : "Thanks! Your comment will appear after a moderator approves it.",
     };
   });

@@ -1,9 +1,10 @@
 import { PasswordInput } from "@/components/ui/PasswordInput";
 import { Flash, type FlashParams } from "@/components/admin/Flash";
 import { AdminHeader, Card, StatusPill, Table, td, th } from "@/components/admin/ui";
-import { Button, Field, Input, Select, Textarea } from "@/components/ui/form";
+import { Alert, Button, Field, Input, Select } from "@/components/ui/form";
+import Link from "next/link";
 import { adminActor } from "@/lib/admin";
-import { backupSummary, recentRuns, runBackup, saveDestination, saveGeneral, testDestination } from "@/lib/backups";
+import { BACKUP_ROOT, backupSummary, listStoredBackups, recentRuns, runBackup, saveDestination, saveGeneral, testDestination } from "@/lib/backups";
 import { formatDateTime } from "@/lib/dates";
 import { flash } from "@/lib/flash";
 import { PostError } from "@/lib/posts";
@@ -23,14 +24,10 @@ async function general(form: FormData) {
 async function destination(form: FormData) {
   "use server";
   const actor = await adminActor();
-  const kind = String(form.get("kind")) as "s3" | "sftp" | "gdrive";
   await flash("/admin/backups", async () => {
-    const fields: Record<string, string | boolean> = Object.fromEntries([...form.entries()].map(([k, v]) => [k, String(v)]));
-    fields.enabled = form.has("enabled");
-    fields.forcePathStyle = form.has("forcePathStyle");
-    await saveDestination(actor, kind, fields);
-    if (form.get("test") === "1") await testDestination(actor, kind);
-    return form.get("test") === "1" ? `${kind.toUpperCase()} saved and tested successfully.` : `${kind.toUpperCase()} saved.`;
+    await saveDestination(actor, { enabled: form.has("enabled"), bucket: String(form.get("bucket") ?? "") });
+    if (form.get("test") === "1") await testDestination(actor);
+    return form.get("test") === "1" ? "Cloudflare R2 destination saved and tested successfully." : "Cloudflare R2 destination saved.";
   });
 }
 
@@ -44,19 +41,9 @@ async function runNow() {
   });
 }
 
-const Enabled = ({ on }: { on?: boolean }) => (
-  <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="enabled" defaultChecked={on ?? true} /> Use this destination</label>
-);
-const SaveButtons = () => (
-  <div className="flex gap-2 sm:col-span-2">
-    <Button type="submit" name="test" value="0" variant="secondary">Save</Button>
-    <Button type="submit" name="test" value="1">Save and test</Button>
-  </div>
-);
-
 export default async function BackupsPage({ searchParams }: { searchParams: FlashParams }) {
   await requireRole("admin");
-  const [b, runs, sp] = await Promise.all([backupSummary(), recentRuns(), searchParams]);
+  const [b, runs, stored, sp] = await Promise.all([backupSummary(), recentRuns(), listStoredBackups().catch(() => null), searchParams]);
   return (
     <>
       <AdminHeader
@@ -87,48 +74,42 @@ export default async function BackupsPage({ searchParams }: { searchParams: Flas
         </Card>
 
         <Card>
-          <div className="mb-4 flex items-center justify-between"><h2 className="font-semibold text-fg">Amazon S3 / S3-compatible</h2><StatusPill status={b.s3?.enabled ? "ok" : b.s3 ? "read" : "not configured"} /></div>
+          <div className="mb-4 flex items-center justify-between"><h2 className="font-semibold text-fg">Cloudflare R2</h2><StatusPill status={b.r2?.enabled ? "ok" : b.r2 ? "read" : "not configured"} /></div>
+          <p className="mb-4 text-sm text-fg-muted">
+            Backups use the R2 account and API token from <Link href="/admin/storage" className="link">Storage &amp; email</Link> and are written to{" "}
+            <code className="text-xs">{BACKUP_ROOT}/</code> in the bucket below. A separate private bucket is recommended: anything in a bucket with a public custom domain can be
+            fetched by URL (backups are encrypted, but keep them private anyway). The API token must have Object Read &amp; Write on that bucket.
+          </p>
+          {!b.storageReady && (
+            <div className="mb-4"><Alert tone="info">Cloudflare R2 is not configured yet. <Link href="/admin/storage" className="font-semibold underline">Set it up</Link> first.</Alert></div>
+          )}
           <form action={destination} className="grid gap-4 sm:grid-cols-2">
-            <input type="hidden" name="kind" value="s3" />
-            <Field label="Endpoint (empty for AWS)" htmlFor="b-endpoint"><Input id="b-endpoint" name="endpoint" defaultValue={b.s3?.endpoint ?? ""} /></Field>
-            <Field label="Region" htmlFor="b-region"><Input id="b-region" name="region" defaultValue={b.s3?.region ?? "us-east-1"} /></Field>
-            <Field label="Bucket" htmlFor="b-bucket"><Input id="b-bucket" name="bucket" defaultValue={b.s3?.bucket ?? ""} /></Field>
-            <Field label="Folder" htmlFor="b-prefix"><Input id="b-prefix" name="prefix" defaultValue={b.s3?.prefix ?? "backups"} /></Field>
-            <Field label="Access key ID" htmlFor="b-key"><Input id="b-key" name="accessKeyId" defaultValue={b.s3?.accessKeyId ?? ""} autoComplete="off" /></Field>
-            <Field label="Secret access key" htmlFor="b-secret" hint={b.s3 ? "Leave empty to keep." : undefined}><PasswordInput id="b-secret" name="secret" autoComplete="off" /></Field>
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="forcePathStyle" defaultChecked={b.s3?.forcePathStyle ?? false} /> Path-style URLs</label>
-            <Enabled on={b.s3?.enabled} />
-            <SaveButtons />
-          </form>
-        </Card>
-
-        <Card>
-          <div className="mb-4 flex items-center justify-between"><h2 className="font-semibold text-fg">SFTP</h2><StatusPill status={b.sftp?.enabled ? "ok" : b.sftp ? "read" : "not configured"} /></div>
-          <form action={destination} className="grid gap-4 sm:grid-cols-2">
-            <input type="hidden" name="kind" value="sftp" />
-            <Field label="Host" htmlFor="s-host"><Input id="s-host" name="host" defaultValue={b.sftp?.host ?? ""} /></Field>
-            <Field label="Port" htmlFor="s-port"><Input id="s-port" name="port" type="number" defaultValue={b.sftp?.port ?? 22} /></Field>
-            <Field label="Username" htmlFor="s-user"><Input id="s-user" name="username" defaultValue={b.sftp?.username ?? ""} autoComplete="off" /></Field>
-            <Field label="Remote folder" htmlFor="s-path"><Input id="s-path" name="path" defaultValue={b.sftp?.path ?? "backups"} /></Field>
-            <Field label="Password" htmlFor="s-pass" hint={b.sftp ? "Leave empty to keep." : "Or use a private key."}><PasswordInput id="s-pass" name="password" autoComplete="off" /></Field>
-            <Field label="Private key (OpenSSH PEM)" htmlFor="s-key" hint={b.sftp?.auth === "key" ? "Set. Leave empty to keep." : undefined}><Textarea id="s-key" name="privateKey" rows={2} className="font-mono text-xs" /></Field>
-            <Enabled on={b.sftp?.enabled} />
-            <SaveButtons />
-          </form>
-        </Card>
-
-        <Card>
-          <div className="mb-4 flex items-center justify-between"><h2 className="font-semibold text-fg">Google Drive</h2><StatusPill status={b.gdrive?.enabled ? "ok" : b.gdrive ? "read" : "not configured"} /></div>
-          <form action={destination} className="grid gap-4 sm:grid-cols-2">
-            <input type="hidden" name="kind" value="gdrive" />
-            <Field label="Folder ID" htmlFor="g-folder" hint="From the folder URL: drive.google.com/drive/folders/<ID>"><Input id="g-folder" name="folderId" defaultValue={b.gdrive?.folderId ?? ""} /></Field>
-            <Field label="Credentials JSON" htmlFor="g-cred" hint={'Service account (for a Shared Drive, add it as a member) or an "authorized_user" JSON with a refresh token (for a personal Drive). Leave empty to keep.'}>
-              <Textarea id="g-cred" name="credentials" rows={3} className="font-mono text-xs" />
+            <Field label="Bucket (optional)" htmlFor="r2-bucket" hint="Leave empty to use the media bucket.">
+              <Input id="r2-bucket" name="bucket" defaultValue={b.r2?.bucket ?? ""} placeholder="jithendar-backups" autoComplete="off" spellCheck={false} />
             </Field>
-            <Enabled on={b.gdrive?.enabled} />
-            <SaveButtons />
+            <label className="flex items-center gap-2 self-end pb-3 text-sm"><input type="checkbox" name="enabled" defaultChecked={b.r2?.enabled ?? true} /> Back up to Cloudflare R2</label>
+            <div className="flex gap-2 sm:col-span-2">
+              <Button type="submit" name="test" value="0" variant="secondary" disabled={!b.storageReady}>Save</Button>
+              <Button type="submit" name="test" value="1" disabled={!b.storageReady}>Save and test</Button>
+            </div>
           </form>
         </Card>
+
+        {stored && stored.length > 0 && (
+          <div>
+            <h2 className="mb-3 font-semibold text-fg">Stored in R2</h2>
+            <Table head={<tr><th className={th}>File</th><th className={th}>Size</th><th className={th}>Stored</th><th className={th}><span className="sr-only">Download</span></th></tr>}>
+              {stored.map((f) => (
+                <tr key={f.key}>
+                  <td className={`${td} font-mono text-xs`}>{f.name}</td>
+                  <td className={`${td} whitespace-nowrap`}>{Math.round(f.size / 1024)} KB</td>
+                  <td className={`${td} whitespace-nowrap`}>{f.lastModified ? formatDateTime(f.lastModified) : "—"}</td>
+                  <td className={td}><a className="link" href={`/api/admin/backup?file=${encodeURIComponent(f.name)}`} download>Download</a></td>
+                </tr>
+              ))}
+            </Table>
+          </div>
+        )}
 
         <div>
           <h2 className="mb-3 font-semibold text-fg">Recent runs</h2>

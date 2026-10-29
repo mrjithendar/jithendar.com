@@ -297,8 +297,8 @@ export async function deleteMedia(actor: Actor, id: string) {
   const needle = `${MEDIA_PREFIX}${row.id}/`;
   const [{ n } = { n: 0 }] = rowsOf<{ n: number }>(
     await db.execute(sql`
-    select (select count(*) from post where body like ${"%" + needle + "%"} or featured_image->>'src' like ${needle + "%"})
-         + (select count(*) from page where body like ${"%" + needle + "%"}) as n`),
+    select (select count(*) from post where body like ${"%" + needle + "%"} or featured_image->>'src' like ${needle + "%"} or social_image->>'src' like ${needle + "%"})
+         + (select count(*) from page where body like ${"%" + needle + "%"} or featured_image->>'src' like ${needle + "%"}) as n`),
   );
   if (Number(n) > 0) throw new PostError(`This file is used by ${n} post(s) or page(s). Remove it there first.`, 409);
   // Objects still on the legacy S3 bucket are left in place (that bucket is read-only to the site).
@@ -313,13 +313,69 @@ export async function mediaUsage(ids: string[]): Promise<Map<string, number>> {
   if (ids.length === 0) return out;
   const db = await getDb();
   const posts = await db.select({ body: schema.post.body, cover: schema.post.featuredImage, social: schema.post.socialImage }).from(schema.post);
-  const pages = await db.select({ body: schema.page.body }).from(schema.page);
-  const texts = [...posts.map((p) => `${p.body} ${p.cover?.src ?? ""} ${p.social?.src ?? ""}`), ...pages.map((p) => p.body)];
+  const pages = await db.select({ body: schema.page.body, cover: schema.page.featuredImage }).from(schema.page);
+  const texts = [...posts.map((p) => `${p.body} ${p.cover?.src ?? ""} ${p.social?.src ?? ""}`), ...pages.map((p) => `${p.body} ${p.cover?.src ?? ""}`)];
   // Logos, banners, icons and share images selected in Admin → Appearance (published or draft).
   const { configMediaIds } = await import("./site-config/store");
   const fromConfig = await configMediaIds().catch(() => new Map<string, number>());
   for (const id of ids) out.set(id, texts.filter((t) => t.includes(`${MEDIA_PREFIX}${id}/`)).length + (fromConfig.get(id) ?? 0));
   return out;
+}
+
+export const MEDIA_DETAIL_LIMITS = { alt: 300, title: 200, caption: 500, description: 2000 } as const;
+
+/** Attachment details (alt text, title, caption, description), as in WordPress's media library. */
+export async function updateMediaDetails(actor: Actor, id: string, raw: { alt?: unknown; title?: unknown; caption?: unknown; description?: unknown }) {
+  if (actor.role !== "admin" && actor.role !== "author") throw new PostError("Not allowed.", 403);
+  const text = (v: unknown, max: number) => (typeof v === "string" ? v.replace(/\r\n?/g, "\n").trim().slice(0, max) : "");
+  const values = {
+    alt: text(raw.alt, MEDIA_DETAIL_LIMITS.alt),
+    title: text(raw.title, MEDIA_DETAIL_LIMITS.title),
+    caption: text(raw.caption, MEDIA_DETAIL_LIMITS.caption),
+    description: text(raw.description, MEDIA_DETAIL_LIMITS.description),
+  };
+  const db = await getDb();
+  const [row] = await db.select({ kind: schema.media.kind }).from(schema.media).where(eq(schema.media.id, id));
+  if (!row) throw new PostError("File not found.", 404);
+  if (row.kind === "images" && !values.alt) throw new PostError("Images need alt text: describe what the image shows for people using screen readers.", 400);
+  await db.update(schema.media).set(values).where(eq(schema.media.id, id));
+  await audit(actor, "media.details", id, { fields: Object.keys(values).filter((k) => values[k as keyof typeof values]) });
+}
+
+export type MediaUse = { kind: "post" | "page"; title: string; editHref: string; publicPath: string | null };
+
+/** Posts and pages that reference one media item (body, featured or social image). */
+export async function mediaUsedIn(id: string): Promise<MediaUse[]> {
+  const needle = `${MEDIA_PREFIX}${id}/`;
+  const like = `%${needle}%`;
+  const db = await getDb();
+  const posts = rowsOf<{ id: string; title: string; collection: string; slug: string; status: string }>(
+    await db.execute(sql`select id, title, collection, slug, status from post
+      where deleted_at is null and (body like ${like} or featured_image->>'src' like ${needle + "%"} or social_image->>'src' like ${needle + "%"}) order by saved_at desc limit 50`),
+  );
+  const pages = rowsOf<{ slug: string; title: string }>(
+    await db.execute(sql`select slug, title from page where deleted_at is null and (body like ${like} or featured_image->>'src' like ${needle + "%"}) order by title limit 50`),
+  );
+  return [
+    ...posts.map((p) => ({ kind: "post" as const, title: p.title, editHref: `/admin/posts/${p.id}`, publicPath: p.status === "published" ? `/${p.collection}/${p.slug}` : null })),
+    ...pages.map((p) => ({ kind: "page" as const, title: p.title, editHref: `/admin/pages/${p.slug}`, publicPath: `/${p.slug}` })),
+  ];
+}
+
+/** Delete several items; each is checked like a single delete (files still in use are skipped). */
+export async function deleteMediaMany(actor: Actor, ids: string[]): Promise<{ deleted: number; skipped: { id: string; reason: string }[] }> {
+  const skipped: { id: string; reason: string }[] = [];
+  let deleted = 0;
+  for (const id of [...new Set(ids)].slice(0, 200)) {
+    try {
+      await deleteMedia(actor, id);
+      deleted++;
+    } catch (error) {
+      if (!(error instanceof PostError)) throw error;
+      skipped.push({ id, reason: error.message });
+    }
+  }
+  return { deleted, skipped };
 }
 
 /** Edit an item's alt text/description (used as the default when it is inserted again). */

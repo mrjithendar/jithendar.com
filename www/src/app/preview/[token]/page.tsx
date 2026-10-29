@@ -6,7 +6,7 @@ import { getDb, schema } from "@/db";
 import { actorOf } from "@/lib/admin";
 import { getCategoryMap } from "@/lib/categories";
 import type { Article, Author, Page } from "@/lib/content";
-import { collectionSchema, pageFrontmatter, type ArticleFrontmatter } from "@/lib/content/schema";
+import { collectionSchema, pageFrontmatter, type ArticleFrontmatter, type PageFrontmatter } from "@/lib/content/schema";
 import { toIsoOffset } from "@/lib/dates-iso";
 import { ArticleView } from "@/lib/pages/article";
 import { PageView } from "@/lib/pages/page-view";
@@ -66,6 +66,7 @@ export default async function PreviewPage({ params }: Props) {
       updatedAt: str(p.updatedAt) || undefined,
       seoTitle: str(p.seoTitle) || undefined,
       seoDescription: str(p.seoDescription) || undefined,
+      featuredImage: p.featuredImage && typeof p.featuredImage === "object" ? (p.featuredImage as PageFrontmatter["featuredImage"]) : undefined,
       noindex: p.noindex === true,
       sortOrder: typeof p.sortOrder === "number" ? p.sortOrder : 100,
     };

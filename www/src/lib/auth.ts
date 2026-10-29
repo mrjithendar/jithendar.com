@@ -1,4 +1,5 @@
 import { APIError, betterAuth } from "better-auth";
+import { eq } from "drizzle-orm";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
@@ -8,7 +9,9 @@ import { createAccessControl } from "better-auth/plugins/access";
 import { isProductionEnv, siteUrl } from "@/config/site";
 import { getDb, schema } from "@/db";
 import { sendMail } from "./mail";
-import { socialProviderConfig } from "./auth-providers";
+import { auditLogin } from "./auth-audit";
+import { onInvalidate } from "./cache-bus";
+import { activeSocialProviderConfig } from "./integrations";
 import { getSettings } from "./settings";
 import { passwordProblem, PASSWORD_MAX, PASSWORD_MIN } from "./password-policy";
 import { getRedis } from "./redis";
@@ -85,8 +88,9 @@ async function createAuth() {
         await sendMail(user.email, "Verify your Jithendar.com account", `Confirm your email address: ${url}`);
       },
     },
-    // Google and GitHub (only those with credentials configured). Callback: {SITE_URL}/api/auth/callback/{provider}.
-    socialProviders: socialProviderConfig(),
+    // Google and GitHub (only those configured in Admin → Integrations or the environment).
+    // Callback: {SITE_URL}/api/auth/callback/{provider}. Saving the settings rebuilds this instance.
+    socialProviders: await activeSocialProviderConfig(),
     account: {
       // Provider access/refresh tokens are not used by the site; keep them encrypted at rest anyway.
       encryptOAuthTokens: true,
@@ -107,6 +111,19 @@ async function createAuth() {
     // 7-day sessions, extended daily while in use; account-linking changes need a sign-in within the last hour.
     session: { expiresIn: 60 * 60 * 24 * 7, updateAge: 60 * 60 * 24, freshAge: FRESH_SESSION_SECONDS },
     databaseHooks: {
+      session: {
+        create: {
+          after: async (session, ctx) => {
+            // Every successful sign-in (password, Google, GitHub) lands in the audit log with its IP.
+            const provider = (ctx?.params as { id?: string } | undefined)?.id;
+            await auditLogin(session, ctx?.path?.startsWith("/callback/") && provider ? `/callback/${provider}` : ctx?.path);
+            // A password sign-in or sign-up passed Turnstile: comments can skip the check for a while.
+            if (ctx?.path === "/sign-in/email" || ctx?.path === "/sign-up/email") {
+              await db.update(schema.user).set({ humanVerifiedAt: new Date() }).where(eq(schema.user.id, session.userId)).catch(() => undefined);
+            }
+          },
+        },
+      },
       user: {
         create: {
           before: async (user, ctx) => {
@@ -181,6 +198,11 @@ async function createAuth() {
 
 type Auth = Awaited<ReturnType<typeof createAuth>>;
 const globalForAuth = globalThis as unknown as { __auth?: Promise<Auth> };
+
+// Social sign-in settings changed in the admin (on any replica): build a new instance on next use.
+onInvalidate("integrations", () => {
+  globalForAuth.__auth = undefined;
+});
 
 export function getAuth(): Promise<Auth> {
   globalForAuth.__auth ??= createAuth();

@@ -14,12 +14,15 @@
 /** A subset of the API's aspect_ratio enum that suits article covers and inline images. */
 export const ASPECT_RATIOS = ["16:9", "4:3", "3:2", "1:1", "21:9"] as const;
 export type AspectRatio = (typeof ASPECT_RATIOS)[number];
-const IMAGE_SIZES = ["512", "1K", "2K", "4K"] as const;
+export const IMAGE_SIZES = ["512", "1K", "2K", "4K"] as const;
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
 
 export type GeminiImageConfig = { apiKey: string; model: string; imageSize: (typeof IMAGE_SIZES)[number]; timeoutMs: number; endpoint: string };
 
-/** null when image generation is not configured (the editor then hides the button). */
+/**
+ * From environment variables only. Code paths that generate images use resolveGeminiImageConfig() (lib/integrations),
+ * which prefers the key saved in Admin → Integrations. null when not configured (the editor then hides the button).
+ */
 export function geminiImageConfig(env: Record<string, string | undefined> = process.env): GeminiImageConfig | null {
   const apiKey = env.GEMINI_API_KEY?.trim();
   const model = env.GEMINI_IMAGE_MODEL?.trim();
@@ -52,8 +55,8 @@ const MESSAGES: Record<ImageGenErrorCode, string> = {
   timeout: "Image generation took too long and was stopped. Try again, or simplify the prompt.",
   cancelled: "Generation cancelled.",
   unsupported: "The image service rejected these options for the configured model. Try another aspect ratio.",
-  auth: "The Gemini API key was rejected. An admin must check GEMINI_API_KEY.",
-  model: "The configured image model is not available. An admin must check GEMINI_IMAGE_MODEL.",
+  auth: "The Gemini API key was rejected. An admin must check the key in Admin → Integrations.",
+  model: "The configured image model is not available. An admin must check the model in Admin → Integrations.",
   unavailable: "The image service is unavailable right now. Try again in a minute.",
   empty: "The model did not return an image. Try rephrasing the prompt.",
   invalid_image: "The image service returned data that is not a valid image. Try again.",

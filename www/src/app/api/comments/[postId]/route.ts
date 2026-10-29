@@ -1,5 +1,6 @@
 import { listComments } from "@/lib/comments";
 import { PostError } from "@/lib/posts";
+import { needsHumanCheck } from "@/lib/human-check";
 import { getSessionUser } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +23,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ post
       focus: url.searchParams.get("focus"),
     });
     if (!page.state.enabled) return Response.json({ error: "Comments are closed." }, { status: 404, headers: NO_STORE });
-    return Response.json({ ...page, signedIn: !!user }, { headers: NO_STORE });
+    // Whether this reader's next comment needs Turnstile (a recent pass is remembered).
+    const needsVerification = user ? await needsHumanCheck(user) : true;
+    return Response.json({ ...page, signedIn: !!user, needsVerification }, { headers: NO_STORE });
   } catch (error) {
     if (error instanceof PostError) return Response.json({ error: error.message }, { status: error.status ?? 400, headers: NO_STORE });
     const { log } = await import("@/lib/log");
