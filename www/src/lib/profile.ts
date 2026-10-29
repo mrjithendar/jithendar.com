@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/db";
 import type { SocialLinks } from "@/db/schema";
-import { avatarObjectKey, avatarSrc, parseAvatarSrc, processAvatar } from "./avatar";
+import { avatarLimits, avatarObjectKey, avatarSrc, parseAvatarSrc, processAvatar } from "./avatar";
 import { log } from "./log";
 import { PostError } from "./posts";
 import { deleteObject, putObject, IMMUTABLE, storageReady } from "./storage";
@@ -159,7 +159,8 @@ async function deleteOwnAvatar(userId: string, src: string | null) {
 /** Process and store a new avatar, point the profile at it, then delete the replaced upload. */
 export async function setAvatar(userId: string, bytes: Buffer): Promise<string> {
   if (!(await storageReady())) throw new PostError("Avatar uploads are not available yet: media storage is not configured.", 503);
-  const processed = await processAvatar(bytes);
+  const { effectiveEnv } = await import("./runtime-settings");
+  const processed = await processAvatar(bytes, avatarLimits(await effectiveEnv()));
   if (!processed.ok) throw new PostError(processed.error);
   const fileId = crypto.randomUUID();
   await putObject(avatarObjectKey(userId, fileId), processed.bytes, { contentType: processed.contentType, cacheControl: IMMUTABLE });

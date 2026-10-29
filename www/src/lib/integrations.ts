@@ -6,6 +6,7 @@ import { audit } from "./audit";
 import { SOCIAL_PROVIDERS, socialProviderConfig, type SocialProvider } from "./auth-providers";
 import { broadcastInvalidate, onInvalidate } from "./cache-bus";
 import { geminiImageConfig, IMAGE_SIZES, type GeminiImageConfig } from "./gemini";
+import { INDEXNOW_KEY_PATTERN, resetIndexNowKeyCache, type StoredIndexNow } from "./indexnow-key";
 import type { Actor } from "./posts";
 import { PostError } from "./posts";
 import { seal, unseal, type Sealed } from "./secrets";
@@ -21,12 +22,13 @@ const KEY = "integrations";
 
 type StoredProvider = { enabled: boolean; clientId: string; clientSecret: Sealed | null };
 type StoredGemini = { enabled: boolean; apiKey: Sealed | null; model: string; imageSize: (typeof IMAGE_SIZES)[number]; verifiedAt: string | null; lastError: string | null };
-type Stored = { social: Partial<Record<SocialProvider, StoredProvider>>; gemini: StoredGemini | null };
+type Stored = { social: Partial<Record<SocialProvider, StoredProvider>>; gemini: StoredGemini | null; indexNow: StoredIndexNow | null };
 
-const EMPTY: Stored = { social: {}, gemini: null };
+const EMPTY: Stored = { social: {}, gemini: null, indexNow: null };
 let cached: Promise<Stored> | null = null;
 onInvalidate("integrations", () => {
   cached = null;
+  resetIndexNowKeyCache();
 });
 
 async function readStored(): Promise<Stored> {
@@ -34,7 +36,7 @@ async function readStored(): Promise<Stored> {
     const db = await getDb();
     const [row] = await db.select().from(schema.setting).where(eq(schema.setting.key, KEY));
     const v = (row?.value as Partial<Stored> | undefined) ?? {};
-    return { social: v.social ?? {}, gemini: v.gemini ?? null };
+    return { social: v.social ?? {}, gemini: v.gemini ?? null, indexNow: v.indexNow ?? null };
   })().catch((err) => {
     cached = null;
     throw err;
@@ -129,11 +131,13 @@ export async function resetSocialProvider(actor: Actor, provider: SocialProvider
 
 /** Effective Gemini configuration: the admin entry when saved, otherwise GEMINI_* environment variables. */
 export async function resolveGeminiImageConfig(): Promise<GeminiImageConfig | null> {
-  const fromEnv = geminiImageConfig();
+  // Timeout and the other GEMINI_* tuning values can come from Admin → Advanced settings.
+  const { effectiveEnv } = await import("./runtime-settings");
+  const env = await effectiveEnv();
   const stored = (await readStored().catch(() => EMPTY)).gemini;
-  if (!stored) return fromEnv;
+  if (!stored) return geminiImageConfig(env);
   if (!stored.enabled || !stored.apiKey || !stored.model) return null;
-  return geminiImageConfig({ ...process.env, GEMINI_API_KEY: unseal(stored.apiKey), GEMINI_IMAGE_MODEL: stored.model, GEMINI_IMAGE_SIZE: stored.imageSize });
+  return geminiImageConfig({ ...env, GEMINI_API_KEY: unseal(stored.apiKey), GEMINI_IMAGE_MODEL: stored.model, GEMINI_IMAGE_SIZE: stored.imageSize });
 }
 
 export type GeminiSummary = { source: "admin" | "env" | "none"; enabled: boolean; model: string; imageSize: string; hasKey: boolean; keyHint: string; verifiedAt: string | null; lastError: string | null };
@@ -200,4 +204,26 @@ export async function checkGeminiKey(apiKey: string, model: string, fetchImpl: t
   } catch (e) {
     return { ok: false, error: `Could not reach Google: ${(e as Error).message}` };
   }
+}
+
+// --- IndexNow ---------------------------------------------------------------------------------
+
+export type IndexNowSummary = { source: "admin" | "env" | "none"; enabled: boolean; key: string | null };
+
+export async function indexNowSummary(): Promise<IndexNowSummary> {
+  const env = process.env.INDEXNOW_KEY?.trim();
+  if (env && INDEXNOW_KEY_PATTERN.test(env)) return { source: "env", enabled: true, key: env };
+  const s = (await readStored()).indexNow;
+  return s ? { source: "admin", enabled: s.enabled, key: s.key } : { source: "none", enabled: false, key: null };
+}
+
+/** Turn IndexNow on or off. The first time it is turned on, a random 32-character key is generated (kept when turned off). */
+export async function setIndexNow(actor: Actor, enabled: boolean, opts: { regenerate?: boolean } = {}) {
+  adminOnly(actor);
+  const stored = await readStored();
+  const { randomBytes } = await import("node:crypto");
+  const key = !stored.indexNow?.key || opts.regenerate ? randomBytes(16).toString("hex") : stored.indexNow.key;
+  await write({ ...stored, indexNow: { enabled, key } }, actor.id);
+  resetIndexNowKeyCache();
+  await audit(actor, opts.regenerate ? "integrations.indexnow.key" : "integrations.indexnow", undefined, { enabled });
 }

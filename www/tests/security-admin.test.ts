@@ -164,3 +164,83 @@ describe("R2 backups", () => {
     await expect(readStoredBackup("../../etc/passwd")).rejects.toThrow(/Unknown/);
   });
 });
+
+describe("restore", () => {
+  it("replaces content with a stored backup in one step, after saving the current state", async () => {
+    const { listStoredBackups, restoreStoredBackup, runBackup, saveDestination, saveGeneral } = await import("@/lib/backups");
+    const base = { collection: "blog", description: "A description that is comfortably longer than fifty characters for the schema.", category: "kubernetes", contentType: "tutorial", authorId: "author", status: "published", publishedAt: new Date("2026-10-20T03:30:00Z") };
+    await db.insert(schema.post).values({ ...base, slug: "kept", title: "Original title" });
+    await saveGeneral(admin, { schedule: "off", hourUtc: "3", retention: "30", passphrase: "correct horse battery staple" });
+    await saveDestination(admin, { enabled: true, bucket: "" });
+    await runBackup("manual", admin);
+    const [snapshot] = await listStoredBackups();
+
+    // Later changes: an edit, a new post, a lost account.
+    await db.update(schema.post).set({ title: "Edited later" }).where(eq(schema.post.slug, "kept"));
+    await db.insert(schema.post).values({ ...base, slug: "added-later", title: "Added later" });
+    await new Promise((r) => setTimeout(r, 1100)); // the safety backup gets its own timestamped name
+
+    await expect(restoreStoredBackup(author, snapshot!.name)).rejects.toMatchObject({ status: 403 });
+    const r = await restoreStoredBackup(admin, snapshot!.name);
+    const posts = await db.select({ slug: schema.post.slug, title: schema.post.title }).from(schema.post);
+    expect(posts).toEqual([{ slug: "kept", title: "Original title" }]);
+    expect(r.restored.post).toBe(1);
+    expect((await listStoredBackups()).map((b) => b.name)).toContain(r.safetyBackup);
+    const [entry] = await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "backup.restore"));
+    expect(entry).toMatchObject({ severity: "critical", target: snapshot!.name });
+
+    // The safety backup brings the later state back.
+    await restoreStoredBackup(admin, r.safetyBackup);
+    expect((await db.select({ slug: schema.post.slug }).from(schema.post)).map((p) => p.slug).sort()).toEqual(["added-later", "kept"]);
+  });
+});
+
+describe("IndexNow switch", () => {
+  it("generates a key when turned on, keeps it when off, and the proxy serves it only while on", async () => {
+    const { setIndexNow, indexNowSummary } = await import("@/lib/integrations");
+    const { indexNowKey, resetIndexNowKeyCache } = await import("@/lib/indexnow-key");
+    expect(await indexNowKey()).toBeNull();
+    await expect(setIndexNow(author, true)).rejects.toMatchObject({ status: 403 });
+    await setIndexNow(admin, true);
+    const { key } = await indexNowSummary();
+    expect(key).toMatch(/^[0-9a-f]{32}$/);
+    expect(await indexNowKey()).toBe(key);
+    await setIndexNow(admin, false);
+    resetIndexNowKeyCache();
+    expect(await indexNowKey()).toBeNull();
+    expect((await indexNowSummary()).key).toBe(key);
+  });
+});
+
+describe("advanced settings", () => {
+  it("override the deployment, fall back when emptied, validate input and keep secrets encrypted", async () => {
+    vi.stubEnv("GA4_MEASUREMENT_ID", "G-DEPLOYED1");
+    vi.stubEnv("TURNSTILE_SECRET_KEY", "deployment-secret-0000");
+    const { effectiveEnv, runtimeIntegrations, runtimeSummary, saveRuntimeGroup } = await import("@/lib/runtime-settings");
+    const { turnstileKeys } = await import("@/lib/turnstile");
+
+    await expect(saveRuntimeGroup(author, "analytics", { GA4_MEASUREMENT_ID: "G-ADMIN123" })).rejects.toMatchObject({ status: 403 });
+    await expect(saveRuntimeGroup(admin, "analytics", { GA4_MEASUREMENT_ID: "UA-123" })).rejects.toMatchObject({ issues: [expect.stringMatching(/GA4/)] });
+    await expect(saveRuntimeGroup(admin, "avatars", { AVATAR_MAX_BYTES: "5" })).rejects.toMatchObject({ issues: [expect.stringMatching(/whole number/)] });
+
+    await saveRuntimeGroup(admin, "verification", { GOOGLE_SITE_VERIFICATION: "abcdefghij123, klmnopqrst456" });
+    await saveRuntimeGroup(admin, "analytics", { GA4_MEASUREMENT_ID: "G-ADMIN123", CONSENT_DEFAULT: "strict", ADS_TXT: "google.com, pub-1, DIRECT, f08c47fec0942fa0" });
+    await saveRuntimeGroup(admin, "turnstile", { TURNSTILE_SITE_KEY: "0x4AAAAAAAsitekey", TURNSTILE_SECRET_KEY: "0x4AAAAAAAadmin-secret" });
+    const env = await effectiveEnv();
+    expect(env).toMatchObject({ GA4_MEASUREMENT_ID: "G-ADMIN123", TURNSTILE_SECRET_KEY: "0x4AAAAAAAadmin-secret" });
+    expect((await runtimeIntegrations()).verification.google).toEqual(["abcdefghij123", "klmnopqrst456"]);
+    expect((await runtimeIntegrations()).consentDefault).toBe("strict");
+    expect(await turnstileKeys()).toMatchObject({ siteKey: "0x4AAAAAAAsitekey", secret: "0x4AAAAAAAadmin-secret", production: true });
+
+    const [row] = await db.select().from(schema.setting).where(eq(schema.setting.key, "runtime"));
+    expect(JSON.stringify(row!.value)).not.toContain("admin-secret");
+    const audits = await db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "integrations.runtime"));
+    expect(JSON.stringify(audits)).not.toContain("admin-secret");
+    expect((await runtimeSummary()).TURNSTILE_SECRET_KEY).toMatchObject({ value: "", hasSecret: true });
+
+    // Emptying a field (or clearing a secret) hands it back to the deployment.
+    await saveRuntimeGroup(admin, "analytics", { GA4_MEASUREMENT_ID: "" });
+    await saveRuntimeGroup(admin, "turnstile", { TURNSTILE_SITE_KEY: "0x4AAAAAAAsitekey" }, ["TURNSTILE_SECRET_KEY"]);
+    expect(await effectiveEnv()).toMatchObject({ GA4_MEASUREMENT_ID: "G-DEPLOYED1", TURNSTILE_SECRET_KEY: "deployment-secret-0000" });
+  });
+});

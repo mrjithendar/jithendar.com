@@ -9,7 +9,7 @@ import { emailSummary } from "./mail";
 import { postCounts } from "./posts";
 import { securityOverview } from "./security";
 import { storageReady } from "./storage";
-import { turnstileSecret, turnstileSiteKey } from "./turnstile";
+import { turnstileKeys } from "./turnstile";
 
 /** Everything the admin dashboard shows, in one round of parallel queries. Admin-only parts are null for authors. */
 export async function dashboardData(user: { id: string; role: string }) {
@@ -81,12 +81,13 @@ export async function dashboardData(user: { id: string; role: string }) {
         emailSummary(),
         activeProviders(),
         resolveGeminiImageConfig(),
+        turnstileKeys(),
       ])
     : null;
 
   let site = null;
   if (adminOnly) {
-    const [usersRaw, [unread], activity, security, [lastBackup], storage, email, providers, gemini] = adminOnly;
+    const [usersRaw, [unread], activity, security, [lastBackup], storage, email, providers, gemini, turnstile] = adminOnly;
     const users = rowsOf<{ total: number; week: number; admins: number; authors: number; banned: number }>(usersRaw)[0];
     site = {
       users: { total: Number(users?.total ?? 0), week: Number(users?.week ?? 0), admins: Number(users?.admins ?? 0), authors: Number(users?.authors ?? 0), banned: Number(users?.banned ?? 0) },
@@ -96,7 +97,7 @@ export async function dashboardData(user: { id: string; role: string }) {
       health: [
         { label: "Media storage (R2)", ok: storage, detail: storage ? "Connected" : "Not configured", href: "/admin/storage" },
         { label: "Email", ok: email.active !== "disabled" || email.envFallback, detail: email.envFallback ? "SMTP (deployment)" : email.active === "disabled" ? "Disabled" : email.active.toUpperCase(), href: "/admin/storage" },
-        { label: "Turnstile", ok: Boolean(turnstileSiteKey() && turnstileSecret()), detail: process.env.TURNSTILE_SITE_KEY ? "Production keys" : "Test keys", href: "/admin/system" },
+        { label: "Turnstile", ok: Boolean(turnstile.siteKey && turnstile.secret), detail: turnstile.production ? "Production keys" : "Test keys", href: "/admin/advanced" },
         { label: "Social sign-in", ok: providers.length > 0, detail: providers.length ? providers.map((x) => (x === "github" ? "GitHub" : "Google")).join(", ") : "Off", href: "/admin/integrations" },
         { label: "Image generation", ok: Boolean(gemini), detail: gemini ? gemini.model : "Off", href: "/admin/integrations" },
         {

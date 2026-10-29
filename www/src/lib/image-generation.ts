@@ -69,7 +69,7 @@ export async function startGeneration(
 
   const now = opts.now ?? Date.now();
   await expireGenerations(now).catch((e) => log.warn("expiring generations failed", { err: e }));
-  const limits = opts.limits ?? generationLimits();
+  const limits = opts.limits ?? generationLimits(await (await import("./runtime-settings")).effectiveEnv());
   const hourAgo = new Date(now - 3_600_000).toISOString();
   const dayAgo = new Date(now - 86_400_000).toISOString();
   const runningSince = new Date(now - config.timeoutMs - 30_000).toISOString();

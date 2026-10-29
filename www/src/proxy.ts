@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { isGone } from "@/config/gone";
 import { isIndexableHost } from "@/config/site";
+import { indexNowKey, INDEXNOW_KEY_PATTERN } from "@/lib/indexnow-key";
 import { MAINTENANCE_EXEMPT, maintenancePage, maintenanceState } from "@/lib/site-config/maintenance";
 
 const PREVIEW_COOKIE = "site_preview";
@@ -30,8 +31,17 @@ function accessLog(request: NextRequest, response: NextResponse, requestId: stri
   );
 }
 
+/** IndexNow key file at the site root ({key}.txt), proving ownership to participating search engines. */
+async function indexNowKeyFile(request: NextRequest): Promise<NextResponse | null> {
+  const m = /^\/([A-Za-z0-9-]{8,128})\.txt$/.exec(request.nextUrl.pathname);
+  if (!m) return null;
+  const key = await indexNowKey();
+  if (!key || !INDEXNOW_KEY_PATTERN.test(key) || m[1] !== key) return null;
+  return new NextResponse(key, { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=3600" } });
+}
+
 export async function proxy(request: NextRequest) {
-  const response = (await maintenance(request)) ?? route(request);
+  const response = (await indexNowKeyFile(request)) ?? (await maintenance(request)) ?? route(request);
   const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
   response.headers.set("x-request-id", requestId);
   if (process.env.ACCESS_LOG !== "false" && process.env.NODE_ENV !== "test") accessLog(request, response, requestId);
@@ -49,12 +59,6 @@ function route(request: NextRequest): NextResponse {
   }
 
   const { pathname } = request.nextUrl;
-  // IndexNow key file at the site root ({key}.txt), proving ownership to participating search engines.
-  const indexNowKey = process.env.INDEXNOW_KEY;
-  if (indexNowKey && /^[A-Za-z0-9-]{8,128}$/.test(indexNowKey) && pathname === `/${indexNowKey}.txt`) {
-    return new NextResponse(indexNowKey, { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=86400" } });
-  }
-
   if (pathname.length > 1 && pathname.endsWith("/")) {
     // A plain URL: NextURL re-applies the trailing slash when formatted.
     const url = new URL(request.url);

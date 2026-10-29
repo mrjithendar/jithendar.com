@@ -1,12 +1,12 @@
-import { integrations } from "@/config/integrations";
 import { isProductionEnv, PRODUCTION_HOST, siteUrl } from "@/config/site";
+import { indexNowKey } from "./indexnow-key";
 import { enqueue, PermanentJobError } from "./jobs";
 import { log } from "./log";
 
 /**
  * IndexNow (indexnow.org): tells participating search engines (e.g. Bing, Yandex, Seznam, Naver)
- * that a URL was added, updated or deleted. Google does not take part. The key is served at
- * https://jithendar.com/{INDEXNOW_KEY}.txt by src/proxy.ts. Submissions go through the job queue,
+ * that a URL was added, updated or deleted. Google does not take part. The key (Admin → Integrations, or
+ * INDEXNOW_KEY) is served at https://jithendar.com/{key}.txt by src/proxy.ts. Submissions go through the job queue,
  * so publishing never waits on, or fails because of, an IndexNow outage.
  */
 const ENDPOINT = "https://api.indexnow.org/indexnow";
@@ -27,7 +27,7 @@ export async function submitIndexNow(urls: string[], opts: { key: string; host?:
 
 /** Queue canonical public URLs on this site (deduplicated while pending). No-op unless production and configured. */
 export async function queueIndexNow(paths: string[]): Promise<number> {
-  const key = integrations().indexNowKey;
+  const key = await indexNowKey();
   if (!key || !isProductionEnv()) return 0;
   let queued = 0;
   for (const path of new Set(paths)) {
@@ -43,7 +43,15 @@ export async function queueIndexNow(paths: string[]): Promise<number> {
 }
 
 export const indexNowHandler = async (payload: Record<string, unknown>) => {
-  const key = integrations().indexNowKey;
-  if (!key) throw new PermanentJobError("INDEXNOW_KEY is not configured");
+  const key = await indexNowKey();
+  if (!key) throw new PermanentJobError("IndexNow is off (Admin → Integrations)");
   await submitIndexNow([String(payload.url)], { key });
 };
+
+/** Queue every URL in the sitemap once (after turning IndexNow on, or after a large change). */
+export async function queueSitemapForIndexNow(): Promise<{ queued: number; total: number }> {
+  const { buildSitemap } = await import("./seo/sitemap");
+  const origin = siteUrl();
+  const paths = (await buildSitemap()).map((e) => (e.url.startsWith(origin) ? e.url.slice(origin.length) || "/" : null)).filter((p): p is string => p !== null);
+  return { queued: await queueIndexNow(paths), total: paths.length };
+}

@@ -1,11 +1,15 @@
 "use client";
 
 import { useEffect, useId, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 /**
  * Accessible modal: full-screen sheet on phones, centred panel from `sm` up. Escape and the close
  * button call onClose; focus moves into the dialog, stays there (Tab wraps) and returns to the
  * element that opened it; the page behind does not scroll.
+ *
+ * Rendered into document.body: a dialog opened from inside a sticky panel (the editor sidebar) would otherwise
+ * be trapped in that panel's stacking context and drawn under the editor's sticky toolbars.
  */
 export function Dialog({
   open,
@@ -66,7 +70,7 @@ export function Dialog({
   }, [open]);
 
   if (!open) return null;
-  return (
+  const dialog = (
     <div className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/50 sm:items-center sm:p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div
         ref={panel}
@@ -94,4 +98,5 @@ export function Dialog({
       </div>
     </div>
   );
+  return typeof document === "undefined" ? dialog : createPortal(dialog, document.body);
 }

@@ -34,6 +34,7 @@ export function GenerateImageDialog({
   context,
   options,
   replacing,
+  acceptLabel = "Use as cover",
 }: {
   open: boolean;
   onClose: () => void;
@@ -43,6 +44,8 @@ export function GenerateImageDialog({
   context: string;
   options: GenerateOptions;
   replacing: boolean;
+  /** Label of the button that keeps the image ("Use as cover", "Insert image"…). */
+  acceptLabel?: string;
 }) {
   const [prompt, setPrompt] = useState("");
   const [ratio, setRatio] = useState(options.aspectRatios[0] ?? "16:9");
@@ -136,7 +139,7 @@ export function GenerateImageDialog({
           Regenerate
         </Button>
         <Button type="button" onClick={() => accept(phase.result)} disabled={saving || !alt.trim()}>
-          {saving ? "Saving…" : "Use as cover"}
+          {saving ? "Saving…" : acceptLabel}
         </Button>
       </div>
     ) : (
@@ -178,7 +181,7 @@ export function GenerateImageDialog({
             <Field label="Alt text" htmlFor="gen-alt" hint="Describe what the image shows, for screen readers and search. Required.">
               <Input id="gen-alt" value={alt} onChange={(e) => setAlt(e.target.value)} maxLength={300} required data-autofocus />
             </Field>
-            {replacing && <Alert tone="info">Using this image replaces the current cover in the editor. The post changes only when you save it.</Alert>}
+            {replacing && <Alert tone="info">“{acceptLabel}” replaces the current image in the editor; the old one stays in the media library. The post changes only when you save it.</Alert>}
           </>
         ) : (
           <>

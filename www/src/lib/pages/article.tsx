@@ -15,7 +15,6 @@ import { TableOfContents } from "@/components/TableOfContents";
 import { TagList } from "@/components/TagList";
 import { AdSlot } from "@/components/integrations/AdSlot";
 import { ArticleEngagement } from "@/components/integrations/ThirdPartyClient";
-import { integrations } from "@/config/integrations";
 import { absoluteUrl, site } from "@/config/site";
 import { collectionLabels, type Collection } from "@/config/taxonomy";
 import { getCategoryMap, labelOf } from "@/lib/categories";
@@ -112,7 +111,7 @@ export async function ArticleView({
   ];
   const hasToc = a.toc.enabled && headings.length >= a.toc.minHeadings;
   const sidebarToc = hasToc && a.sidebar === "toc";
-  const ads = integrations().adsense;
+  const ads = (await (await import("@/lib/runtime-settings")).runtimeIntegrations()).adsense;
 
   const column = "mx-auto w-full min-w-0 max-w-reading";
 

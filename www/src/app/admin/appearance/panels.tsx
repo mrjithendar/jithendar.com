@@ -449,7 +449,7 @@ export function SeoPanel({ ctx }: { ctx: Ctx }) {
         <StatusRow ok={!!s.adsense} label="Google AdSense" detail={s.adsense ? `${s.adsense.slots} ad slot(s)${s.adsense.test ? ", test mode" : ""}.` : "Not configured."} />
         <StatusRow ok={s.adsTxt} label="ads.txt" detail={s.adsTxt ? "Served at /ads.txt." : "Not configured (/ads.txt returns 404)."} />
         <StatusRow ok label="Consent default" detail={s.consentDefault === "strict" ? "Denied everywhere until the visitor consents." : "Denied in the EEA, UK and Switzerland until consent."} />
-        <StatusRow ok={s.indexNow} label="IndexNow" detail={s.indexNow ? "Configured; submissions in production." : "Not configured."} />
+        <StatusRow ok={s.indexNow} label="IndexNow" detail={s.indexNow ? "On; submissions in production." : "Off. Turn it on in Admin → Integrations."} />
         <p className="text-sm text-fg-muted">
           To change these, run <code className="rounded bg-surface-sunken px-1 font-mono text-xs">scripts/set-public-config.sh</code> (see docs/SEO_ANALYTICS_ADS.md). Scripts and tracking codes cannot be pasted here by design.
         </p>

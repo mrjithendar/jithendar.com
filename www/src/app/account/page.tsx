@@ -19,7 +19,7 @@ export default async function AccountProfilePage({ searchParams }: { searchParam
   if (!profile) notFound();
   const { denied } = await searchParams;
   const staff = profile.role === "admin" || profile.role === "author";
-  const limits = avatarLimits();
+  const limits = avatarLimits(await (await import("@/lib/runtime-settings")).effectiveEnv());
 
   return (
     <div className="space-y-6">

@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { SiteFooter } from "@/components/SiteFooter";
 import { SiteHeader } from "@/components/SiteHeader";
 import { AnnouncementBar, announcementId, announcementScript } from "@/components/AnnouncementBar";
-import { integrations } from "@/config/integrations";
+import { runtimeIntegrations } from "@/lib/runtime-settings";
 import { absoluteUrl, isProductionEnv, site, siteUrl } from "@/config/site";
 import { ThirdParty } from "@/components/integrations/ThirdParty";
 import { HideOnAdmin } from "@/components/HideOnAdmin";
@@ -31,7 +31,7 @@ const fontVariables = [inter, jetbrains, plexSans, sourceSans, sourceSerif, plex
 export async function generateMetadata(): Promise<Metadata> {
   const { config, preview } = await getSiteConfig();
   const g = config.general;
-  const { verification } = integrations();
+  const { verification } = await runtimeIntegrations();
   const { favicon, appleIcon } = config.branding;
   return {
     metadataBase: new URL(siteUrl()),

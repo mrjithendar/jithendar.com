@@ -1,13 +1,14 @@
 import type { Metadata } from "next";
-import { integrations, adsTxt } from "@/config/integrations";
 import { getCategories } from "@/lib/categories";
 import { getAuthors, getPages, getPublishedContent } from "@/lib/content";
+import { indexNowKey } from "@/lib/indexnow-key";
 import { activeProviders, resolveGeminiImageConfig } from "@/lib/integrations";
 import { mailConfigured } from "@/lib/mail";
 import { requireRole } from "@/lib/session";
 import { getDraft, getPublishedConfig } from "@/lib/site-config/store";
 import { storageReady } from "@/lib/storage";
-import { turnstileSecret, turnstileSiteKey } from "@/lib/turnstile";
+import { turnstileKeys } from "@/lib/turnstile";
+import { effectiveEnv, runtimeAdsTxt, runtimeIntegrations } from "@/lib/runtime-settings";
 import { AppearanceEditor, type EditorContext } from "./AppearanceEditor";
 
 export const metadata: Metadata = { title: "Appearance & site settings" };
@@ -31,7 +32,7 @@ export default async function AppearancePage({ searchParams }: { searchParams: P
     getPublishedContent(),
   ]);
   const article = articles.find((a) => a.collection !== "projects");
-  const i = integrations();
+  const [i, env, turnstile] = await Promise.all([runtimeIntegrations(), effectiveEnv(), turnstileKeys()]);
   // Status only: secrets are never sent to the browser, not even masked fragments.
   const ctx: EditorContext = {
     categories: categories.map((c) => ({ slug: c.slug, label: c.label })),
@@ -52,17 +53,17 @@ export default async function AppearancePage({ searchParams }: { searchParams: P
     status: {
       storage,
       mail,
-      turnstile: Boolean(turnstileSiteKey() && turnstileSecret()),
+      turnstile: Boolean(turnstile.siteKey && turnstile.secret),
       gemini: Boolean(await resolveGeminiImageConfig()),
       oauth: await activeProviders(),
       googleVerification: i.verification.google.length,
       bingVerification: i.verification.bing.length,
-      ga4: Boolean(process.env.GA4_MEASUREMENT_ID?.trim()),
+      ga4: Boolean(env.GA4_MEASUREMENT_ID?.trim()),
       ga4Active: Boolean(i.ga4),
       adsense: i.adsense ? { slots: Object.values(i.adsense.slots).filter(Boolean).length, test: i.adsense.test } : null,
-      adsTxt: Boolean(adsTxt()),
+      adsTxt: Boolean(await runtimeAdsTxt()),
       consentDefault: i.consentDefault,
-      indexNow: Boolean(i.indexNowKey),
+      indexNow: Boolean(await indexNowKey()),
     },
   };
   return (

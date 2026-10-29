@@ -8,7 +8,7 @@ import { safeNext } from "@/lib/safe-next";
 import { activeProviders } from "@/lib/integrations";
 import { getSessionUser } from "@/lib/session";
 import { getSettings } from "@/lib/settings";
-import { turnstileSiteKey } from "@/lib/turnstile";
+import { turnstileKeys } from "@/lib/turnstile";
 import { LoginForm } from "./LoginForm";
 import { SocialButtons } from "./SocialButtons";
 
@@ -27,7 +27,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
 
   const settings = await getSettings();
   const providers = await activeProviders();
-  const siteKey = turnstileSiteKey();
+  const { siteKey } = await turnstileKeys();
   const errorPath = `/login?next=${encodeURIComponent(next)}${confirming ? "&reauth=1" : ""}`;
   const message = authErrorMessage(error);
 

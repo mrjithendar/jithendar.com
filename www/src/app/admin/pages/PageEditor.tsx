@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { CoverImagePicker } from "@/components/admin/CoverImagePicker";
 import type { GenerateOptions } from "@/components/admin/GenerateImageDialog";
-import { Panel, PreviewDialog, RevisionsPanel, SaveIndicator, SearchPreview, type SaveState } from "@/components/admin/editor/EditorChrome";
+import { autoHideClass, editorBarOffset, Panel, PreviewDialog, RevisionsPanel, SaveIndicator, SearchPreview, useAutoHideBar, type SaveState } from "@/components/admin/editor/EditorChrome";
 import { Alert, Button, Field, Input, Textarea } from "@/components/ui/form";
 import type { PageFormValue } from "@/lib/site-pages";
 import { autosavePageAction, discardPageAutosaveAction, listPageRevisionsAction, loadPageRevisionAction, savePageAction, trashPageAction } from "./actions";
@@ -57,6 +57,7 @@ export function PageEditor({
   const [sidebar, setSidebar] = useState(false);
   const [editorKey, setEditorKey] = useState(0);
   const dirty = !same(v, committed);
+  const barHidden = useAutoHideBar();
   const set = <K extends keyof PageFormValue>(k: K, value: PageFormValue[K]) => setV((p) => ({ ...p, [k]: value }));
 
   useEffect(() => {
@@ -117,8 +118,8 @@ export function PageEditor({
   }
 
   return (
-    <div>
-      <div className="sticky top-header z-20 -mx-4 mb-6 flex flex-wrap items-center gap-2 border-b border-line bg-canvas px-4 py-2 sm:mx-0 sm:rounded-b-xl sm:border sm:border-t-0 sm:px-3 [[data-editor-focus]_&]:top-0">
+    <div style={editorBarOffset(barHidden)}>
+      <div className={`sticky top-header z-20 -mx-4 mb-6 flex flex-wrap items-center gap-2 border-b border-line bg-canvas px-4 py-2 sm:mx-0 sm:rounded-b-xl sm:border sm:border-t-0 sm:px-3 [[data-editor-focus]_&]:top-0 ${autoHideClass(barHidden)}`}>
         <Link href="/admin/pages" className="inline-flex min-h-10 items-center rounded-lg px-2 text-sm font-medium text-fg-muted hover:bg-surface-sunken hover:text-fg"
           onClick={(e) => { if (dirty && !window.confirm("You have unsaved changes. Leave anyway?")) e.preventDefault(); }}>← Pages</Link>
         <SaveIndicator state={state} dirty={dirty} status="live" />
@@ -167,7 +168,7 @@ export function PageEditor({
               className="min-w-0 flex-1 rounded-md border border-line bg-surface px-2 py-1 font-mono text-xs" />
             {originalSlug && originalSlug !== v.slug && <span className="text-amber-700 dark:text-amber-300">The old URL will redirect here.</span>}
           </div>
-          <BlockEditor key={editorKey} value={v.body} onChange={(md) => set("body", md)} mediaContext={`pages/${v.slug || "draft"}`} />
+          <BlockEditor key={editorKey} value={v.body} onChange={(md) => set("body", md)} mediaContext={`pages/${v.slug || "draft"}`} generate={{ ...imageGeneration, title: v.title, summary: v.description }} />
         </div>
 
         <aside id="page-settings" aria-label="Page settings" className={`${sidebar ? "fixed inset-0 z-50 overflow-y-auto bg-white p-4 dark:bg-surface-dark" : "hidden"} space-y-3 xl:static xl:block xl:bg-transparent xl:p-0`}>

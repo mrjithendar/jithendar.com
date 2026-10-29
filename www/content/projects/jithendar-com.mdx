@@ -1,0 +1,147 @@
+---
+title: "Jithendar.com behind the screen: a self-hosted publishing platform on Kubernetes"
+slug: jithendar-com
+description: How this site works - Next.js on Minikube with PostgreSQL, Redis, Cloudflare R2, built-in admin, audit log, encrypted backups and full observability.
+author: jithendar-dharmapuri
+category: devops-sre
+tags: [Next.js, Kubernetes, PostgreSQL, Observability, Security]
+contentType: project
+status: review
+related: [projects/roboshop-ai, blog/deploy-nextjs-kubernetes-github-actions]
+---
+<Todo>Review every statement below against the current repository before publishing, and add why you rebuilt the site and what you learned. Replace each "Screenshot" note with the image (in the editor: + → Image, alt text required; use a figure caption if you want one).</Todo>
+
+The page you are reading is served by a platform I built and run myself. It replaced a self-hosted WordPress that was compromised on 27 October 2026. Instead of patching it, I rebuilt the site as one Next.js application with its own editor, admin, security controls and monitoring. This post walks through what happens behind the screen.
+
+## The request path
+
+A request to `https://jithendar.com` first reaches Cloudflare, then a single server running a Minikube cluster, shared with RoboShop AI, Argo CD and the monitoring stack.
+
+1. **Cloudflare DNS** resolves the domain, and **Cloudflare's CDN** receives the request at the data centre nearest the reader. It serves cached static files such as scripts, styles and fonts from the edge, filters malicious traffic and absorbs DDoS attacks, and hides the server's real IP address. Everything else is forwarded to the origin over HTTPS.
+2. **Traefik** terminates TLS with a Let's Encrypt certificate issued by cert-manager, redirects `http` and `www` to the HTTPS apex in one hop, and compresses text responses (zstd, Brotli or gzip).
+3. The request goes to one of **two replicas** of the Next.js app in the `jithendar` namespace. Paths such as `/argocd` and `/grafana` belong to other workloads and keep priority in Traefik.
+4. The app reads content from **PostgreSQL**, with **Redis** as a cache. If Redis is lost, the site falls back to Postgres.
+5. Images and other media are served from **Cloudflare R2** through the app: `next/image` resizes them to AVIF or WebP in the pods.
+
+Using Cloudflare for DNS, CDN, media storage and bot protection keeps the public edge of the site on one network, while the application itself stays on infrastructure I run.
+
+<Todo>Confirm your Cloudflare settings before publishing: the DNS record is proxied (orange cloud) and SSL/TLS mode is "Full (strict)", since the origin has its own Let's Encrypt certificate. Add a screenshot of the Cloudflare DNS or analytics page here if you want one.</Todo>
+
+## Tech stack
+
+| Layer | Technology | What it does here |
+| --- | --- | --- |
+| Framework | Next.js 16 (App Router), React 19 | Server-rendered pages, the admin and the API in one app |
+| Language and styling | TypeScript 5.9, Tailwind CSS 4 | Type-checked code and a themeable design system with light and dark modes |
+| Validation | Zod | Checks every form, setting and content item on the server |
+| Database | PostgreSQL 18 with Drizzle ORM | Posts, pages, users, comments, revisions, jobs and the audit log |
+| Cache | Redis 7.4 | Page data cache, rate limits and cache clearing across replicas |
+| Media storage | Cloudflare R2 | Images, video, audio, PDFs and backups |
+| Images | sharp via `next/image` | Resizes and converts images to AVIF or WebP |
+| Editor | Tiptap 3, unified, remark and rehype | Visual Markdown editor and server-side rendering |
+| Code highlighting | Shiki | Syntax highlighting on the server, so no extra JavaScript for readers |
+| Authentication | Better Auth | Email and password, Google and GitHub sign-in, sessions and roles |
+| Bot protection | Cloudflare Turnstile | Proves a visitor is human without a puzzle |
+| Email | Nodemailer with SMTP, Mailgun or Amazon SES | Password resets, notifications and contact messages |
+| AI | Google Gemini | Optional AI-generated featured images, with hourly and daily limits |
+| Container and cluster | Docker (ARM64), Minikube | Two replicas of the app with Postgres and Redis beside it |
+| DNS and CDN | Cloudflare DNS and CDN | Fast DNS, edge caching, DDoS protection and a hidden origin IP |
+| Ingress and TLS | Traefik, cert-manager, Let's Encrypt | HTTPS at the origin, redirects and compression |
+| CI and registry | GitHub Actions self-hosted runners, Amazon ECR | Lint, test, build and publish images |
+| Observability | OpenTelemetry, Jaeger, Prometheus, Loki, Grafana | Traces, metrics, logs, dashboards and alerts |
+| Testing | Vitest, happy-dom, PGlite | Unit and integration tests, including against an in-memory Postgres |
+
+## Content and the editor
+
+Articles and pages are stored as **Markdown in PostgreSQL**. The admin editor (Tiptap) is a visual view over that Markdown. It round-trips the document before opening it, so nothing is silently changed. Bodies are compiled on the server as plain Markdown, so raw HTML and JavaScript in a post are never executed.
+
+- Every save, publish and restore creates a **revision**, so history is never rewritten.
+- **Scheduled publishing** runs inside the site pods every 30 seconds. Each post is published exactly once, even across replicas and restarts.
+- After each change, caches are cleared on every replica, sitemaps and feeds update on the next request, and search engines are notified through **IndexNow**.
+
+## Media on Cloudflare R2
+
+Every image, video, audio file and PDF on this site, and every backup, is stored in **Cloudflare R2**, Cloudflare's object storage.
+
+When I upload an image in the editor, the app validates it and writes it to R2. Larger files such as videos go straight from the browser to R2 using a short-lived signed upload link, so they never pass through the app. Readers then load images through the site, which resizes them for their screen. Video, audio and PDFs can be served directly from Cloudflare's network.
+
+### How R2 differs from Amazon S3
+
+R2 speaks the same API as Amazon S3, so the site uses the standard AWS SDK and only the endpoint and credentials change. The site started on S3 and moved to R2 with a built-in migration that copies each file, records its old and new location, and can be rolled back.
+
+| | Amazon S3 | Cloudflare R2 |
+| --- | --- | --- |
+| API | The original S3 API | S3-compatible, so the same SDKs and tools work |
+| Cost of downloads (egress) | Charged per GB transferred out to the internet | No egress fees |
+| Delivery | Usually paired with CloudFront as a separate CDN | Served from Cloudflare's global network, optionally on a custom domain |
+| Regions | You choose an AWS region | Data is placed automatically; no region to manage |
+| Ecosystem | Deep integration with the rest of AWS | Fits naturally with Cloudflare DNS, CDN and Turnstile |
+
+For a media-heavy publication, where most traffic is people downloading images, removing egress fees is the main reason to choose R2. S3 is still the better fit when a workload lives inside AWS and relies on its other services.
+
+<Todo>Check the R2 vs S3 comparison against current Cloudflare and AWS pricing pages before publishing.</Todo>
+
+## Bot protection with Cloudflare Turnstile
+
+Public forms are the first thing bots attack. This site uses **Cloudflare Turnstile**, a CAPTCHA alternative that confirms a visitor is human by running small, invisible checks in the browser. Most people never see a puzzle and never click on traffic lights.
+
+It protects password sign-in, sign-up, comments and the contact form:
+
+1. The browser shows the Turnstile widget, which produces a one-time token.
+2. The form sends that token to the server with the rest of the data.
+3. The server checks the token with Cloudflare using a secret key that never leaves the server. If it fails, the request is rejected. Failed checks at sign-in are recorded in the audit log.
+
+Signed-in readers who pass once are remembered for a configurable number of hours, so they are not asked again on every comment. Authors and admins are never asked. Rate limits and moderation apply whatever Turnstile says.
+
+## Health at a glance
+
+**Admin → System status** runs a live check of every dependency on each load: PostgreSQL, Redis, R2 media storage, the publishing scheduler, Gemini, email, Turnstile, the trace collector, the TLS certificate's remaining days and the latest backup. It also shows which build is running.
+
+<Todo>Screenshot: Admin → System status (all checks and the build info card).</Todo>
+
+## The database
+
+PostgreSQL runs as a StatefulSet in the same namespace and accepts connections only from the site's pods. **Admin → Database** shows the connection round trip, every table with its estimated rows, size and last vacuum, and a read-only table browser. Safe housekeeping tasks, such as clearing expired sessions or abandoned uploads, run from the same page, and each run is recorded in the audit log.
+
+<Todo>Screenshot: Admin → Database (stats, connection card and table list).</Todo>
+
+## Security and the audit log
+
+After the WordPress incident, security was designed in rather than added later:
+
+- New accounts are always readers. Author and admin roles are granted only by an admin, and every admin page checks the role on the server.
+- The first admin is created once through a setup page protected by a one-time token. The page disappears afterwards.
+- Sign-ins are rate-limited and protected by Turnstile. Passwords are checked against known breaches.
+- Stored credentials for storage, email and integrations are encrypted in the database.
+- Responses carry HSTS and other security headers, and private pages are never cached.
+
+Every sensitive action is written to the **audit log** with who, what, when, IP address and a severity: failed or blocked sign-ins, role changes, API keys, integration and storage changes, backups and database maintenance. The log opens with a summary of security events from the last 24 hours, can be filtered by IP address, and exports to CSV.
+
+<Todo>Screenshot: Admin → Audit log (the 24-hour security summary and recent entries). Blur or crop IP addresses and email addresses first.</Todo>
+
+## Backups
+
+Backups are encrypted before they leave the cluster. Each one is gzip-compressed and encrypted with AES-256-GCM using a passphrase only I know, then stored in R2. They contain content, configuration and accounts, but no password hashes, sessions or stored credentials. Backups run daily or weekly with a retention limit, and they can also be started by hand from **Admin → Backups**.
+
+<Todo>Screenshot: Admin → Backups (schedule, retention and the list of recent backups).</Todo>
+
+## Observability
+
+The site uses the cluster's shared monitoring stack:
+
+- **Traces**: OpenTelemetry spans go to Jaeger, after a filter removes URLs, queries and SQL.
+- **Logs**: structured JSON logs are collected by Alloy into Loki. Only allowlisted fields are stored.
+- **Metrics**: Prometheus scrapes request rates and latency per route, Node.js runtime metrics and site figures such as published posts and pending comments. The metrics port is reachable only by Prometheus.
+- **Alerts** fire when the site is down, the 5xx error rate goes above 5 %, or p95 latency goes above 2 seconds.
+
+## Delivery
+
+CI runs on **GitHub Actions self-hosted runners** that I install with one script. It downloads the official runner, verifies its SHA-256 checksum, registers two runners with a short-lived token and runs each as a systemd service. Two runners mean a pull-request check and a release build can run at the same time. The registration token comes from the GitHub CLI or AWS Secrets Manager, never from the repository.
+
+<Todo>The repo's runner/README.md says CI moved to GitHub-hosted runners (ubuntu-24.04 and ubuntu-24.04-arm) on 2026-10-29 because builds on the cluster host froze it. Confirm which runners the workflow uses before publishing and adjust this paragraph.</Todo>
+
+Every pull request is linted, type-checked, tested and built. A merge to `master` builds the image and pushes it to Amazon ECR, tagged with the commit SHA. CI has no access to the cluster: a person deploys with `./deploy.sh`. The script pins the image digest, does a server dry run, applies the manifests, waits for the rollout (rolling back automatically if it fails) and runs a smoke test. Rolling back to any of the last 30 images is one command.
+
+## Trade-offs
+
+Everything runs on one server, so if that server goes down the site goes down. The two replicas cover pod restarts and rollouts, not hardware failure. In return the whole platform is small enough to understand end to end, and every part of it is something I can inspect, change and explain.

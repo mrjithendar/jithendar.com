@@ -116,7 +116,24 @@ like posts (shown under the page title and used as the share image).
 Cloudflare R2 only (S3, SFTP and Google Drive destinations were removed on 2026-10-29). Backups reuse the media
 R2 account and token and are written to `jithendar/backups/jithendar-backup-{yyyymmdd-hhmmss}.json.gz.enc` in
 the media bucket or, recommended, a separate private bucket (the token needs Object Read & Write on it).
-Stored backups can be downloaded from the same page; the retention setting prunes older ones.
+The page (Admin → Operations → Backups) lists the newest 10 backups in R2 with **Download** and **Restore**;
+the retention setting prunes older ones.
+
+**Restore** (one click + confirmation, `restoreStoredBackup` in `src/lib/backups.ts`): first writes a fresh
+backup of the current state to R2 (named in the success message, restorable the same way), then in one
+transaction replaces posts, pages, categories, author profiles, comments (with likes and reports), contact
+messages, media records, redirects and Appearance settings with the backup. Accounts are merged: missing ones
+are recreated without a password (they use “Forgot password” or social sign-in); existing accounts, sign-in
+methods, sessions, API keys and stored credentials are never touched. Media files in R2 are not changed.
+Logged as `backup.restore` (critical). Backups made before 2026-10-29 lack Appearance settings and comment
+likes/reports; restoring one leaves those empty/default.
+
+## IndexNow (Admin → Integrations)
+
+**Turn on IndexNow** generates a 32-character key (stored in `setting.integrations`, not secret) that the proxy
+serves at `/{key}.txt`; publishing, updating or trashing a post then queues its URL for `api.indexnow.org` (job
+queue, retries, production only). **Submit all pages now** queues every sitemap URL once. `INDEXNOW_KEY` in the
+deployment still overrides the admin setting.
 
 ## Setup (in order) — requires manual configuration
 

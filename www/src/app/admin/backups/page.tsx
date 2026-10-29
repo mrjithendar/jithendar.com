@@ -4,7 +4,8 @@ import { AdminHeader, Card, StatusPill, Table, td, th } from "@/components/admin
 import { Alert, Button, Field, Input, Select } from "@/components/ui/form";
 import Link from "next/link";
 import { adminActor } from "@/lib/admin";
-import { BACKUP_ROOT, backupSummary, listStoredBackups, recentRuns, runBackup, saveDestination, saveGeneral, testDestination } from "@/lib/backups";
+import { BACKUP_ROOT, backupSummary, listStoredBackups, recentRuns, restoreStoredBackup, runBackup, saveDestination, saveGeneral, testDestination } from "@/lib/backups";
+import { RestoreButton } from "./RestoreButton";
 import { formatDateTime } from "@/lib/dates";
 import { flash } from "@/lib/flash";
 import { PostError } from "@/lib/posts";
@@ -28,6 +29,17 @@ async function destination(form: FormData) {
     await saveDestination(actor, { enabled: form.has("enabled"), bucket: String(form.get("bucket") ?? "") });
     if (form.get("test") === "1") await testDestination(actor);
     return form.get("test") === "1" ? "Cloudflare R2 destination saved and tested successfully." : "Cloudflare R2 destination saved.";
+  });
+}
+
+async function restore(form: FormData) {
+  "use server";
+  const actor = await adminActor();
+  const name = String(form.get("name") ?? "");
+  await flash("/admin/backups", async () => {
+    const r = await restoreStoredBackup(actor, name);
+    const n = (k: string) => r.restored[k] ?? 0;
+    return `Restored ${name}: ${n("post")} posts, ${n("page")} pages, ${n("comment")} comments, ${n("media")} media records${r.usersAdded ? `, ${r.usersAdded} account(s) recreated` : ""}. The previous state was saved as ${r.safetyBackup}.`;
   });
 }
 
@@ -97,14 +109,22 @@ export default async function BackupsPage({ searchParams }: { searchParams: Flas
 
         {stored && stored.length > 0 && (
           <div>
-            <h2 className="mb-3 font-semibold text-fg">Stored in R2</h2>
-            <Table head={<tr><th className={th}>File</th><th className={th}>Size</th><th className={th}>Stored</th><th className={th}><span className="sr-only">Download</span></th></tr>}>
-              {stored.map((f) => (
+            <h2 className="font-semibold text-fg">Latest backups in R2</h2>
+            <p className="mb-3 mt-1 text-sm text-fg-muted">
+              The newest 10{stored.length > 10 ? ` of ${stored.length}` : ""}. Restore replaces content and settings with the backup in one step; the current state is backed up to R2 first.
+            </p>
+            <Table head={<tr><th className={th}>File</th><th className={th}>Size</th><th className={th}>Stored</th><th className={th}><span className="sr-only">Actions</span></th></tr>}>
+              {stored.slice(0, 10).map((f) => (
                 <tr key={f.key}>
                   <td className={`${td} font-mono text-xs`}>{f.name}</td>
                   <td className={`${td} whitespace-nowrap`}>{Math.round(f.size / 1024)} KB</td>
                   <td className={`${td} whitespace-nowrap`}>{f.lastModified ? formatDateTime(f.lastModified) : "—"}</td>
-                  <td className={td}><a className="link" href={`/api/admin/backup?file=${encodeURIComponent(f.name)}`} download>Download</a></td>
+                  <td className={td}>
+                    <div className="flex items-center gap-4 whitespace-nowrap">
+                      <a className="link" href={`/api/admin/backup?file=${encodeURIComponent(f.name)}`} download>Download</a>
+                      {b.hasPassphrase && <RestoreButton name={f.name} created={f.lastModified ? formatDateTime(f.lastModified) : f.name} action={restore} />}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </Table>

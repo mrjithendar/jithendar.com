@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { CoverImagePicker } from "@/components/admin/CoverImagePicker";
 import type { GenerateOptions } from "@/components/admin/GenerateImageDialog";
-import { Panel, PreviewDialog, RevisionsPanel, SaveIndicator, SearchPreview, SocialPreview, type SaveState } from "@/components/admin/editor/EditorChrome";
+import { autoHideClass, editorBarOffset, Panel, PreviewDialog, RevisionsPanel, SaveIndicator, SearchPreview, SocialPreview, useAutoHideBar, type SaveState } from "@/components/admin/editor/EditorChrome";
 import { Alert, Button, Field, Input, Select, Textarea } from "@/components/ui/form";
 import type { Source } from "@/db/schema";
 import { isoToIstInput, istInputToIso } from "@/lib/ist";
@@ -252,13 +252,14 @@ export function PostEditor({
     else setState({ kind: "error", message: r.error });
   }
 
+  const barHidden = useAutoHideBar();
   const primary = isLive ? "Update" : futureDate ? (isScheduled ? "Update schedule" : "Schedule…") : "Publish";
   const primaryIntent: SaveIntent = isLive ? "save" : "publish";
 
   return (
-    <div data-editor-focus={focus || undefined} className={focus ? "fixed inset-0 z-50 overflow-y-auto bg-canvas" : ""}>
-      {/* Top bar */}
-      <div className={`sticky top-header z-20 -mx-4 mb-6 flex flex-wrap items-center gap-2 border-b border-line bg-canvas px-4 py-2 sm:mx-0 sm:rounded-b-xl sm:border sm:border-t-0 sm:px-3 [[data-editor-focus]_&]:top-0 ${focus ? "mx-0" : ""}`}>
+    <div data-editor-focus={focus || undefined} className={focus ? "fixed inset-0 z-50 overflow-y-auto bg-canvas" : ""} style={editorBarOffset(barHidden)}>
+      {/* Top bar (slides away while scrolling down, back on scroll up) */}
+      <div className={`sticky top-header z-20 -mx-4 mb-6 flex flex-wrap items-center gap-2 border-b border-line bg-canvas px-4 py-2 sm:mx-0 sm:rounded-b-xl sm:border sm:border-t-0 sm:px-3 [[data-editor-focus]_&]:top-0 ${focus ? "mx-0" : ""} ${autoHideClass(barHidden)}`}>
         <Link href="/admin/posts" className="inline-flex min-h-10 items-center rounded-lg px-2 text-sm font-medium text-fg-muted hover:bg-surface-sunken hover:text-fg"
           onClick={(e) => { if (dirty && !window.confirm("You have unsaved changes. Leave anyway? (They are autosaved as a recovery copy.)")) e.preventDefault(); }}>
           ← Posts
@@ -320,7 +321,7 @@ export function PostEditor({
             {isLive && committed.slug !== v.slug && <span className="text-amber-700 dark:text-amber-300">The old URL will redirect here.</span>}
           </div>
 
-          <BlockEditor key={editorKey} value={v.body} onChange={(md) => set("body", md)} mediaContext={context} />
+          <BlockEditor key={editorKey} value={v.body} onChange={(md) => set("body", md)} mediaContext={context} generate={{ ...imageGeneration, title: v.title, summary: v.description }} />
         </div>
 
         <aside id="post-settings" aria-label="Post settings"
@@ -355,7 +356,7 @@ export function PostEditor({
             <p className="text-xs text-slate-500">Author: {authorName}</p>
           </Panel>
 
-          <Panel title="Featured image">
+          <Panel title="Featured image" open>
             <CoverImagePicker value={v.featuredImage} onChange={(img) => set("featuredImage", img)} context={context} generate={{ ...imageGeneration, title: v.title, summary: v.description }} />
           </Panel>
 

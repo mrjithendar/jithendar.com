@@ -5,7 +5,7 @@ import { getPage } from "@/lib/content";
 import { ContactForm } from "@/components/ContactForm";
 import { PageView } from "@/lib/pages/page-view";
 import { getSettings } from "@/lib/settings";
-import { turnstileSiteKey } from "@/lib/turnstile";
+import { turnstileKeys } from "@/lib/turnstile";
 import { findRedirect } from "@/lib/redirects";
 
 type Props = { params: Promise<{ page: string }> };
@@ -47,6 +47,6 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function StaticPage({ params }: Props) {
   const page = await load((await params).page);
-  const contactForm = page.slug === "contact" && (await getSettings()).features.contactForm ? <ContactForm siteKey={turnstileSiteKey()} /> : undefined;
+  const contactForm = page.slug === "contact" && (await getSettings()).features.contactForm ? <ContactForm siteKey={(await turnstileKeys()).siteKey} /> : undefined;
   return <PageView page={page} after={contactForm} />;
 }

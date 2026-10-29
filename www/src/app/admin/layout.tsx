@@ -36,9 +36,10 @@ export default async function AdminLayout({ children }: { children: ReactNode })
           { href: "/admin/users", label: "Users", section: "Site" },
           { href: "/admin/appearance", label: "Appearance & settings", section: "Site" },
           { href: "/admin/integrations", label: "Integrations", section: "Site" },
+          { href: "/admin/advanced", label: "Advanced settings", section: "Site" },
           { href: "/admin/storage", label: "Storage & email", section: "Site" },
-          { href: "/admin/backups", label: "Backups", section: "Site" },
           { href: "/admin/system", label: "System status", section: "Operations" },
+          { href: "/admin/backups", label: "Backups", section: "Operations" },
           { href: "/admin/database", label: "Database", section: "Operations" },
           { href: "/admin/audit", label: "Audit log", section: "Operations" },
         ]

@@ -44,15 +44,20 @@ export function CoverImagePicker({
     onChange({ ...value, focalX: clamp(focalX + d[0]!), focalY: clamp(focalY + d[1]!) });
   }
 
+  // Always available, with or without a current image: a new result replaces the cover once accepted.
   const generateButton = generate && (
-    <Button type="button" variant="secondary" onClick={() => setGenerating(true)} disabled={!generate.enabled} title={generate.enabled ? "Create an image with Gemini" : generate.reason}>
-      ✨ Generate image
-    </Button>
+    <div className="space-y-1">
+      <Button type="button" variant={value ? "secondary" : "primary"} className="w-full" onClick={() => setGenerating(true)} disabled={!generate.enabled} title={generate.enabled ? "Create an image with Gemini" : generate.reason}>
+        ✨ {value ? "Generate a new image" : "Generate image"}
+      </Button>
+      {!generate.enabled && generate.reason && <p className="text-xs text-fg-subtle">{generate.reason}</p>}
+    </div>
   );
 
   return (
     <div className="space-y-3">
       <p className="text-sm font-medium text-fg">{label}</p>
+      {value && generateButton}
       {value ? (
         <div className="overflow-hidden rounded-xl border border-line">
           <button
@@ -79,7 +84,6 @@ export function CoverImagePicker({
               <Button type="button" variant="secondary" onClick={() => setOpen(true)}>
                 Change
               </Button>
-              {generateButton}
               <Button type="button" variant="ghost" onClick={() => onChange(null)}>
                 Remove
               </Button>
@@ -99,7 +103,7 @@ export function CoverImagePicker({
             Select or upload a cover image
             <span className="text-xs">Shown on cards, at the top of the post and when shared.</span>
           </button>
-          {generateButton && <div className="flex">{generateButton}</div>}
+          {generateButton}
         </div>
       )}
       <MediaPicker

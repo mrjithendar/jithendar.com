@@ -15,7 +15,7 @@ import { activeSocialProviderConfig } from "./integrations";
 import { getSettings } from "./settings";
 import { passwordProblem, PASSWORD_MAX, PASSWORD_MIN } from "./password-policy";
 import { getRedis } from "./redis";
-import { turnstileSecret } from "./turnstile";
+import { turnstileKeys } from "./turnstile";
 
 export const ROLES = ["admin", "author", "user"] as const;
 export type Role = (typeof ROLES)[number];
@@ -188,7 +188,7 @@ async function createAuth() {
       }),
     },
     plugins: [
-      captcha({ provider: "cloudflare-turnstile", secretKey: turnstileSecret() ?? "missing-turnstile-secret" }),
+      captcha({ provider: "cloudflare-turnstile", secretKey: (await turnstileKeys()).secret ?? "missing-turnstile-secret" }),
       haveIBeenPwned(),
       admin({ ac, roles, defaultRole: "user", adminRoles: ["admin"] }),
       nextCookies(),

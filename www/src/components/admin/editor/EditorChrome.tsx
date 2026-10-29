@@ -6,6 +6,44 @@ import { Button } from "@/components/ui/form";
 import type { PreviewKind } from "@/lib/preview";
 import { Dialog } from "../Dialog";
 
+/**
+ * The editor's action bar (Publish/Update…) hides while the author scrolls down through the content and
+ * comes back on any scroll up, so it never covers the image or paragraph being edited. It always shows near
+ * the top. Works for the page scroll and for focus mode (its own scroll container, [data-editor-focus]).
+ */
+export function useAutoHideBar(): boolean {
+  const [hidden, setHidden] = useState(false);
+  useEffect(() => {
+    let last: number | null = null;
+    let lastEl: Element | null = null;
+    const onScroll = (e: Event) => {
+      const t = e.target;
+      const el = t === document ? document.scrollingElement : t instanceof HTMLElement && t.hasAttribute("data-editor-focus") ? t : null;
+      if (!el) return;
+      const y = el.scrollTop;
+      if (el !== lastEl || last === null) {
+        lastEl = el;
+        last = y;
+        return;
+      }
+      const delta = y - last;
+      if (Math.abs(delta) < 8) return;
+      setHidden(delta > 0 && y > 160);
+      last = y;
+    };
+    document.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () => document.removeEventListener("scroll", onScroll, { capture: true });
+  }, []);
+  return hidden;
+}
+
+/** Height the formatting toolbar leaves for the action bar above it (0 while the bar is hidden). */
+export const editorBarOffset = (hidden: boolean) => ({ "--editor-bar": hidden ? "0rem" : "3.8rem" }) as React.CSSProperties;
+
+/** Classes that slide the action bar out of view; it comes back as soon as anything in it gets keyboard focus. */
+export const autoHideClass = (hidden: boolean) =>
+  `transition-transform duration-200 motion-reduce:transition-none ${hidden ? "-translate-y-[calc(100%+1px)] has-[:focus-visible]:translate-y-0" : ""}`;
+
 export function Panel({ title, open = false, children }: { title: string; open?: boolean; children: ReactNode }) {
   return (
     <details open={open} className="group rounded-2xl border border-line bg-surface">

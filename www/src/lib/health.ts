@@ -4,10 +4,11 @@ import { getDb, schema } from "@/db";
 import { rowsOf } from "@/db/rows";
 import { emailSummary } from "./mail";
 import { getRedis } from "./redis";
+import { indexNowKey } from "./indexnow-key";
 import { resolveGeminiImageConfig } from "./integrations";
 import { generationUsage } from "./image-generation";
 import { checkStorage } from "./storage";
-import { turnstileSecret, turnstileSiteKey } from "./turnstile";
+import { turnstileKeys } from "./turnstile";
 
 export type Check = { name: string; status: "ok" | "degraded" | "down" | "not configured"; ms: number | null; detail: string };
 
@@ -77,11 +78,10 @@ export async function systemChecks(): Promise<{ app: Record<string, string>; che
       );
       const { jobSummary } = await import("./jobs");
       const jobs = await jobSummary();
-      const { integrations } = await import("@/config/integrations");
       const overdue = Number(r?.overdue ?? 0);
       return {
         status: overdue > 0 || (jobs.failed ?? 0) > 0 ? "degraded" : "ok",
-        detail: `${r?.scheduled ?? 0} scheduled${overdue ? `, ${overdue} overdue (worker not running?)` : ""} · IndexNow ${integrations().indexNowKey ? "on" : "off"}: last 7 days ${jobs.done ?? 0} sent, ${jobs.queued ?? 0} queued, ${jobs.failed ?? 0} failed`,
+        detail: `${r?.scheduled ?? 0} scheduled${overdue ? `, ${overdue} overdue (worker not running?)` : ""} · IndexNow ${(await indexNowKey()) ? "on" : "off"}: last 7 days ${jobs.done ?? 0} sent, ${jobs.queued ?? 0} queued, ${jobs.failed ?? 0} failed`,
       };
     }),
     timed("Image generation (Gemini)", async () => {
@@ -104,9 +104,10 @@ export async function systemChecks(): Promise<{ app: Record<string, string>; che
       return { status: "ok", detail: `${label} · ${String(p.fields.fromEmail)} · ${p.testedAt ? "test email succeeded" : "not tested yet"}` };
     }),
     timed("Cloudflare Turnstile", async () => {
-      if (!turnstileSiteKey() || !turnstileSecret()) return { status: "down", detail: "keys missing: sign-in, comments and contact are blocked" };
+      const t = await turnstileKeys();
+      if (!t.siteKey || !t.secret) return { status: "down", detail: "keys missing (Admin → Advanced settings): sign-in, comments and contact are blocked" };
       const r = await reachable("https://challenges.cloudflare.com/turnstile/v0/api.js");
-      return { ...r, detail: `${process.env.TURNSTILE_SITE_KEY ? "production keys" : "test keys"} · ${r.detail}` };
+      return { ...r, detail: `${t.production ? "production keys" : "test keys"} · ${r.detail}` };
     }),
     timed("Breached-password check", () => reachable("https://api.pwnedpasswords.com/range/21BD1")),
     timed("Trace collector", async () => {

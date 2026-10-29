@@ -11,6 +11,7 @@ import { Alert, Button, Field, Input, Select, Textarea } from "@/components/ui/f
 import { editorExtensions, fidelity, isSafeUrl, ProtectedBlock } from "@/lib/editor/markdown";
 import { embedUrl } from "@/lib/mdx/shortcodes";
 import { Dialog } from "../Dialog";
+import { GenerateImageDialog, type GenerateOptions } from "../GenerateImageDialog";
 import { MediaPicker } from "../MediaPicker";
 
 /* ---------------------------------------------------------------------------------------------
@@ -324,15 +325,19 @@ export function BlockEditor({
   onChange,
   mediaContext,
   placeholder = "Type / for blocks, or start writing…",
+  generate,
 }: {
   value: string;
   onChange: (markdown: string) => void;
   mediaContext: string;
   placeholder?: string;
+  /** "Generate image" in the image picker (Gemini); the result goes through the alt text / caption step. */
+  generate?: GenerateOptions & { title: string; summary: string };
 }) {
   const check = useMemo(() => fidelity(value), []); // eslint-disable-line react-hooks/exhaustive-deps -- checked once, on open
   const [mode, setMode] = useState<Mode>(check.lossless ? "visual" : "source");
   const [picker, setPicker] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [imageDialog, setImageDialog] = useState<{ src: string; alt: string; width: number; height: number } | null>(null);
   const [ask, setAsk] = useState<(AskRequest & { values: Record<string, string>; error?: string }) | null>(null);
   const [slash, setSlash] = useState<{ query: string; index: number; from: number } | null>(null);
@@ -460,7 +465,7 @@ export function BlockEditor({
         </div>
       )}
       <div className="rounded-xl border border-line bg-surface">
-        <div className="z-10 flex flex-wrap items-center gap-2 rounded-t-xl border-b border-line bg-surface px-2 py-1.5 sm:sticky sm:top-[calc(var(--spacing-header)+3.8rem)] [[data-editor-focus]_&]:sm:top-[3.8rem]">
+        <div className="z-10 flex flex-wrap items-center gap-2 rounded-t-xl border-b border-line bg-surface px-2 py-1.5 transition-[top] duration-200 motion-reduce:transition-none sm:sticky sm:top-[calc(var(--spacing-header)+var(--editor-bar,3.8rem))] [[data-editor-focus]_&]:sm:top-[var(--editor-bar,3.8rem)]">
           <div role="tablist" aria-label="Editing mode" className="flex shrink-0 rounded-lg bg-surface-sunken p-0.5">
             {(["visual", "source"] as const).map((m) => (
               <button key={m} type="button" role="tab" aria-selected={mode === m} onClick={() => switchTo(m)}
@@ -523,7 +528,13 @@ export function BlockEditor({
 
       {/* Image: pick from the library (upload, paste or drop there), then alt text, caption and layout */}
       <MediaPicker open={picker} onClose={() => setPicker(false)} context={mediaContext} title="Insert an image"
+        generate={generate && { enabled: generate.enabled, reason: generate.reason, onClick: () => { setPicker(false); setGenerating(true); } }}
         onSelect={(item) => { setPicker(false); setImageDialog({ src: item.src, alt: item.alt, width: item.width, height: item.height }); }} />
+      {generate && (
+        <GenerateImageDialog open={generating} onClose={() => setGenerating(false)} title={generate.title} summary={generate.summary} context={mediaContext}
+          options={generate} replacing={false} acceptLabel="Insert image"
+          onAccept={(img) => { setGenerating(false); setImageDialog({ src: img.src, alt: img.alt, width: img.width, height: img.height }); }} />
+      )}
       {imageDialog && <ImageDialog image={imageDialog} onClose={() => setImageDialog(null)} onInsert={(img) => { insertImage(img); setImageDialog(null); }} />}
 
       {ask && (

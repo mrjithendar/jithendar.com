@@ -17,12 +17,15 @@ export function MediaPicker({
   onSelect,
   context = "library",
   title = "Choose an image",
+  generate,
 }: {
   open: boolean;
   onClose: () => void;
   onSelect: (item: MediaItem) => void;
   context?: string;
   title?: string;
+  /** Offer "Generate image" (Gemini); `enabled` false shows the button disabled with `reason` as its tooltip. */
+  generate?: { enabled: boolean; reason?: string; onClick: () => void };
 }) {
   const [items, setItems] = useState<MediaItem[] | null>(null);
   const [more, setMore] = useState(false);
@@ -82,6 +85,14 @@ export function MediaPicker({
   return (
     <Dialog open={open} onClose={onClose} title={title}>
       <div className="space-y-6" onPaste={(e) => uploads && choose(Array.from(e.clipboardData.files)[0])}>
+        {generate && (
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="button" variant="secondary" onClick={generate.onClick} disabled={!generate.enabled} title={generate.enabled ? "Create an image with Gemini" : generate.reason}>
+              ✨ Generate image
+            </Button>
+            {!generate.enabled && generate.reason && <span className="text-sm text-fg-subtle">{generate.reason}</span>}
+          </div>
+        )}
         {uploads ? (
           <div
             onDragOver={(e) => { e.preventDefault(); setDragging(true); }}

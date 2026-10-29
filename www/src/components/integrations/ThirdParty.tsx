@@ -1,4 +1,4 @@
-import { CONSENT_REGIONS, integrations } from "@/config/integrations";
+import { CONSENT_REGIONS } from "@/config/integrations";
 import { AdSenseLoader, GoogleAnalytics } from "./ThirdPartyClient";
 
 /**
@@ -20,8 +20,10 @@ export function consentDefaultsScript(mode: "regional" | "strict"): string {
   return lines.join("\n");
 }
 
-export function ThirdParty() {
-  const cfg = integrations();
+export async function ThirdParty() {
+  // Imported here so the pure helpers above stay usable without a database (tests).
+  const { runtimeIntegrations } = await import("@/lib/runtime-settings");
+  const cfg = await runtimeIntegrations();
   if (!cfg.ga4 && !cfg.adsense) return null;
   return (
     <>

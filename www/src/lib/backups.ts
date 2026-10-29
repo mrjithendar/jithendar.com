@@ -1,5 +1,5 @@
 import { desc, eq, sql } from "drizzle-orm";
-import { gzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 import { z } from "zod";
 import { getDb, schema } from "@/db";
 import { rowsOf } from "@/db/rows";
@@ -7,7 +7,7 @@ import { audit } from "./audit";
 import { log } from "./log";
 import type { Actor } from "./posts";
 import { PostError } from "./posts";
-import { encryptWithPassphrase, seal, unseal, type Sealed } from "./secrets";
+import { decryptWithPassphrase, encryptWithPassphrase, seal, unseal, type Sealed } from "./secrets";
 import { bucketOps, storageReady } from "./storage";
 
 /**
@@ -165,9 +165,13 @@ const TABLES: { name: string; omit?: string[] }[] = [
   { name: "category" },
   { name: "author_profile" },
   { name: "comment" },
+  { name: "comment_like" },
+  { name: "comment_report" },
   { name: "contact_message" },
   { name: "media" },
   { name: "redirect" },
+  // Appearance & settings (published and draft); holds no credentials.
+  { name: "site_config" },
   { name: "user", omit: [] },
 ];
 
@@ -256,4 +260,101 @@ export function startBackupScheduler() {
   };
   g.__backupTimer = setInterval(() => void tick(), 15 * 60_000);
   g.__backupTimer.unref?.();
+}
+
+// --- Restore -------------------------------------------------------------------------------------
+
+/** Restore order (parents first); deletion runs in reverse. `user` is merged, never replaced. */
+const RESTORE_ORDER = ["category", "author_profile", "post", "page", "media", "comment", "comment_like", "comment_report", "contact_message", "redirect", "site_config"] as const;
+/** Columns that point at a user, per table (remapped when an account was recreated with a new id). */
+const USER_REFS: Record<string, string[]> = { author_profile: ["user_id"], post: ["author_id"], comment: ["user_id"], comment_like: ["user_id"], comment_report: ["user_id"], media: ["uploaded_by"] };
+const RESTORE_LOCK_ID = 7_250_033;
+
+type Row = Record<string, unknown>;
+type BackupPayload = { format: string; version: number; createdAt: string; tables: Record<string, Row[]> };
+
+export function parseBackup(plain: Buffer): BackupPayload {
+  const payload = JSON.parse(gunzipSync(plain).toString("utf8")) as Partial<BackupPayload>;
+  if (payload.format !== "jithendar-backup" || payload.version !== 1 || !payload.tables || typeof payload.tables !== "object") throw new PostError("This is not a Jithendar.com backup this version can restore.");
+  return payload as BackupPayload;
+}
+
+export type RestoreResult = { safetyBackup: string; restored: Record<string, number>; usersAdded: number };
+
+/**
+ * Replace content and settings with a stored backup, in one transaction (all or nothing). Before anything
+ * changes, the current state is saved to R2 as a new backup, so a restore can itself be undone.
+ * Replaced: posts, pages, categories, author profiles, comments (likes, reports), messages, media records,
+ * redirects, Appearance & settings. Accounts are merged: missing ones are recreated (without a password: they
+ * use "Forgot password" or social sign-in), existing ones and all sign-in methods, sessions, API keys and
+ * stored credentials are left alone. Media files themselves stay in R2 and are not touched.
+ */
+export async function restoreStoredBackup(actor: Actor, name: string): Promise<RestoreResult> {
+  admin(actor);
+  const c = await readBackupConfig();
+  if (!c.passphrase) throw new PostError("Set the backup passphrase first: it is needed to decrypt backups.");
+  if (!c.r2) throw new PostError("Backups are not configured.");
+  let payload: BackupPayload;
+  try {
+    payload = parseBackup(await decryptWithPassphrase(await readStoredBackup(name), unseal(c.passphrase)));
+  } catch (e) {
+    if (e instanceof PostError) throw e;
+    throw new PostError("That backup could not be decrypted with the current passphrase (was it changed since?).");
+  }
+
+  // Safety net first: if this fails, nothing is restored.
+  const safety = await buildBackup();
+  await (await r2Target(c.r2)).put(safety.filename, safety.data);
+
+  const db = await getDb();
+  const restored: Record<string, number> = {};
+  let usersAdded = 0;
+  await db.transaction(async (tx) => {
+    const [{ locked } = { locked: false }] = rowsOf<{ locked: boolean }>(await tx.execute(sql`select pg_try_advisory_xact_lock(${RESTORE_LOCK_ID}) as locked`));
+    if (!locked) throw new PostError("Another restore is running. Try again in a minute.", 409);
+
+    const columns = async (table: string) =>
+      new Set(rowsOf<{ c: string }>(await tx.execute(sql`select column_name as c from information_schema.columns where table_schema = current_schema() and table_name = ${table}`)).map((r) => r.c));
+    const insert = async (table: string, rows: Row[], conflict = "") => {
+      if (rows.length === 0) return 0;
+      const known = await columns(table);
+      const keys = Object.keys(rows[0]!).filter((k) => known.has(k));
+      const list = keys.map((k) => `"${k}"`).join(", ");
+      let n = 0;
+      for (let i = 0; i < rows.length; i += 500) {
+        const chunk = JSON.stringify(rows.slice(i, i + 500));
+        const r = await tx.execute(
+          sql`insert into ${sql.identifier(table)} (${sql.raw(list)}) select ${sql.raw(list)} from jsonb_populate_recordset(null::${sql.identifier(table)}, ${chunk}::jsonb) ${sql.raw(conflict)} returning 1`,
+        );
+        n += rowsOf(r).length;
+      }
+      return n;
+    };
+
+    // Accounts: add the missing ones; map backup ids to current ids by email (an account may have been recreated).
+    const users = payload.tables.user ?? [];
+    usersAdded = await insert("user", users, "on conflict do nothing");
+    const current = rowsOf<{ id: string; email: string }>(await tx.execute(sql`select id, email from "user"`));
+    const byEmail = new Map(current.map((u) => [u.email.toLowerCase(), u.id]));
+    const idMap = new Map(users.map((u) => [String(u.id), byEmail.get(String(u.email).toLowerCase()) ?? null]));
+
+    for (const table of [...RESTORE_ORDER].reverse()) await tx.execute(sql`delete from ${sql.identifier(table)}`);
+    for (const table of RESTORE_ORDER) {
+      const rows = (payload.tables[table] ?? []).map((row) => {
+        const out = { ...row };
+        for (const col of USER_REFS[table] ?? []) if (out[col] != null) out[col] = idMap.get(String(out[col])) ?? out[col];
+        return out;
+      });
+      restored[table] = await insert(table, rows);
+    }
+  });
+
+  const { invalidateContent } = await import("./content");
+  const { broadcastInvalidate } = await import("./cache-bus");
+  invalidateContent();
+  broadcastInvalidate("categories");
+  broadcastInvalidate("settings");
+  await audit(actor, "backup.restore", name, { safetyBackup: safety.filename, restored, usersAdded }, { severity: "critical" });
+  log.warn("backup restored", { name, safetyBackup: safety.filename, restored, usersAdded });
+  return { safetyBackup: safety.filename, restored, usersAdded };
 }
