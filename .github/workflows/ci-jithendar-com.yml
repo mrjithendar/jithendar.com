@@ -1,7 +1,7 @@
 name: jithendar.com
 
 # check   → pull requests: lint, typecheck, test, build, render manifests
-# release → default branch: npm ci once; lint, tests and the production build in parallel; package the
+# release → default branch: npm ci once; lint, tests and the production build (in turn); package the
 #           build into an arm64 image, smoke-test the image, push jithendar-com:<commit-sha> and move
 #           jithendar-com:latest to it in ECR
 #
@@ -9,8 +9,10 @@ name: jithendar.com
 # k8s/kustomization.yaml and applies it with kubectl (see k8s/README.md).
 #
 # Both jobs run on GitHub-hosted runners, never on the mk4 server: builds there competed with the cluster
-# for memory and disk and froze the host (2026-10-29). The release job signs in to AWS with GitHub OIDC
-# (repository variable AWS_ROLE_ARN, created by scripts/setup-github-oidc.sh); no AWS keys are stored.
+# for memory and disk and froze the host (2026-10-29). The release job signs in to AWS with the access key
+# of IAM user github-jithendar-com-ecr (ECR push to jithendar-com only), stored as the repository secrets
+# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY by scripts/setup-ci-ecr-user.sh. Planned: GitHub OIDC instead
+# (scripts/setup-github-oidc.sh), which needs no stored key.
 
 on:
   workflow_dispatch:
@@ -72,7 +74,6 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-      id-token: write # GitHub OIDC token for the AWS role; nothing else can be written
     env:
       AWS_REGION: us-east-1
       REPOSITORY: jithendar-com
@@ -89,28 +90,31 @@ jobs:
         with:
           version: v1.35.0
       - run: npm ci --no-audit --no-fund
+      # One step each, in sequence: output streams live and a failure names its step. (Running them in parallel
+      # only paid off on the shared self-hosted server; on a fresh VM it just stacks three memory peaks.)
+      - run: npm run lint
+      # Tests rely on development fallbacks (e.g. SETTINGS_ENCRYPTION_KEY); only the build is production.
+      - run: npm test
       # The production build type-checks the whole project, so no separate typecheck is needed here.
-      # Only the build is production: tests rely on development fallbacks (e.g. SETTINGS_ENCRYPTION_KEY).
-      - name: Lint, test and build (in parallel)
+      - run: npm run build
+        env:
+          APP_ENV: production
+      - name: Diagnostics (only when a step above failed)
+        if: failure()
         run: |
-          set -uo pipefail
-          npm run lint > lint.log 2>&1 & lint=$!
-          npm test > test.log 2>&1 & tests=$!
-          APP_ENV=production npm run build > build.log 2>&1 & build=$!
-          rc=0
-          for job in "lint:$lint" "test:$tests" "build:$build"; do
-            if ! wait "${job#*:}"; then echo "::error::${job%%:*} failed"; rc=1; fi
-          done
-          for log in lint test build; do echo "::group::$log"; cat "$log.log"; echo "::endgroup::"; done
-          exit "$rc"
+          free -m || true
+          sudo dmesg --ctime 2>/dev/null | grep -iE "oom|killed process|out of memory" | tail -20 || true
+          journalctl --no-pager -u systemd-oomd --since "-30 min" 2>/dev/null | tail -20 || true
       - name: Render production manifests
         run: kubectl kustomize ../k8s > /dev/null
-      - name: Sign in to AWS (OIDC)
+      # Later, with OIDC: add `id-token: write` to permissions and replace the two key inputs with
+      # `role-to-assume: ${{ vars.AWS_ROLE_ARN }}`.
+      - name: Sign in to AWS
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-          role-session-name: jithendar-com-${{ github.run_id }}
       - name: Log in to Amazon ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2

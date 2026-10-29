@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# One-time: let GitHub Actions (master branch of this repository only) push images to ECR without stored AWS keys.
+# PLANNED (not used yet): let GitHub Actions (master branch only) push images to ECR without stored AWS keys.
+# Today the workflow uses scripts/setup-ci-ecr-user.sh (an access key in repository secrets) instead.
 #
 #   scripts/setup-github-oidc.sh
 #
@@ -83,4 +84,4 @@ echo "→ Setting repository variable AWS_ROLE_ARN"
 gh variable set AWS_ROLE_ARN --repo "$REPO" --body "$ROLE_ARN"
 
 echo "Done: $ROLE_ARN"
-echo "The next push to $BRANCH builds on GitHub-hosted runners. Then remove this repository's runners from the server: bash runner/setup.sh remove"
+echo "Then switch the workflow to role-to-assume (see the comment above its \"Sign in to AWS\" step) and delete the IAM user github-jithendar-com-ecr."
