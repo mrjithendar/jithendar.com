@@ -5,12 +5,19 @@ export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
   const { log } = await import("./lib/log");
 
-  // Traces → OpenTelemetry collector (OTLP/HTTP), e.g. http://otel-collector.observability:4318
-  if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
-    const { registerOTel } = await import("@vercel/otel");
-    registerOTel({ serviceName: process.env.OTEL_SERVICE_NAME ?? "jithendar-com" });
-    log.info("tracing enabled", { endpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT });
-  }
+  // Spans are always recorded: request metrics are derived from them. They are exported to the
+  // OpenTelemetry collector (OTLP/HTTP, e.g. http://otel-collector.observability:4318) when configured.
+  const { registerOTel } = await import("@vercel/otel");
+  const { metricsSpanProcessor, startMetricsServer } = await import("./lib/metrics");
+  registerOTel({ serviceName: process.env.OTEL_SERVICE_NAME ?? "jithendar-com", spanProcessors: ["auto", metricsSpanProcessor] });
+  if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT) log.info("tracing enabled", { event: "tracing_enabled", endpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT });
+
+  // Prometheus metrics on a separate, cluster-internal port (METRICS_PORT, default 9464; 0 = off).
+  const metricsPort = await startMetricsServer().catch((err) => {
+    log.warn("metrics listener unavailable", { err });
+    return null;
+  });
+  if (metricsPort) log.info("metrics listening", { event: "metrics_listening", port: metricsPort });
 
   const { listenForInvalidations } = await import("./lib/cache-bus");
   await listenForInvalidations().catch((err) => log.warn("cache invalidation listener unavailable", { err }));
@@ -43,6 +50,7 @@ export const onRequestError: Instrumentation.onRequestError = async (error, requ
     digest,
     method: request.method,
     path: request.path,
+    route: context.routePath,
     requestId: (request.headers["x-request-id"] as string | undefined) ?? undefined,
     routePath: context.routePath,
     routeType: context.routeType,

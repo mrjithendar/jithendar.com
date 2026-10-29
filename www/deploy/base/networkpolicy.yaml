@@ -19,6 +19,17 @@ spec:
     ports:
     - port: 3000
       protocol: TCP
+  # Prometheus scrapes /metrics on the cluster-internal metrics port (lib/metrics.ts).
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+      podSelector:
+        matchLabels:
+          app: roboshop-prometheus
+    ports:
+    - port: 9464
+      protocol: TCP
   egress:
   # DNS
   - to:

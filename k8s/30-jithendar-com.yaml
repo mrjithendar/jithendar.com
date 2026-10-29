@@ -78,6 +78,9 @@ spec:
         - containerPort: 3000
           name: http
           protocol: TCP
+        - containerPort: 9464
+          name: metrics
+          protocol: TCP
         readinessProbe:
           failureThreshold: 3
           httpGet:
@@ -245,6 +248,16 @@ spec:
           kubernetes.io/metadata.name: traefik
     ports:
     - port: 3000
+      protocol: TCP
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+      podSelector:
+        matchLabels:
+          app: roboshop-prometheus
+    ports:
+    - port: 9464
       protocol: TCP
   podSelector:
     matchLabels:

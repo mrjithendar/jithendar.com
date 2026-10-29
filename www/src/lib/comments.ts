@@ -4,6 +4,7 @@ import { audit } from "./audit";
 import { COMMENT_MAX, REPORT_NOTE_MAX, REPORT_REASONS, type CommentPage, type CommentSort, type CommentView, type DiscussionState, type ReportReason, type Viewer } from "./comment-types";
 import { renderCommentMarkdown } from "./comment-markdown";
 import { log } from "./log";
+import { recordComment } from "./metrics";
 import type { Actor } from "./posts";
 import { PostError } from "./posts";
 import { hit } from "./rate-limit";
@@ -384,6 +385,7 @@ export async function submitComment(user: { id: string; role: string }, input: S
       })
       .returning({ id: c.id });
     log.info("comment submitted", { postId: input.postId, status, reply: !!parent });
+    recordComment(status);
     return { id: row!.id, status, duplicate: false };
   } catch (error) {
     // Two submissions with the same key raced: the other one won; return it.

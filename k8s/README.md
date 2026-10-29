@@ -12,6 +12,7 @@ cluster-generated fields removed. `kubectl diff -f k8s/` against the cluster sho
 | `40-middlewares.yaml` | Traefik middlewares `compress`, `https-redirect`, `www-redirect` |
 | `50-certificate.yaml` | cert-manager Certificate `jithendar-com` (ClusterIssuer `letsencrypt-prod`) |
 | `60-ingress.yaml` | Ingresses for `jithendar.com` and `www.jithendar.com` (HTTPS + HTTP redirect) |
+| `70-observability.yaml` | Headless Service `jithendar-com-metrics` (Prometheus, port 9464) and Role/RoleBinding `alloy-logs` (log collection); see `www/docs/OBSERVABILITY.md` |
 
 ## Before applying
 

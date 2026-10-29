@@ -1,5 +1,19 @@
 # Progress log — jithendar.com
 
+## Tracing, logs, metrics and Grafana dashboards (2026-10-29, owner request)
+
+**What changed**
+- Tracing was already on (Jaeger lists `jithendar-com`); spans are now always recorded so request metrics can be derived from them.
+- Metrics (`src/lib/metrics.ts`, no new dependency): per-route request rate/status/latency from Next.js server spans, process and event-loop metrics, email/comment counters, database gauges; served on cluster-internal port 9464.
+- Logs: `event` slug, `errorType`/`errorCode`, `route` on request lines, matching the fields the cluster's Alloy pipeline keeps (it drops `msg`).
+- Manifests (`k8s/` and `www/deploy/base`): metrics container port, NetworkPolicy rule for Prometheus only, headless Service, Role/RoleBinding for Alloy.
+- `tools` repo (platform, synced by Argo CD): Alloy collects namespace `jithendar`; Prometheus job `jithendar-com` (DNS discovery) + 3 alerts; Grafana folder "Jithendar.com" with Overview and Logs dashboards; Loki trace-id links to Jaeger.
+- Docs: `docs/OBSERVABILITY.md`.
+
+**Commands**: lint pass; typecheck pass; vitest 37 files / 360 tests pass; production build pass; local `next start`: `/metrics` showed per-route counts after real requests; dashboard queries validated against live Prometheus/Loki (36/36 parse); kustomize renders + server dry-run for `k8s/`; Grafana chart rendered with new values.
+
+**Manual steps**: deploy the site, then push `tools` (see docs/OBSERVABILITY.md → Rolling it out).
+
 ## Email provider choice: SMTP, Mailgun, Amazon SES (2026-10-29, owner request)
 
 **What changed**

@@ -17,10 +17,12 @@ function accessLog(request: NextRequest, response: NextResponse, requestId: stri
       time: new Date().toISOString(),
       level: "info",
       msg: "request",
+      // `event` and `route` are among the fields the cluster's log collector keeps (see lib/log.ts).
+      event: "http_request",
       service: "jithendar-com",
       requestId,
       method: request.method,
-      path: request.nextUrl.pathname,
+      route: request.nextUrl.pathname,
       ...decided,
       ip: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
       userAgent: request.headers.get("user-agent")?.slice(0, 200) ?? null,

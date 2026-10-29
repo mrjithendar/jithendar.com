@@ -5,6 +5,7 @@ import { z } from "zod";
 import { getDb, schema } from "@/db";
 import { audit } from "./audit";
 import { log } from "./log";
+import { recordMail } from "./metrics";
 import type { Actor } from "./posts";
 import { PostError } from "./posts";
 import { seal, unseal, type Sealed } from "./secrets";
@@ -268,18 +269,23 @@ export async function sendMail(to: string, subject: string, text: string): Promi
       const env = envSmtp();
       if (!env) {
         log.warn("email not configured; message not sent", { subject });
+        recordMail("none", "skipped");
         return false;
       }
       await nodemailer.createTransport(env.url).sendMail({ from: env.from, to, subject, text });
+      recordMail("env-smtp", "sent");
       return true;
     }
     if (config.active === "disabled") {
       log.warn("email disabled; message not sent", { subject });
+      recordMail("disabled", "skipped");
       return false;
     }
     await sendVia(config, config.active, { to, subject, text });
+    recordMail(config.active, "sent");
     return true;
   } catch (error) {
+    recordMail(config?.active ?? "env-smtp", "failed");
     log.error("mail send failed", { provider: config?.active ?? "env-smtp", subject, error: redact(error instanceof Error ? error.message : String(error), config) });
     return false;
   }

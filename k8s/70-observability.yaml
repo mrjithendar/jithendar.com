@@ -1,0 +1,49 @@
+# Observability for jithendar.com: lets the cluster's monitoring stack (namespace monitoring) read this site.
+# - Service jithendar-com-metrics (headless): Prometheus finds every site pod through its DNS A records and
+#   scrapes /metrics on port 9464, which is never exposed through the ingress.
+# - Role/RoleBinding alloy-logs: Alloy (monitoring/alloy) may read the pods and logs in this namespace only.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jithendar-com-metrics
+  namespace: jithendar
+  labels:
+    app: jithendar-com
+    app.kubernetes.io/part-of: jithendar-com
+spec:
+  clusterIP: None
+  selector:
+    app: jithendar-com
+  ports:
+  - name: metrics
+    port: 9464
+    targetPort: metrics
+    protocol: TCP
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: alloy-logs
+  namespace: jithendar
+rules:
+- apiGroups: [""]
+  resources: [pods]
+  verbs: [get, list, watch]
+- apiGroups: [""]
+  resources: [pods/log]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: alloy-logs
+  namespace: jithendar
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: alloy-logs
+subjects:
+- kind: ServiceAccount
+  name: alloy
+  namespace: monitoring
