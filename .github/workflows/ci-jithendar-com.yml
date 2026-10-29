@@ -2,10 +2,11 @@ name: jithendar.com
 
 # check   → pull requests: lint, typecheck, test, build, render manifests
 # release → default branch: npm ci once; lint, tests and the production build in parallel; package the
-#           build into an arm64 image, smoke-test the image, push jithendar-com:<commit-sha> to ECR
+#           build into an arm64 image, smoke-test the image, push jithendar-com:<commit-sha> and move
+#           jithendar-com:latest to it in ECR
 #
-# CI does not deploy and has no cluster access. ./deploy.sh resolves the image digest
-# from ECR, pins it in www/deploy/production and applies it.
+# CI does not deploy and has no cluster access. Deploys pin the image digest in k8s/kustomization.yaml
+# and apply it with kubectl (see k8s/README.md).
 
 on:
   workflow_dispatch:
@@ -123,8 +124,13 @@ jobs:
           echo "Image healthy; optimiser served $type"
       - name: Push
         env:
-          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.REPOSITORY }}:${{ github.sha }}
-        run: docker push --quiet "$IMAGE"
+          REGISTRY_IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.REPOSITORY }}
+        # Every release is also tagged latest (mutable). Deploys still pin the digest of the commit tag.
+        run: |
+          set -euo pipefail
+          docker push --quiet "$REGISTRY_IMAGE:$GITHUB_SHA"
+          docker tag "$REGISTRY_IMAGE:$GITHUB_SHA" "$REGISTRY_IMAGE:latest"
+          docker push --quiet "$REGISTRY_IMAGE:latest"
       - name: Record image
         env:
           REGISTRY_IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.REPOSITORY }}
@@ -133,10 +139,10 @@ jobs:
           {
             echo '### jithendar.com image'
             echo
-            echo "- Tag: \`$REGISTRY_IMAGE:$GITHUB_SHA\`"
+            echo "- Tags: \`$REGISTRY_IMAGE:$GITHUB_SHA\`, \`$REGISTRY_IMAGE:latest\`"
             echo "- Digest: \`$digest\`"
             echo
-            echo "Deploy: \`./deploy.sh\` (latest) or \`./deploy.sh $GITHUB_SHA\`"
+            echo "Deploy: set this digest in \`k8s/kustomization.yaml\` (\`images[0].digest\`), then \`kubectl --context mk4 apply -k k8s/\`"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Keep the runner's Docker storage bounded
         if: always()
