@@ -1,5 +1,11 @@
 # Self-hosted GitHub Actions runners
 
+> **Not used by CI since 2026-10-29.** `.github/workflows/ci-jithendar-com.yml` runs on GitHub-hosted runners
+> (`ubuntu-24.04`, `ubuntu-24.04-arm`) and signs in to AWS with OIDC (`scripts/setup-github-oidc.sh`). Builds on
+> the mk4 server competed with the cluster for memory and disk and froze the host twice. Do not install these
+> runners on the server that runs the cluster; remove existing ones with `bash runner/setup.sh remove`.
+> If runners must stay on that host, run `scripts/protect-host.sh` there to cap them.
+
 `runner/setup.sh` installs runners for `mrjithendar/jithendar.com` as systemd services. One run sets up
 **two runners**, so a pull-request check and a release build can run at the same time.
 

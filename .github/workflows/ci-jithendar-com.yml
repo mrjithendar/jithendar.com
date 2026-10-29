@@ -7,6 +7,10 @@ name: jithendar.com
 #
 # CI does not deploy and has no cluster access. ./deploy.sh pins the image digest in
 # k8s/kustomization.yaml and applies it with kubectl (see k8s/README.md).
+#
+# Both jobs run on GitHub-hosted runners, never on the mk4 server: builds there competed with the cluster
+# for memory and disk and froze the host (2026-10-29). The release job signs in to AWS with GitHub OIDC
+# (repository variable AWS_ROLE_ARN, created by scripts/setup-github-oidc.sh); no AWS keys are stored.
 
 on:
   workflow_dispatch:
@@ -34,10 +38,10 @@ defaults:
 
 jobs:
   check:
-    # This repository is public and the runners are self-hosted (with AWS access): never run code from
-    # pull requests opened from forks on them. Branches of this repository (including Dependabot's) still run.
+    # Pull requests from forks never run CI here (nothing in it needs them). Branches of this repository,
+    # including Dependabot's, still run.
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -63,8 +67,12 @@ jobs:
 
   release:
     if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    runs-on: [self-hosted, linux, ARM64]
+    # Native arm64, like the cluster nodes (sharp's prebuilt binaries match the image).
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write # GitHub OIDC token for the AWS role; nothing else can be written
     env:
       AWS_REGION: us-east-1
       REPOSITORY: jithendar-com
@@ -97,9 +105,12 @@ jobs:
           exit "$rc"
       - name: Render production manifests
         run: kubectl kustomize ../k8s > /dev/null
-      # Concurrent runners share HOME; isolate Docker login settings.
-      - name: Isolate Docker configuration for this job
-        run: echo "DOCKER_CONFIG=$(mktemp -d "$RUNNER_TEMP/docker-config.XXXXXX")" >> "$GITHUB_ENV"
+      - name: Sign in to AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: jithendar-com-${{ github.run_id }}
       - name: Log in to Amazon ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
@@ -145,8 +156,3 @@ jobs:
             echo
             echo "Deploy: \`./deploy.sh $GITHUB_SHA\`"
           } >> "$GITHUB_STEP_SUMMARY"
-      - name: Keep the runner's Docker storage bounded
-        if: always()
-        run: |
-          docker image prune --force --filter "until=72h" --filter "label!=keep" >/dev/null || true
-          docker builder prune --force --keep-storage 10GB >/dev/null || true

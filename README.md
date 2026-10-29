@@ -9,7 +9,7 @@ Built with Next.js, MDX, PostgreSQL, Cloudflare R2 and Kubernetes.
 | [`k8s/`](k8s/README.md) | Every manifest the site runs on the mk4 cluster, including the Let's Encrypt issuers and the shared TLS certificate |
 | `deploy.sh` | Deploy a CI-built image to the cluster |
 | `scripts/` | `create-secrets.sh` (first-time Secrets), `set-*-config.sh` (update site settings), `smoke.sh` (post-deploy checks), `set-image.sh` (used by `deploy.sh`) |
-| [`runner/`](runner/README.md) | Self-hosted GitHub Actions runners for this repository |
+| [`runner/`](runner/README.md) | Self-hosted GitHub Actions runners (retired for CI: builds run on GitHub-hosted runners) |
 | `.github/workflows/` | CI: checks pull requests; on `master`, builds and pushes the image to ECR |
 
 ## Release
