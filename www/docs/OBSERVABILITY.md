@@ -47,7 +47,7 @@ Jaeger data source: Jaeger 2.x no longer serves the legacy query API that data s
 
 ## Rolling it out
 
-1. Deploy the site (new image + `k8s/` or `www/deploy`: metrics port, NetworkPolicy rule, `70-observability.yaml`).
+1. Deploy the site (`./deploy.sh`: new image + `k8s/` metrics port, NetworkPolicy rule, `70-observability.yaml`).
 2. Push the `tools` repo: Argo CD then updates Alloy (namespace `jithendar`), Prometheus (scrape job, alerts) and
    Grafana (folder, dashboards, Loki trace links).
 3. Check: Prometheus → Status → Targets shows `jithendar-com` (2 up); Grafana → Jithendar.com dashboards.

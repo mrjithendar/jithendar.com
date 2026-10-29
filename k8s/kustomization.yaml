@@ -2,8 +2,9 @@
 # Secrets (jithendar-com-env, jithendar-postgres, jithendar-redis, ecr-pull) are created separately and never committed.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# No `namespace:` here: every namespaced manifest sets namespace jithendar itself, and a kustomization-wide
+# namespace would also be stamped onto the cluster-scoped ClusterIssuers (kustomize does not know that CRD).
 
-namespace: jithendar
 
 resources:
 - 00-namespace.yaml
@@ -11,12 +12,14 @@ resources:
 - 20-redis.yaml
 - 30-jithendar-com.yaml
 - 40-middlewares.yaml
+- 45-jithendar-letsencrypt.yaml
 - 50-certificate.yaml
+- 55-tlsstore.yaml
 - 60-ingress.yaml
 - 70-observability.yaml
 
-# Release: change only this digest (the image in 30-jithendar-com.yaml is replaced by it), e.g.
-#   cd k8s && kustomize edit set image jithendar-com=881026659929.dkr.ecr.us-east-1.amazonaws.com/jithendar-com@sha256:<digest>
+# Release: ./deploy.sh [commit-sha] rewrites only this digest (via scripts/set-image.sh); the image in
+# 30-jithendar-com.yaml is replaced by it. Never deploy a mutable tag.
 images:
 - name: 881026659929.dkr.ecr.us-east-1.amazonaws.com/jithendar-com
-  digest: sha256:850150f370b625c7ad5f927036da96ca58df3fe1eba004e912dc31b42d3bc836
+  digest: sha256:ce92788723b46b2c9b64d8a1aac09edf845888bed7198e37f55cb4164ef9237d

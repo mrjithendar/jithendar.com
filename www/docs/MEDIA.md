@@ -106,16 +106,16 @@ are wrapped in a focusable horizontal scroll region; code blocks scroll inside t
 2. **API token**: R2 → Manage API tokens → Object Read & Write, scoped to that bucket. Note the access key ID,
    secret and account ID.
 3. **CORS** (needed for direct video/audio/PDF uploads): R2 → bucket → Settings → CORS policy → paste the
-   rules from `deploy/r2/cors.json` (dashboard format: the array inside `CORSRules`), or:
+   rules from `www/deploy/r2/cors.json` (dashboard format: the array inside `CORSRules`), or:
    ```bash
    AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=… aws s3api put-bucket-cors --bucket jithendar-media \
-     --cors-configuration file://sites/jithendar-com/deploy/r2/cors.json \
+     --cors-configuration file://www/deploy/r2/cors.json \
      --endpoint-url https://<ACCOUNT_ID>.r2.cloudflarestorage.com --region auto
    ```
 4. **Lifecycle**: R2 → bucket → Settings → Object lifecycle rules: delete `jithendar/www/tmp/` after 1 day; abort
-   incomplete multipart uploads after 1 day — or `aws s3api put-bucket-lifecycle-configuration … --lifecycle-configuration file://sites/jithendar-com/deploy/r2/lifecycle.json` (same endpoint flags).
+   incomplete multipart uploads after 1 day — or `aws s3api put-bucket-lifecycle-configuration … --lifecycle-configuration file://www/deploy/r2/lifecycle.json` (same endpoint flags).
 5. **Public domain** (optional, recommended for video): bucket → Settings → Custom domains → e.g. `media.jithendar.com`.
-6. **Secret**: `sites/jithendar-com/scripts/set-media-config.sh mk4` (prompts; values never echoed), then
+6. **Secret**: `scripts/set-media-config.sh mk4` (prompts; values never echoed), then
    `kubectl --context mk4 -n jithendar rollout restart deployment/jithendar-com` — or deploy normally.
 7. **Verify**: Admin → System status shows "Media storage (Cloudflare R2): ok" and "Image generation (Gemini)".
    Upload an image and a short MP4 in Admin → Media; generate a cover in a draft post.
@@ -133,7 +133,7 @@ Rows created before R2 are marked `s3-legacy` by migration 0004 and keep being s
 4. Spot-check pages with images. Keep the S3 bucket untouched until you are satisfied.
 
 **Rollback**: Admin → Storage → **Roll back to S3** points every migrated row at its S3 object again (R2 copies
-stay and are reused if you migrate again). Code rollback: `sites/deploy.sh <previous-sha>`; migration 0004 only
+stay and are reused if you migrate again). Code rollback: `./deploy.sh <previous-sha>`; migration 0004 only
 adds columns and a table, so the previous image starts and serves S3 rows (uploads it makes are labelled
 `s3-legacy` by the column default). Files uploaded to R2 after the upgrade are not readable by the old image
 until you roll forward again.

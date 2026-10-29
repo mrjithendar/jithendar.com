@@ -5,14 +5,15 @@ name: jithendar.com
 #           build into an arm64 image, smoke-test the image, push jithendar-com:<commit-sha> and move
 #           jithendar-com:latest to it in ECR
 #
-# CI does not deploy and has no cluster access. Deploys pin the image digest in k8s/kustomization.yaml
-# and apply it with kubectl (see k8s/README.md).
+# CI does not deploy and has no cluster access. ./deploy.sh pins the image digest in
+# k8s/kustomization.yaml and applies it with kubectl (see k8s/README.md).
 
 on:
   workflow_dispatch:
   pull_request:
     paths:
       - 'www/**'
+      - 'k8s/**'
       - '.github/workflows/ci-jithendar-com.yml'
   push:
     paths:
@@ -58,7 +59,7 @@ jobs:
         env:
           APP_ENV: production
       - name: Render production manifests
-        run: kubectl kustomize deploy/production > /dev/null
+        run: kubectl kustomize ../k8s > /dev/null
 
   release:
     if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -95,7 +96,7 @@ jobs:
           for log in lint test build; do echo "::group::$log"; cat "$log.log"; echo "::endgroup::"; done
           exit "$rc"
       - name: Render production manifests
-        run: kubectl kustomize deploy/production > /dev/null
+        run: kubectl kustomize ../k8s > /dev/null
       # Concurrent runners share HOME; isolate Docker login settings.
       - name: Isolate Docker configuration for this job
         run: echo "DOCKER_CONFIG=$(mktemp -d "$RUNNER_TEMP/docker-config.XXXXXX")" >> "$GITHUB_ENV"
@@ -142,7 +143,7 @@ jobs:
             echo "- Tags: \`$REGISTRY_IMAGE:$GITHUB_SHA\`, \`$REGISTRY_IMAGE:latest\`"
             echo "- Digest: \`$digest\`"
             echo
-            echo "Deploy: set this digest in \`k8s/kustomization.yaml\` (\`images[0].digest\`), then \`kubectl --context mk4 apply -k k8s/\`"
+            echo "Deploy: \`./deploy.sh $GITHUB_SHA\`"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Keep the runner's Docker storage bounded
         if: always()

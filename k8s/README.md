@@ -1,41 +1,48 @@
 # jithendar.com Kubernetes manifests
 
-Plain YAML exported from the running mk4 cluster (namespace `jithendar`) on 2026-10-29, with
-cluster-generated fields removed. `kubectl diff -f k8s/` against the cluster showed no differences.
+Everything jithendar.com runs on the mk4 cluster. Exported from the live cluster on 2026-10-29
+with cluster-generated fields removed. Deployed with `kubectl apply -k k8s` (normally through
+[`../deploy.sh`](../deploy.sh)), not Argo CD.
 
 | File | Resources |
 |---|---|
 | `00-namespace.yaml` | Namespace `jithendar` |
-| `10-postgres.yaml` | StatefulSet, Service, NetworkPolicy `jithendar-postgres` (10 Gi volume from the StatefulSet) |
+| `10-postgres.yaml` | StatefulSet, Service, NetworkPolicy `jithendar-postgres` (10 Gi volume, pinned to node `mk4-m03`) |
 | `20-redis.yaml` | Deployment, Service, NetworkPolicy `jithendar-redis` |
 | `30-jithendar-com.yaml` | Deployment (2 replicas), Service, PodDisruptionBudget, NetworkPolicy `jithendar-com` |
 | `40-middlewares.yaml` | Traefik middlewares `compress`, `https-redirect`, `www-redirect` |
-| `50-certificate.yaml` | cert-manager Certificate `jithendar-com` (ClusterIssuer `letsencrypt-prod`) |
+| `45-jithendar-letsencrypt.yaml` | ClusterIssuers `letsencrypt-prod` and `letsencrypt-staging` (cluster-wide; formerly the `roboshop-letsencrypt` Argo CD app) |
+| `50-certificate.yaml` | Certificate `jithendar-com` (apex + www) → Secret `jithendar-com-tls` |
+| `55-tlsstore.yaml` | Traefik `TLSStore default`: `jithendar-com-tls` is the default certificate for every namespace, so `/argocd`, `/grafana`, `/prometheus` and `/roboshop` share it |
 | `60-ingress.yaml` | Ingresses for `jithendar.com` and `www.jithendar.com` (HTTPS + HTTP redirect) |
-| `70-observability.yaml` | Headless Service `jithendar-com-metrics` (Prometheus, port 9464) and Role/RoleBinding `alloy-logs` (log collection); see `www/docs/OBSERVABILITY.md` |
+| `70-observability.yaml` | Headless Service `jithendar-com-metrics` (Prometheus, port 9464) and Role/RoleBinding `alloy-logs`; see `www/docs/OBSERVABILITY.md` |
+| `kustomization.yaml` | The list above plus the image digest pin |
 
-## Before applying
+## Before the first deploy
 
-Secrets are not in this folder and must never be committed. These must exist in `jithendar`:
+These Secrets must exist in `jithendar`; they are never committed. `scripts/create-secrets.sh mk4`
+creates the first three.
 
 - `jithendar-postgres` (key `password`), `jithendar-redis` (key `password`)
-- `jithendar-com-env` (site configuration; its `DATABASE_URL`/`REDIS_URL` passwords must match the two above)
-- `ecr-pull` (image pull secret, refreshed by the `roboshop-ai/ecr-refresh` CronJob)
+- `jithendar-com-env` (site configuration; its `DATABASE_URL`/`REDIS_URL` passwords match the two above)
+- `ecr-pull` (image pull secret, refreshed by the `ecr-refresh` CronJob from the tools repository)
 
-## Apply
+## Deploy
 
 ```sh
-kubectl --context mk4 apply -f k8s/ --dry-run=server   # validate first
-kubectl --context mk4 apply -f k8s/                    # files apply in name order
-kubectl --context mk4 -n jithendar rollout status statefulset/jithendar-postgres
-kubectl --context mk4 -n jithendar rollout status deployment/jithendar-redis
-kubectl --context mk4 -n jithendar rollout status deployment/jithendar-com
-www/scripts/smoke.sh https://jithendar.com
+./deploy.sh          # the most recently pushed image
+./deploy.sh <sha>    # a specific commit (also how you roll back)
 ```
 
-## Releasing a new version
+It pins the image digest in `kustomization.yaml`, server dry-runs, applies, waits for the rollouts
+(undoing the site's rollout if it fails) and runs `scripts/smoke.sh`. Commit `kustomization.yaml`
+afterwards so Git records what is live.
 
-The site image is pinned by digest in `30-jithendar-com.yaml` (`image: …/jithendar-com@sha256:…`). To
-release, replace that digest with the one CI printed for the new commit, then apply. `./deploy.sh` does the
-same automatically for the Kustomize manifests in `www/deploy/production` (same resources), including the
-ECR lookup, rollout waits and smoke test. Keep the two in step, or use only one of them.
+To apply manifest changes without a new image, review and apply directly:
+
+```sh
+kubectl --context mk4 diff -k k8s
+kubectl --context mk4 apply -k k8s
+```
+
+Never `kubectl apply -f k8s/`: it would try to apply `kustomization.yaml` itself and skip the digest pin.

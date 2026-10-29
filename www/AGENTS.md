@@ -15,8 +15,9 @@ Act as a senior engineer covering Next.js, technical SEO, AI workflow automation
 
 The site is a **greenfield** Next.js app in `www/` of its own repository
 (`github.com/mrjithendar/jithendar.com`, default branch `master`; moved out of the `roboshop-ai`
-monorepo on 2026-10-29). The repository root also holds `deploy.sh`, `runner/` (self-hosted CI runners for
-this repository) and `shared-tls/` (Traefik TLSStore, synced by the `shared-tls` Argo CD app in roboshop-ai). The previous
+monorepo on 2026-10-29). The repository root also holds `deploy.sh`, `k8s/` (all cluster manifests, including the
+Let's Encrypt ClusterIssuers, the site Certificate and Traefik's default TLSStore), `scripts/` and `runner/`
+(self-hosted CI runners for this repository). The previous
 self-hosted WordPress (Helm chart `minikube/wordpress`, namespace `jithendar`) was
 hijacked on 2026-10-27 and removed by the owner; **no WordPress data is migrated**.
 See `docs/SEO_AUDIT.md`.
@@ -27,8 +28,8 @@ See `docs/SEO_AUDIT.md`.
 | Content | Git-based MDX in `content/`, Zod-validated | See `docs/CONTENT_MODEL.md`; read only through `getPublishedContent()` |
 | Host | Single server `46.224.38.14` running Minikube profile `mk4` | Shared with RoboShop AI, Argo CD, Grafana, Loki, JFrog |
 | Ingress | **Traefik + cert-manager (Let's Encrypt)** — not Cloudflare Tunnel | Owner decision 2026-10-27 |
-| TLS | Shared `jithendar.com` cert via Traefik `TLSStore` (`minikube/shared-tls`) | Source cert was created by the WordPress chart — see AUD-003 |
-| Deploy | **GitHub Actions `kubectl apply -k deploy/production`**, not Argo CD (owner decision 2026-10-27) | CI uses ServiceAccount `jithendar/jithendar-deployer` (namespace-scoped, no delete, no Secrets). See `docs/DEPLOYMENT.md` |
+| TLS | Shared `jithendar.com` cert via Traefik `TLSStore default` (`k8s/55-tlsstore.yaml`) | Formerly created by the WordPress chart — see AUD-003 |
+| Deploy | **`./deploy.sh` (`kubectl apply -k k8s`) run by a person**, not Argo CD (owner decision 2026-10-27) | CI only builds and pushes the image; it has no cluster access. See `docs/DEPLOYMENT.md` |
 | CI | GitHub Actions, self-hosted ARM64 runners, Amazon ECR (`us-east-1`) | Existing pattern: `publish-ecr.yml` |
 | Automation / DB / AI | n8n, PostgreSQL, OpenAI API | n8n absent; a RoboShop Postgres exists in `roboshop-ai` ns — do not share it |
 | Observability | Prometheus, Grafana, Loki, OTel collector, Jaeger | Present for RoboShop |

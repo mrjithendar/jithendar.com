@@ -7,7 +7,7 @@ const siteRoot = import.meta.dirname;
 const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
-  // Traefik compresses responses (br/zstd/gzip, text only; see deploy/production/middlewares.yaml).
+  // Traefik compresses responses (br/zstd/gzip, text only; see k8s/40-middlewares.yaml).
   compress: false,
   images: {
     // The transformation pipeline: next/image (sharp, inside the site's pods) resizes and re-encodes our

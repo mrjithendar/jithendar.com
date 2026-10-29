@@ -78,7 +78,7 @@ Whatever the provider, publish a DMARC record once SPF and DKIM pass, starting w
 ## Network
 
 The site's NetworkPolicy already allows egress to HTTPS (Mailgun and SES APIs) and to SMTP ports 465 and 587.
-Another SMTP port would need adding to `deploy/base/networkpolicy.yaml` and `k8s/30-jithendar-com.yaml`.
+Another SMTP port would need adding to the NetworkPolicy in `k8s/30-jithendar-com.yaml`.
 
 ## Tests
 
