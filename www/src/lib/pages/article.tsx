@@ -137,7 +137,7 @@ export async function ArticleView({
               {article.preview && <PreviewBadge />}
             </div>
             <h1 className="mt-4 text-title font-bold text-fg text-balance [overflow-wrap:anywhere]">{fm.title}</h1>
-            <p className="mt-4 max-w-reading text-lg leading-8 text-fg-muted sm:text-xl sm:leading-8">{fm.description}</p>
+            <p className="mt-4 text-base leading-7 text-fg-muted text-pretty sm:text-lg sm:leading-8">{fm.description}</p>
             <div className="mt-8 flex items-center gap-3 border-y border-line py-4">
               {a.showAuthor && <Avatar name={author.frontmatter.name} size="sm" />}
               <div className="min-w-0 text-sm leading-6">

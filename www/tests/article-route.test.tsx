@@ -57,10 +57,13 @@ describe("article page cover image", () => {
     const tree = elements(await ArticleView({ article: { ...article, id: undefined }, author, collection: "blog" }));
     expect(tree.some((el) => el.props.src === cover.src)).toBe(false);
     expect(tree.some((el) => el.type === "figure")).toBe(false);
-    // The title header spans the reading column and the right-hand column from lg up; the body stays at reading width.
+    // The title header spans the reading column and the right-hand column from lg up, and the summary under the
+    // title is as wide as the title; the body stays at reading width.
     const header = tree.find((el) => el.type === "header")!;
     expect(String(header.props.className)).toContain("lg:col-span-2");
-    expect(tree.some((el) => el.type === "p" && String(el.props.className).includes("max-w-reading"))).toBe(true);
+    const summary = tree.find((el) => el.type === "p" && String(el.props.className).includes("text-fg-muted") && el.props.children === "Fixture tutorial that is published, updated later, and carries a featured image and corrections log.");
+    expect(summary).toBeDefined();
+    expect(String(summary!.props.className)).not.toContain("max-w-reading");
 
     const meta = await articleMetadata("blog", params("published-tutorial"));
     expect(meta.openGraph?.images).toEqual([expect.objectContaining({ url: "https://jithendar.com/images/fixture.png", alt: cover.alt })]);
