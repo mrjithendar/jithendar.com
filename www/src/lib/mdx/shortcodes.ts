@@ -12,6 +12,9 @@ import { visit } from "unist-util-visit";
  *   :::gallery{caption="…"}  ![a](/media/…) ![b](/media/…)  :::   (a responsive grid)
  *   :::details{summary="…"}  …  :::
  *   ::toc
+ *   :::quote{cite="…"}  …  :::                                    (a large pull quote)
+ *   ::::skills  :::skill{title="…"} - item - item :::  …  ::::    (a grid of cards; list items become chips)
+ *   ::::timeline  :::role{title="…" org="…" period="…"} …  :::  …  ::::   (work history)
  *   ::video{src="/media/<id>/clip.mp4" poster="/media/<id>/still.jpg" caption="…" ratio="16:9|4:3|1:1|9:16"}
  *   ::audio{src="/media/<id>/episode.mp3" caption="…"}
  *   ::embed{src="https://www.youtube.com/watch?v=…" title="…"}   (YouTube or Vimeo only)
@@ -153,6 +156,33 @@ export function remarkShortcodes() {
           figure(n, frame, attrs.caption);
           return;
         }
+      }
+      if (n.name === "quote" && n.type === "containerDirective") {
+        data.hName = "blockquote";
+        data.hProperties = { className: ["shortcode-quote"] };
+        if (attrs.cite) n.children.push({ type: "paragraph", data: { hName: "footer", hProperties: { className: ["quote-cite"] } }, children: [text(attrs.cite)] });
+        return;
+      }
+      if ((n.name === "skills" || n.name === "timeline") && n.type === "containerDirective") {
+        data.hName = "div";
+        data.hProperties = { className: [`shortcode-${n.name}`] };
+        return;
+      }
+      if (n.name === "skill" && n.type === "containerDirective") {
+        data.hName = "section";
+        data.hProperties = { className: ["skill-card"] };
+        if (attrs.title) n.children.unshift({ type: "paragraph", data: { hProperties: { className: ["skill-title"] } }, children: [text(attrs.title)] });
+        return;
+      }
+      if (n.name === "role" && n.type === "containerDirective") {
+        data.hName = "section";
+        data.hProperties = { className: ["timeline-role"] };
+        const head = [
+          ...(attrs.title ? [{ type: "paragraph", data: { hProperties: { className: ["role-title"] } }, children: [text(attrs.title), ...(attrs.org ? [{ type: "emphasis", data: { hName: "span", hProperties: { className: ["role-org"] } }, children: [text(attrs.org)] }] : [])] }] : []),
+          ...(attrs.period ? [{ type: "paragraph", data: { hProperties: { className: ["role-period"] } }, children: [text(attrs.period)] }] : []),
+        ];
+        n.children.unshift(...head);
+        return;
       }
       if (n.name === "toc" && n.type === "leafDirective") {
         data.hName = "nav";

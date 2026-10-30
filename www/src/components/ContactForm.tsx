@@ -5,18 +5,19 @@ import { submitContactAction } from "@/app/_actions/public";
 import { Turnstile } from "@/components/Turnstile";
 import { Alert, Button, Field, Input, Textarea } from "@/components/ui/form";
 
-export function ContactForm({ siteKey }: { siteKey: string | undefined }) {
+/** Signed-in users skip Turnstile (they passed it at sign-in); the server checks the session itself. */
+export function ContactForm({ siteKey, signedIn = false }: { siteKey: string | undefined; signedIn?: boolean }) {
   const [token, setToken] = useState<string | null>(null);
   const [resetKey, setResetKey] = useState(0);
   const [result, setResult] = useState<{ ok: boolean; text: string; issues?: string[] } | null>(null);
   const [pending, start] = useTransition();
-  if (!siteKey) return null;
+  if (!siteKey && !signedIn) return null;
 
   function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = e.currentTarget;
     const data = Object.fromEntries(new FormData(form)) as { name: string; email: string; subject: string; message: string };
-    if (!token) {
+    if (!signedIn && !token) {
       setResult({ ok: false, text: "Please complete the human verification." });
       return;
     }
@@ -38,7 +39,7 @@ export function ContactForm({ siteKey }: { siteKey: string | undefined }) {
         <div className="sm:col-span-2"><Field label="Subject" htmlFor="c-subject"><Input id="c-subject" name="subject" required maxLength={150} /></Field></div>
         <div className="sm:col-span-2"><Field label="Message" htmlFor="c-message"><Textarea id="c-message" name="message" rows={6} required minLength={10} maxLength={5000} /></Field></div>
         <div className="sm:col-span-2 space-y-4">
-          <Turnstile siteKey={siteKey} onToken={setToken} resetKey={resetKey} />
+          {!signedIn && siteKey && <Turnstile siteKey={siteKey} onToken={setToken} resetKey={resetKey} />}
           {result && (
             <Alert tone={result.ok ? "success" : "error"}>
               {result.text}

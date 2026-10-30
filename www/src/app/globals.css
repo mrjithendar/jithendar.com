@@ -481,6 +481,34 @@ body:has([data-admin-shell]) .site-header-inner {
 .prose .callout-warning { @apply border-amber-200 border-l-amber-500 bg-amber-50/70 dark:border-amber-500/20 dark:border-l-amber-400 dark:bg-amber-500/10; }
 .prose .callout-danger { @apply border-red-200 border-l-red-500 bg-red-50/70 dark:border-red-500/20 dark:border-l-red-400 dark:bg-red-500/10; }
 
+.prose .shortcode-quote {
+  @apply my-12 border-l-4 border-accent pl-6 text-2xl font-semibold leading-snug tracking-tight text-fg text-balance sm:pl-8 sm:text-3xl;
+}
+.prose .shortcode-quote > p:first-child::before { content: "\201C"; @apply text-accent-text; }
+.prose .shortcode-quote > p:last-of-type::after { content: "\201D"; @apply text-accent-text; }
+.prose .shortcode-quote > p { @apply my-0; }
+.prose .shortcode-quote .quote-cite { @apply mt-4 text-sm font-medium tracking-normal text-fg-muted; }
+.prose .shortcode-quote .quote-cite::before { content: "\2014\00a0"; }
+
+.prose .shortcode-skills { @apply my-8 grid gap-4 sm:grid-cols-2; }
+.prose .skill-card { @apply rounded-xl border border-line p-5; }
+.prose .skill-card .skill-title { @apply mt-0 mb-3 text-base font-semibold text-fg; }
+.prose .skill-card ul { @apply my-0 flex list-none flex-wrap gap-2 p-0; }
+.prose .skill-card li { @apply m-0 rounded-full border border-line px-3 py-1 text-sm text-fg-muted; }
+.prose .skill-card li::marker { content: none; }
+
+.prose .shortcode-timeline { @apply my-8 space-y-8 border-l border-line pl-6; }
+.prose .timeline-role { @apply relative; }
+.prose .timeline-role::before {
+  content: "";
+  @apply absolute top-2 -left-[1.95rem] size-3 rounded-full border-2 border-accent bg-surface;
+}
+.prose .timeline-role .role-title { @apply my-0 text-lg font-semibold text-fg; }
+.prose .timeline-role .role-org { @apply ml-1.5 text-accent-text; }
+.prose .timeline-role .role-org::before { content: "\00b7\00a0"; }
+.prose .timeline-role .role-period { @apply mt-0.5 mb-3 text-sm text-fg-muted; }
+.prose .timeline-role > ul { @apply mt-3 mb-0; }
+
 .prose a.shortcode-button {
   @apply inline-flex min-h-11 items-center rounded-lg bg-accent px-5 text-sm font-semibold text-on-accent no-underline transition-colors hover:bg-accent-hover;
 }

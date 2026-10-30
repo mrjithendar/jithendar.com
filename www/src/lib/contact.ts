@@ -16,12 +16,15 @@ export const contactInput = z.object({
   message: z.string().trim().min(10, "Your message is too short").max(5000),
 });
 
-/** Stored in Postgres (contact_message); the admin is notified by email when mail is configured. */
-export async function submitContact(raw: unknown, turnstileToken: string | null, ip?: string | null) {
+/**
+ * Stored in Postgres (contact_message); the admin is notified by email when mail is configured.
+ * `signedIn` (from the server session, never the client) skips Turnstile: sign-in already passed one.
+ */
+export async function submitContact(raw: unknown, turnstileToken: string | null, ip?: string | null, { signedIn = false } = {}) {
   if (!(await getSettings()).features.contactForm) throw new PostError("The contact form is closed.", 403);
   const parsed = contactInput.safeParse(raw);
   if (!parsed.success) throw new PostError("Please check the form.", 400, parsed.error.issues.map((i) => i.message));
-  if (!(await verifyTurnstile(turnstileToken, ip))) throw new PostError("Please complete the human verification again.", 400);
+  if (!signedIn && !(await verifyTurnstile(turnstileToken, ip))) throw new PostError("Please complete the human verification again.", 400);
   const db = await getDb();
   const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
   const [{ mine } = { mine: 0 }] = await db.select({ mine: count() }).from(schema.contactMessage).where(and(gt(schema.contactMessage.createdAt, hourAgo), eq(schema.contactMessage.email, parsed.data.email)));

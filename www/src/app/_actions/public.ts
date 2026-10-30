@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import { submitContact } from "@/lib/contact";
 import { PostError } from "@/lib/posts";
+import { getSessionUser } from "@/lib/session";
 
 export type PublicResult = { ok: true; message: string } | { ok: false; error: string; issues?: string[] };
 
@@ -23,7 +24,7 @@ async function guard(fn: () => Promise<string>): Promise<PublicResult> {
 
 export async function submitContactAction(data: { name: string; email: string; subject: string; message: string }, token: string | null): Promise<PublicResult> {
   return guard(async () => {
-    await submitContact(data, token, await clientIp());
+    await submitContact(data, token, await clientIp(), { signedIn: !!(await getSessionUser()) });
     return "Thanks for getting in touch. Your message has been received.";
   });
 }

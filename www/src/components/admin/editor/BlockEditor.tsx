@@ -78,7 +78,7 @@ function describe(source: string): string {
   if (source.startsWith("<!--")) return "Hidden note (HTML comment, not shown to readers)";
   if (source.startsWith("<")) return "Raw HTML/JSX (kept as-is; not rendered on the site)";
   const name = /^:{2,}([a-z][\w-]*)/.exec(source)?.[1] ?? "shortcode";
-  const labels: Record<string, string> = { callout: "Callout", button: "Button", figure: "Image with caption", gallery: "Gallery", details: "Collapsible details", toc: "Table of contents", video: "Video", audio: "Audio", embed: "Embedded video" };
+  const labels: Record<string, string> = { callout: "Callout", button: "Button", figure: "Image with caption", gallery: "Gallery", details: "Collapsible details", toc: "Table of contents", quote: "Pull quote", skills: "Skills grid", timeline: "Experience timeline", video: "Video", audio: "Audio", embed: "Embedded video" };
   return labels[name] ?? `Shortcode “${name}” (not supported by the site; shown as text)`;
 }
 

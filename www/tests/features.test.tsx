@@ -203,6 +203,15 @@ describe("shortcodes", () => {
     expect(out).toContain('<details class="shortcode-details"><summary>More</summary><p>Hidden</p></details>');
   });
 
+  it("renders pull quotes, skill grids and timelines", async () => {
+    const out = await html(
+      ':::quote{cite="Me"}\nShip it.\n:::\n\n::::skills\n:::skill{title="Cloud"}\n- AWS\n:::\n::::\n\n::::timeline\n:::role{title="Engineer" org="Acme" period="2020"}\n- Did things\n:::\n::::',
+    );
+    expect(out).toContain('<blockquote class="shortcode-quote"><p>Ship it.</p><footer class="quote-cite">Me</footer></blockquote>');
+    expect(out).toContain('<div class="shortcode-skills"><section class="skill-card"><p class="skill-title">Cloud</p><ul>');
+    expect(out).toContain('<div class="shortcode-timeline"><section class="timeline-role"><p class="role-title">Engineer<span class="role-org">Acme</span></p><p class="role-period">2020</p><ul>');
+  });
+
   it("refuses unsafe button links and unknown shortcodes", async () => {
     const out = await html('::button[Click]{href="javascript:alert(1)"}\n\n::evil{onload="x"}');
     expect(out).not.toContain("javascript:");

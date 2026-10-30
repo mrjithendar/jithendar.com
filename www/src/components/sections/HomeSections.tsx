@@ -77,12 +77,12 @@ function Hero({ s }: { s: Of<"hero"> }) {
   const split = s.layout === "split" && !!s.image.desktop;
   const center = s.align === "center" && !split;
   const text = (
-    <div className={`max-w-3xl ${center ? "mx-auto text-center" : ""}`}>
+    <div className={`max-w-5xl ${center ? "mx-auto text-center" : ""}`}>
       {s.eyebrow && <p className="eyebrow">{s.eyebrow}</p>}
       <h1 id={`${s.id}-title`} className={`text-display font-bold text-fg text-balance ${s.eyebrow ? "mt-4" : ""}`}>
         {s.heading} {s.highlight && <span className="text-accent-text">{s.highlight}</span>}
       </h1>
-      {s.subtitle && <p className={`mt-5 max-w-2xl text-[1.0625rem] leading-relaxed text-fg-muted text-pretty sm:text-lg ${center ? "mx-auto" : ""}`}>{s.subtitle}</p>}
+      {s.subtitle && <p className={`mt-5 max-w-3xl text-[1.0625rem] leading-relaxed text-fg-muted text-pretty sm:text-lg ${center ? "mx-auto" : ""}`}>{s.subtitle}</p>}
       {(s.primary.href || s.secondary.href) && (
         <div className={`mt-8 flex flex-col gap-3 sm:flex-row ${center ? "sm:justify-center" : ""}`}>
           <ButtonLink href={s.primary.href} label={s.primary.label} variant="primary" />
