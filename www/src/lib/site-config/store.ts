@@ -77,7 +77,8 @@ export async function getPublishedConfig(): Promise<Published> {
 export async function getDraft(): Promise<Draft> {
   const db = await getDb();
   const [row] = await db.select().from(schema.siteConfig).where(eq(schema.siteConfig.key, DRAFT));
-  if (row) return { config: row.config, version: row.version, baseVersion: row.baseVersion, updatedAt: row.updatedAt, updatedBy: row.updatedBy };
+  // Fill fields added to the schema since the draft was saved (e.g. general.discussion); values it has are kept.
+  if (row) return { config: mergeWithDefaults(row.config, row.schemaVersion), version: row.version, baseVersion: row.baseVersion, updatedAt: row.updatedAt, updatedBy: row.updatedBy };
   const pub = await getPublishedConfig();
   return { config: pub.config, version: 0, baseVersion: pub.version, updatedAt: null, updatedBy: null };
 }

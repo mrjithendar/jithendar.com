@@ -196,6 +196,17 @@ describe("draft, publish, conflicts and history", () => {
     await expect(publishDraft(admin, first.version)).rejects.toBeInstanceOf(ConfigConflictError);
   });
 
+  it("fills fields added since a draft was saved, keeping the draft's own values", async () => {
+    const { saveDraft, getDraft, publishDraft } = await store();
+    const old = edit((c) => (c.general.tagline = "Old draft")) as unknown as { general: Record<string, unknown> };
+    delete old.general.discussion; // saved before general.discussion existed
+    const { version } = await saveDraft(admin, old, 0);
+    const draft = await getDraft();
+    expect(validateConfig(draft.config).ok).toBe(true);
+    expect(draft.config).toMatchObject({ general: { tagline: "Old draft", discussion: defaultConfig().general.discussion } });
+    await expect(publishDraft(admin, version)).resolves.toMatchObject({ version: 1 });
+  });
+
   it("never publishes an invalid draft; the live configuration stays as it was", async () => {
     const { saveDraft, publishDraft, getPublishedConfig } = await store();
     const ok = await saveDraft(admin, edit((c) => (c.general.siteName = "Good")), 0);
