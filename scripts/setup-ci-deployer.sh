@@ -51,6 +51,8 @@ for _ in $(seq 1 20); do
   sleep 1
 done
 [[ -n "$MK4_CI_TOKEN" ]] || { echo "Token was not issued for $NS/$SA-token." >&2; exit 1; }
+
+# Export shell variables vs environment variables
 export MK4_API_SERVER MK4_CA_DATA MK4_CI_TOKEN
 
 # Render the template exactly as the CI step does, and check the result can restart jithendar-com.
@@ -58,6 +60,7 @@ echo "→ Testing $TEMPLATE with these values"
 KCFG="$(mktemp)" # create a temp file, save its path in KCFG
 trap 'rm -f "$KCFG"' EXIT # delete it when the script exits, whether it succeeds or fails
 # write the filled-in kubeconfig into it
+# perl -pe runs a small piece of Perl code on every line of a file and prints the result. It's Perl's version of sed.
 perl -pe 's/\$\{(MK4_[A-Z_]+)\}/$ENV{$1}/g' "$TEMPLATE" > "$KCFG"
 
 # test the login with $KCFG filled file
