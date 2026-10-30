@@ -1,12 +1,8 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound, permanentRedirect } from "next/navigation";
-import type { ReactNode } from "react";
 import { ArticleList } from "@/components/ArticleList";
 import { Container } from "@/components/Container";
-import { RssIcon } from "@/components/icons";
 import { JsonLd } from "@/components/JsonLd";
-import { PageHeader } from "@/components/PageHeader";
 import { pageHref, Pagination } from "@/components/Pagination";
 import { absoluteUrl, site } from "@/config/site";
 import { paginate, parsePageParam, type Article, type Paged } from "@/lib/content";
@@ -20,10 +16,6 @@ export type Listing = {
   articles: Article[];
   /** False → noindex, follow (thin or intro-less taxonomy). */
   indexable: boolean;
-  eyebrow?: string;
-  icon?: ReactNode;
-  /** Optional chips under the header (e.g. topic filters). */
-  chips?: { href: string; label: string }[];
   feedHref?: string;
   emptyText?: string;
   /** Items per page (configured; out-of-range pages 404). */
@@ -64,36 +56,17 @@ export function listingMetadata(listing: Listing, page = 1): Metadata {
 
 export function ListingPage({ listing, paged }: { listing: Listing; paged: Paged<Article> }) {
   const crumbs = paged.page > 1 ? [...listing.crumbs, { name: `Page ${paged.page}`, path: pageHref(listing.basePath, paged.page) }] : listing.crumbs;
-  const count = listing.articles.length;
   return (
     <>
       <JsonLd data={breadcrumbLd(crumbs)} />
-      <PageHeader title={listing.title} description={listing.description} eyebrow={listing.eyebrow} crumbs={crumbs} icon={listing.icon}>
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-fg-subtle">
-          <span>
-            {count} {count === 1 ? "article" : "articles"}
-          </span>
-          {listing.feedHref && (
-            <a href={listing.feedHref} className="inline-flex min-h-8 items-center gap-1.5 font-medium text-fg-muted hover:text-fg hover:underline">
-              <RssIcon className="h-4 w-4" /> RSS feed
-            </a>
-          )}
-        </div>
-        {listing.chips && listing.chips.length > 0 && (
-          <ul aria-label="Topics" className="mt-5 flex flex-wrap gap-2">
-            {listing.chips.map((chip) => (
-              <li key={chip.href}>
-                <Link
-                  href={chip.href}
-                  className="inline-flex min-h-9 items-center rounded-full border border-line bg-surface px-3.5 text-sm font-medium text-fg-muted transition-colors hover:border-line-strong hover:text-fg"
-                >
-                  {chip.label}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </PageHeader>
+      {/* Description-only band: the visible title, breadcrumbs, count and topic chips were dropped on purpose.
+          The h1 stays for screen readers and search engines; breadcrumbs stay in the JSON-LD. */}
+      <div className="border-b border-line bg-surface-muted">
+        <Container className="py-8 sm:py-10">
+          <h1 className="sr-only">{paged.page > 1 ? `${listing.title} (page ${paged.page})` : listing.title}</h1>
+          <p className="max-w-3xl text-[1.0625rem] leading-relaxed text-fg-muted text-pretty sm:text-lg">{listing.description}</p>
+        </Container>
+      </div>
       <Container className="pt-10 sm:pt-12">
         <ArticleList articles={paged.items} emptyText={listing.emptyText ?? "Nothing published here yet"} />
         <Pagination basePath={listing.basePath} page={paged.page} totalPages={paged.totalPages} />
