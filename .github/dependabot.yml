@@ -59,6 +59,10 @@ updates:
       # the 3.x SDK, then bump @vercel/otel, the SDK packages and the api together.
       - dependency-name: "@opentelemetry/api"
         versions: [">=1.10.0"]
+      # typescript-eslint (via eslint-config-next) supports TypeScript <6.1 only; 7.0 breaks `npm run lint`
+      # (2026-10-30). Remove once typescript-eslint supports TS 7.
+      - dependency-name: typescript
+        versions: [">=6.1.0"]
 
   # Base images in www/Dockerfile and www/Dockerfile.ci
   - package-ecosystem: docker
