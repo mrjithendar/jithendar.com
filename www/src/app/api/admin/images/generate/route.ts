@@ -30,7 +30,7 @@ export async function POST(req: Request) {
   const user = await getSessionUser();
   if (!user) return json({ error: "Sign in again." }, 401);
   if (user.role !== "admin" && user.role !== "author") return json({ error: "Not allowed." }, 403);
-  const body = (await req.json().catch(() => null)) as { prompt?: unknown; aspectRatio?: unknown } | null;
+  const body = (await req.json().catch(() => null)) as { prompt?: unknown; aspectRatio?: unknown; quality?: unknown; imageSize?: unknown } | null;
   if (!body) return json({ error: "Bad request." }, 400);
   try {
     return json(await startGeneration(actorOf(user), body, { signal: req.signal }));

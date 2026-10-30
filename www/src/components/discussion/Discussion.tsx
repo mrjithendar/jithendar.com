@@ -30,7 +30,7 @@ function timeFormatter(timeZone: string) {
  * The discussion under a post. The first page arrives with the article (public view: approved comments only);
  * signed-in readers then load their own view (likes, pending comments, permissions) from /api/comments.
  */
-export function Discussion({ postId, path, initial, siteKey, timeZone }: { postId: string; path: string; initial: CommentPage; siteKey?: string; timeZone: string }) {
+export function Discussion({ postId, path, initial, timeZone }: { postId: string; path: string; initial: CommentPage; timeZone: string }) {
   const { data: session, isPending: sessionPending } = authClient.useSession();
   const [sort, setSort] = useState<CommentSort>("oldest");
   const [threads, setThreads] = useState<CommentView[]>(initial.threads);
@@ -44,8 +44,6 @@ export function Discussion({ postId, path, initial, siteKey, timeZone }: { postI
   const [live, setLive] = useState("");
   const [highlight, setHighlight] = useState<string | null>(null);
   const [sessionEnded, setSessionEnded] = useState(false);
-  // Signed-in readers who passed Turnstile recently are not asked again (the server decides; see lib/human-check).
-  const [verify, setVerify] = useState(true);
   const formatTime = useMemo(() => timeFormatter(timeZone), [timeZone]);
   const viewerId = session?.user.id ?? null;
   const loadedFor = useRef<string | null | undefined>(undefined);
@@ -80,7 +78,6 @@ export function Discussion({ postId, path, initial, siteKey, timeZone }: { postI
         setNextCursor(page.nextCursor);
         setTotal(page.total);
         setState(page.state);
-        if (page.needsVerification !== undefined) setVerify(page.needsVerification);
         setStatus("ready");
         if (target && containsComment(list, target)) {
           setHighlight(target);
@@ -143,11 +140,10 @@ export function Discussion({ postId, path, initial, siteKey, timeZone }: { postI
     });
   }
 
-  async function post(body: string, token: string | null, clientKey: string, parent: CommentView | null) {
-    const r = handleResult(await postCommentAction({ postId, parentId: parent?.id ?? null, body, clientKey, token }));
+  async function post(body: string, clientKey: string, parent: CommentView | null) {
+    const r = handleResult(await postCommentAction({ postId, parentId: parent?.id ?? null, body, clientKey }));
     if (!r.ok) return { ok: false as const, error: r.error };
     if (r.thread) setThreads((t) => upsertThread(t, r.thread!, sort));
-    setVerify(r.needsVerification);
     if (r.status === "approved") setTotal((n) => n + 1);
     setNotice({ tone: r.status === "approved" ? "success" : "info", text: r.message ?? "Posted." });
     setLive(r.message ?? "");
@@ -156,7 +152,7 @@ export function Discussion({ postId, path, initial, siteKey, timeZone }: { postI
   }
 
   const handlers: ItemHandlers = {
-    reply: (parent, body, token, key) => post(body, token, key, parent),
+    reply: (parent, body, key) => post(body, key, parent),
     async edit(comment, body) {
       const r = handleResult(await editCommentAction(postId, comment.id, body));
       if (!r.ok) return { ok: false, error: r.error };
@@ -240,9 +236,7 @@ export function Discussion({ postId, path, initial, siteKey, timeZone }: { postI
               <Composer
                 label={`Comment as ${session.user.name}`}
                 submitLabel="Post comment"
-                siteKey={verify ? siteKey : undefined}
-                verify={verify}
-                onSubmit={(body, token, key) => post(body, token, key, null)}
+                onSubmit={(body, key) => post(body, key, null)}
               />
               {state.requireApproval && <p className="mt-3 text-xs text-fg-subtle">Comments from readers appear after a moderator approves them.</p>}
             </div>
@@ -278,7 +272,7 @@ export function Discussion({ postId, path, initial, siteKey, timeZone }: { postI
           <ol className={`space-y-8 ${status === "loading" ? "opacity-60" : ""}`} aria-label="Comments">
             {threads.map((c) => (
               <li key={c.id}>
-                <CommentItem comment={c} level={0} path={path} siteKey={verify ? siteKey : undefined} formatTime={formatTime} highlight={highlight} signInHref={signInHref} signedIn={signedIn} handlers={handlers} />
+                <CommentItem comment={c} level={0} path={path} formatTime={formatTime} highlight={highlight} signInHref={signInHref} signedIn={signedIn} handlers={handlers} />
               </li>
             ))}
           </ol>

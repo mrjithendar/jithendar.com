@@ -54,7 +54,14 @@ async function saveImageGeneration(form: FormData) {
       await removeGeminiKey(actor);
       return "Gemini settings removed. Environment variables apply again, if set.";
     }
-    const r = await saveGemini(actor, { enabled: form.has("enabled"), apiKey: String(form.get("apiKey") ?? ""), model: String(form.get("model") ?? ""), imageSize: String(form.get("imageSize") ?? "1K") });
+    const r = await saveGemini(actor, {
+      enabled: form.has("enabled"),
+      apiKey: String(form.get("apiKey") ?? ""),
+      model: String(form.get("model") ?? ""),
+      proModel: String(form.get("proModel") ?? ""),
+      imageSize: String(form.get("imageSize") ?? "1K"),
+      maxImageSize: String(form.get("maxImageSize") ?? ""),
+    });
     if (r.error) throw new PostError(`Saved, but the key check failed: ${r.error} “Generate image” stays available; requests will fail until this is fixed.`);
     return r.verified ? "Gemini key verified and saved. “Generate image” is available in the editor." : "Image generation is off.";
   });
@@ -222,11 +229,20 @@ export default async function IntegrationsPage({ searchParams }: { searchParams:
               <Field label="API key" htmlFor="g-key" hint={gemini.hasKey ? `Stored (${gemini.keyHint}). Leave empty to keep it.` : "Starts with AIza…"}>
                 <PasswordInput id="g-key" name="apiKey" autoComplete="off" />
               </Field>
-              <Field label="Image model" htmlFor="g-model" hint="Model code from ai.google.dev/gemini-api/docs/models.">
+              <Field label="Image model (Fast)" htmlFor="g-model" hint="Model code from ai.google.dev/gemini-api/docs/models. The default in the editor.">
                 <Input id="g-model" name="model" defaultValue={gemini.model || "gemini-3.1-flash-image"} required spellCheck={false} />
               </Field>
-              <Field label="Image size" htmlFor="g-size" hint="Larger sizes cost more and take longer (model-dependent).">
+              <Field label="Pro model (optional)" htmlFor="g-pro-model" hint="Higher quality, slower and dearer. Leave empty to offer only Fast.">
+                <Input id="g-pro-model" name="proModel" defaultValue={gemini.proModel} spellCheck={false} />
+              </Field>
+              <Field label="Default image size" htmlFor="g-size" hint="Preselected in the editor. Larger sizes cost more and take longer (model-dependent).">
                 <Select id="g-size" name="imageSize" defaultValue={gemini.imageSize}>
+                  {IMAGE_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
+                </Select>
+              </Field>
+              <Field label="Largest size authors may pick" htmlFor="g-max-size" hint="Caps cost. Default: the larger of the default size and 2K.">
+                <Select id="g-max-size" name="maxImageSize" defaultValue={gemini.maxImageSize}>
+                  <option value="">Default</option>
                   {IMAGE_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
                 </Select>
               </Field>

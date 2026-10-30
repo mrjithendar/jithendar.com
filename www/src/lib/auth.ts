@@ -1,5 +1,4 @@
 import { APIError, betterAuth } from "better-auth";
-import { eq } from "drizzle-orm";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
@@ -117,10 +116,6 @@ async function createAuth() {
             // Every successful sign-in (password, Google, GitHub) lands in the audit log with its IP.
             const provider = (ctx?.params as { id?: string } | undefined)?.id;
             await auditLogin(session, ctx?.path?.startsWith("/callback/") && provider ? `/callback/${provider}` : ctx?.path);
-            // A password sign-in or sign-up passed Turnstile: comments can skip the check for a while.
-            if (ctx?.path === "/sign-in/email" || ctx?.path === "/sign-up/email") {
-              await db.update(schema.user).set({ humanVerifiedAt: new Date() }).where(eq(schema.user.id, session.userId)).catch(() => undefined);
-            }
           },
         },
       },

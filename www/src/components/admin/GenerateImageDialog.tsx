@@ -6,7 +6,18 @@ import { Alert, Button, Field, Input, Select, Textarea } from "@/components/ui/f
 import type { FeaturedImage } from "@/db/schema";
 import { Dialog } from "./Dialog";
 
-export type GenerateOptions = { enabled: boolean; reason?: string; aspectRatios: readonly string[] };
+export type GenerateOptions = {
+  enabled: boolean;
+  reason?: string;
+  aspectRatios: readonly string[];
+  /** "fast" first; "pro" only when a Pro model is configured. */
+  qualities?: { id: string; model: string }[];
+  /** Sizes the author may pick, smallest first. */
+  sizes?: readonly string[];
+  defaultSize?: string;
+};
+
+const QUALITY_LABEL: Record<string, string> = { fast: "Fast", pro: "Pro (best quality, slower)" };
 
 type Result = { id: string; previewUrl: string; width: number; height: number; model: string };
 type Phase = { name: "compose" } | { name: "generating" } | { name: "preview"; result: Result };
@@ -49,6 +60,10 @@ export function GenerateImageDialog({
 }) {
   const [prompt, setPrompt] = useState("");
   const [ratio, setRatio] = useState(options.aspectRatios[0] ?? "16:9");
+  const qualities = options.qualities ?? [];
+  const sizes = options.sizes ?? [];
+  const [quality, setQuality] = useState(qualities[0]?.id ?? "fast");
+  const [size, setSize] = useState(options.defaultSize ?? sizes[0] ?? "");
   const [phase, setPhase] = useState<Phase>({ name: "compose" });
   const [alt, setAlt] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -90,7 +105,8 @@ export function GenerateImageDialog({
       const res = await fetch("/api/admin/images/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, aspectRatio: ratio }),
+        // Omitted when the site offers no choice, so the server's defaults apply.
+        body: JSON.stringify({ prompt, aspectRatio: ratio, ...(qualities.length > 1 ? { quality } : {}), ...(sizes.length > 1 ? { imageSize: size } : {}) }),
         signal: ac.signal,
       });
       const body = (await res.json().catch(() => ({}))) as Partial<Result> & { error?: string };
@@ -129,6 +145,8 @@ export function GenerateImageDialog({
   }
 
   const generating = phase.name === "generating";
+  // Pro and the largest sizes can take noticeably longer.
+  const slow = quality === "pro" || size === "4K";
   const footer =
     phase.name === "preview" ? (
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -197,10 +215,36 @@ export function GenerateImageDialog({
                 ))}
               </Select>
             </Field>
+            {(qualities.length > 1 || sizes.length > 1) && (
+              <div className="grid gap-4 sm:grid-cols-2">
+                {qualities.length > 1 && (
+                  <Field label="Quality" htmlFor="gen-quality" hint={qualities.find((q) => q.id === quality)?.model}>
+                    <Select id="gen-quality" value={quality} onChange={(e) => setQuality(e.target.value)} disabled={generating}>
+                      {qualities.map((q) => (
+                        <option key={q.id} value={q.id}>
+                          {QUALITY_LABEL[q.id] ?? q.id}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                )}
+                {sizes.length > 1 && (
+                  <Field label="Size" htmlFor="gen-size" hint="Longest side: 1K ≈ 1024 px, 2K ≈ 2048 px, 4K ≈ 4096 px. Larger costs more.">
+                    <Select id="gen-size" value={size} onChange={(e) => setSize(e.target.value)} disabled={generating}>
+                      {sizes.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                )}
+              </div>
+            )}
             {generating && (
               <p role="status" className="flex items-center gap-3 text-sm text-fg-muted">
                 <span className="h-4 w-4 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" aria-hidden="true" />
-                Generating… this can take up to a minute.
+                {slow ? "Generating… Pro and 4K images can take a couple of minutes." : "Generating… this can take up to a minute."}
               </p>
             )}
           </>

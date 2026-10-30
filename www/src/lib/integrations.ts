@@ -21,7 +21,18 @@ import { seal, unseal, type Sealed } from "./secrets";
 const KEY = "integrations";
 
 type StoredProvider = { enabled: boolean; clientId: string; clientSecret: Sealed | null };
-type StoredGemini = { enabled: boolean; apiKey: Sealed | null; model: string; imageSize: (typeof IMAGE_SIZES)[number]; verifiedAt: string | null; lastError: string | null };
+type StoredGemini = {
+  enabled: boolean;
+  apiKey: Sealed | null;
+  model: string;
+  /** "Pro" model; absent or "" = only "Fast" is offered. */
+  proModel?: string;
+  imageSize: (typeof IMAGE_SIZES)[number];
+  /** Largest size authors may pick; absent = the default (larger of imageSize and 2K). */
+  maxImageSize?: (typeof IMAGE_SIZES)[number];
+  verifiedAt: string | null;
+  lastError: string | null;
+};
 type Stored = { social: Partial<Record<SocialProvider, StoredProvider>>; gemini: StoredGemini | null; indexNow: StoredIndexNow | null };
 
 const EMPTY: Stored = { social: {}, gemini: null, indexNow: null };
@@ -137,29 +148,66 @@ export async function resolveGeminiImageConfig(): Promise<GeminiImageConfig | nu
   const stored = (await readStored().catch(() => EMPTY)).gemini;
   if (!stored) return geminiImageConfig(env);
   if (!stored.enabled || !stored.apiKey || !stored.model) return null;
-  return geminiImageConfig({ ...env, GEMINI_API_KEY: unseal(stored.apiKey), GEMINI_IMAGE_MODEL: stored.model, GEMINI_IMAGE_SIZE: stored.imageSize });
+  return geminiImageConfig({
+    ...env,
+    GEMINI_API_KEY: unseal(stored.apiKey),
+    GEMINI_IMAGE_MODEL: stored.model,
+    GEMINI_IMAGE_PRO_MODEL: stored.proModel ?? "",
+    GEMINI_IMAGE_SIZE: stored.imageSize,
+    GEMINI_IMAGE_MAX_SIZE: stored.maxImageSize ?? "",
+  });
 }
 
-export type GeminiSummary = { source: "admin" | "env" | "none"; enabled: boolean; model: string; imageSize: string; hasKey: boolean; keyHint: string; verifiedAt: string | null; lastError: string | null };
+export type GeminiSummary = {
+  source: "admin" | "env" | "none";
+  enabled: boolean;
+  model: string;
+  proModel: string;
+  imageSize: string;
+  /** "" = default cap (larger of imageSize and 2K). */
+  maxImageSize: string;
+  hasKey: boolean;
+  keyHint: string;
+  verifiedAt: string | null;
+  lastError: string | null;
+};
 
 export async function geminiSummary(): Promise<GeminiSummary> {
   const s = (await readStored()).gemini;
   if (s) {
     const key = s.apiKey ? unseal(s.apiKey) : "";
-    return { source: "admin", enabled: s.enabled, model: s.model, imageSize: s.imageSize, hasKey: Boolean(key), keyHint: key ? `…${key.slice(-4)}` : "", verifiedAt: s.verifiedAt, lastError: s.lastError };
+    return {
+      source: "admin",
+      enabled: s.enabled,
+      model: s.model,
+      proModel: s.proModel ?? "",
+      imageSize: s.imageSize,
+      maxImageSize: s.maxImageSize ?? "",
+      hasKey: Boolean(key),
+      keyHint: key ? `…${key.slice(-4)}` : "",
+      verifiedAt: s.verifiedAt,
+      lastError: s.lastError,
+    };
   }
   const env = geminiImageConfig();
   return env
-    ? { source: "env", enabled: true, model: env.model, imageSize: env.imageSize, hasKey: true, keyHint: `…${env.apiKey.slice(-4)}`, verifiedAt: null, lastError: null }
-    : { source: "none", enabled: false, model: "", imageSize: "1K", hasKey: false, keyHint: "", verifiedAt: null, lastError: null };
+    ? { source: "env", enabled: true, model: env.model, proModel: env.proModel ?? "", imageSize: env.imageSize, maxImageSize: env.maxImageSize ?? "", hasKey: true, keyHint: `…${env.apiKey.slice(-4)}`, verifiedAt: null, lastError: null }
+    : { source: "none", enabled: false, model: "", proModel: "", imageSize: "1K", maxImageSize: "", hasKey: false, keyHint: "", verifiedAt: null, lastError: null };
 }
 
-const geminiInput = z.object({
-  enabled: z.boolean(),
-  apiKey: z.string().trim().max(200).default(""),
-  model: z.string().trim().max(100).regex(/^[a-z0-9][a-z0-9.\-]*$/i, "Use the model code from ai.google.dev, e.g. gemini-3.1-flash-image."),
-  imageSize: z.enum(IMAGE_SIZES),
-});
+const MODEL_CODE = /^[a-z0-9][a-z0-9.\-]*$/i;
+const geminiInput = z
+  .object({
+    enabled: z.boolean(),
+    apiKey: z.string().trim().max(200).default(""),
+    model: z.string().trim().max(100).regex(MODEL_CODE, "Use the model code from ai.google.dev, e.g. gemini-3.1-flash-image."),
+    proModel: z.string().trim().max(100).regex(new RegExp(`^$|${MODEL_CODE.source}`, "i"), "Use the Pro model code from ai.google.dev, or leave it empty.").default(""),
+    imageSize: z.enum(IMAGE_SIZES),
+    maxImageSize: z.union([z.literal(""), z.enum(IMAGE_SIZES)]).default(""),
+  })
+  .refine((v) => !v.maxImageSize || IMAGE_SIZES.indexOf(v.maxImageSize) >= IMAGE_SIZES.indexOf(v.imageSize), {
+    message: "The largest size cannot be smaller than the default size.",
+  });
 
 /**
  * Save the Gemini settings and, when it is on, check the key and model with a free metadata request
@@ -175,12 +223,15 @@ export async function saveGemini(actor: Actor, raw: unknown, fetchImpl: typeof f
   let verifiedAt: string | null = null;
   let lastError: string | null = null;
   if (parsed.data.enabled && apiKey) {
+    // Check both models: a wrong Pro code would otherwise only fail when an author picks "Pro".
     const check = await checkGeminiKey(unseal(apiKey), parsed.data.model, fetchImpl);
-    if (check.ok) verifiedAt = new Date().toISOString();
-    else lastError = check.error;
+    const pro = check.ok && parsed.data.proModel ? await checkGeminiKey(unseal(apiKey), parsed.data.proModel, fetchImpl) : check;
+    if (check.ok && pro.ok) verifiedAt = new Date().toISOString();
+    else lastError = !check.ok ? check.error : !pro.ok ? `Pro model: ${pro.error}` : null;
   }
-  await write({ ...stored, gemini: { enabled: parsed.data.enabled, apiKey, model: parsed.data.model, imageSize: parsed.data.imageSize, verifiedAt, lastError } }, actor.id);
-  await audit(actor, "integrations.gemini", parsed.data.model, { enabled: parsed.data.enabled, keyChanged: Boolean(parsed.data.apiKey), verified: Boolean(verifiedAt) });
+  const { enabled, model, proModel, imageSize, maxImageSize } = parsed.data;
+  await write({ ...stored, gemini: { enabled, apiKey, model, proModel, imageSize, ...(maxImageSize ? { maxImageSize } : {}), verifiedAt, lastError } }, actor.id);
+  await audit(actor, "integrations.gemini", parsed.data.model, { enabled, proModel, imageSize, maxImageSize, keyChanged: Boolean(parsed.data.apiKey), verified: Boolean(verifiedAt) });
   return verifiedAt || !parsed.data.enabled ? { verified: Boolean(verifiedAt) } : { verified: false, error: lastError ?? "unknown error" };
 }
 

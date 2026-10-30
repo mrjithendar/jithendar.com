@@ -547,6 +547,28 @@ body:has([data-admin-shell]) .site-header-inner {
 .comment-body :where(pre) {
   @apply overflow-x-auto rounded-lg border border-line bg-surface-muted p-3 font-mono text-[0.8125rem] leading-6;
 }
+/* Code blocks (lib/comment-highlight): language label, copy button, Shiki colours like the articles'. */
+.comment-body :where(.comment-code) {
+  @apply my-[0.6em] overflow-hidden rounded-lg border border-line bg-surface-muted;
+}
+.comment-body :where(.comment-code-bar) {
+  @apply flex h-8 items-center justify-between gap-3 border-b border-line pl-3 pr-1;
+}
+.comment-body :where(.comment-code-lang) {
+  @apply font-mono text-xs text-fg-subtle;
+}
+.comment-body :where(.comment-code-copy) {
+  @apply inline-flex h-6 items-center rounded px-2 font-sans text-xs font-medium text-fg-muted transition-colors hover:bg-surface-sunken hover:text-fg;
+}
+.comment-body :where(.comment-code pre) {
+  @apply m-0 rounded-none border-0;
+  background-color: transparent !important;
+  tab-size: 2;
+}
+/* Domain after a [text](url) link, so readers see where it leads. */
+.comment-body :where(.comment-link-host) {
+  @apply text-xs text-fg-subtle;
+}
 .comment-body :where(hr) {
   @apply my-4 border-line;
 }

@@ -1,6 +1,5 @@
 import { listComments } from "@/lib/comments";
 import { getSiteConfig } from "@/lib/site-config";
-import { turnstileKeys } from "@/lib/turnstile";
 import { Discussion } from "./discussion/Discussion";
 
 /**
@@ -12,5 +11,5 @@ export async function Comments({ postId, path }: { postId: string; path: string 
   const initial = await listComments(postId, null).catch(() => null);
   if (!initial?.state.enabled) return null;
   const { config } = await getSiteConfig();
-  return <Discussion postId={postId} path={path} initial={initial} siteKey={(await turnstileKeys()).siteKey} timeZone={config.general.timezone} />;
+  return <Discussion postId={postId} path={path} initial={initial} timeZone={config.general.timezone} />;
 }

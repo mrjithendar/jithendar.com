@@ -10,7 +10,8 @@ separate Discourse instance. Code: `src/lib/comments.ts` (service), `src/lib/com
 
 - Signed-out visitors see approved comments and a **Sign in to comment** button that returns them to
   `#comments` (or `#comment-<id>` for "Sign in to reply").
-- Signed-in readers write in Markdown with **Write / Preview** (the preview uses the same server renderer),
+- Signed-in readers write in Markdown with **Write / Preview** (the preview uses the same server renderer) and a
+  formatting toolbar (bold, italic, link, inline code, quote, list, code block with a language; Ctrl/⌘ B, I, K, E),
   reply, like (one per person; not their own), copy a permalink, report (spam, abuse, off-topic, other + note),
   and edit or delete their own comments. Name and avatar are shown; never email, user id or profile fields.
 - Replies nest two levels deep; deeper replies are listed at the second level with "↪ Replying to …".
@@ -23,7 +24,7 @@ separate Discourse instance. Code: `src/lib/comments.ts` (service), `src/lib/com
 | Rule | Where |
 |---|---|
 | Session required for every write; user id only from the session | `src/app/_actions/comments.ts` |
-| Turnstile on new comments and replies (skipped for staff, and for readers who passed it within `humanCheckHours`) | `submitComment`, `lib/human-check.ts` |
+| No Turnstile on comments: commenting needs a session, and Turnstile already guards email sign-in and sign-up (Google/GitHub sign-in is checked by the provider) | `submitComment` |
 | 2–5000 characters; 5 comments / 10 min per account; same text twice in 10 min refused; resubmitted form (client key) returns the first comment | `submitComment` |
 | Reply parent must be an approved comment **on the same post** (also a composite foreign key in the database) | `submitComment`, migration 0008 |
 | Edit: own comment, discussion open, within the edit window (admins: no limit); 20 edits / 10 min | `editComment` |
@@ -32,6 +33,7 @@ separate Discourse instance. Code: `src/lib/comments.ts` (service), `src/lib/com
 | Reports: one per user per comment, 10 / hour, note ≤ 500 chars | `reportComment` |
 | Public responses: approved comments only (plus the viewer's own pending ones, marked); hidden, removed, pending and deleted comments never appear, except as a placeholder with no author/text when they have visible replies | `buildPage` |
 | Rendering: Markdown subset; raw HTML shown as text; only http(s)/mailto links with `rel="nofollow ugc noopener noreferrer"`; no images, no attributes | `renderCommentMarkdown` |
+| Rich bits added after sanitising, from text only: the domain after `[text](url)` links; code blocks with a copy button, and Shiki highlighting for a fixed language set (```bash, ```yaml…) | `renderCommentMarkdown`, `lib/comment-highlight.ts` |
 
 ## Moderation (Admin → Comments; authors and admins)
 
@@ -59,7 +61,7 @@ new columns and tables).
 
 ## Tests
 
-`tests/discussions.test.ts`: authorization, approval rules, Turnstile and length checks, duplicate and
+`tests/discussions.test.ts`: authorization, approval rules, length checks, duplicate and
 idempotent submission, rate limit, cross-post replies (service and database), locked/closed discussions,
 public visibility and placeholders, depth limit, paging/sorting/permalink, XSS, ownership and edit window,
 likes, reports, moderation permissions and audit, and the API route (no emails, `private, no-store`).

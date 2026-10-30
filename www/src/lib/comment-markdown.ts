@@ -1,4 +1,5 @@
 import type { Element, ElementContent, Root as HastRoot, RootContent } from "hast";
+import { toString as hastToString } from "hast-util-to-string";
 import type { Root as MdastRoot } from "mdast";
 import rehypeStringify from "rehype-stringify";
 import remarkGfm from "remark-gfm";
@@ -6,6 +7,7 @@ import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import { unified } from "unified";
 import { visit } from "unist-util-visit";
+import { codeLanguage, highlightComment } from "./comment-highlight";
 
 /**
  * Comment Markdown → safe HTML. Readers get the basics (paragraphs, emphasis, links, lists, quotes, inline code
@@ -13,7 +15,10 @@ import { visit } from "unist-util-visit";
  * - raw HTML in the source is shown as literal text, never parsed;
  * - only the elements in ALLOWED survive, with no attributes except a vetted `href` (http, https, mailto)
  *   and an ordered list's `start`; images become their alt text; headings become paragraphs;
- * - every link gets rel="nofollow ugc noopener noreferrer".
+ * - every link gets rel="nofollow ugc noopener noreferrer", and links whose text hides the destination are
+ *   followed by its domain (e.g. "(github.com)") so readers see where they lead;
+ * - fenced code blocks with a known language (```bash, ```yaml…) are highlighted with Shiki after sanitising,
+ *   from the code's text only (lib/comment-highlight), and every code block gets a copy button.
  * The output of this function is the only comment HTML ever sent to the browser.
  */
 const ALLOWED = new Set(["p", "br", "strong", "em", "del", "code", "pre", "blockquote", "ul", "ol", "li", "a", "hr", "table", "thead", "tbody", "tr", "th", "td"]);
@@ -53,11 +58,31 @@ function sanitizeElement(node: Element): ElementContent[] {
     if (!SAFE_HREF.test(href)) return children;
     properties.href = href;
     properties.rel = ["nofollow", "ugc", "noopener", "noreferrer"];
+    const link: Element = { type: "element", tagName: "a", properties, children };
+    const host = linkHost(href);
+    // Bare URLs already show their domain; [text](url) links get it appended.
+    if (!host || hastToString(link).toLowerCase().includes(host)) return [link];
+    return [link, { type: "text", value: " " }, { type: "element", tagName: "span", properties: { className: ["comment-link-host"] }, children: [{ type: "text", value: `(${host})` }] }];
+  }
+  // Fenced code keeps only a vetted language name, for highlighting below.
+  if (node.tagName === "code") {
+    const lang = codeLanguage(node.properties?.className);
+    if (lang) properties.className = [`language-${lang}`];
   }
   if (node.tagName === "ol" && typeof node.properties?.start === "number" && node.properties.start > 1) {
     properties.start = Math.min(node.properties.start, 1_000_000);
   }
   return [{ type: "element", tagName: node.tagName, properties, children }];
+}
+
+/** "github.com" for https://www.github.com/x; null for mailto: and unparsable URLs. */
+function linkHost(href: string): string | null {
+  if (!/^https?:/i.test(href)) return null;
+  try {
+    return new URL(href).hostname.replace(/^www\./, "").toLowerCase() || null;
+  } catch {
+    return null;
+  }
 }
 
 function sanitizeTree() {
@@ -76,6 +101,8 @@ const processor = unified()
   // No allowDangerousHtml: raw HTML is already text; nothing else can produce it.
   .use(remarkRehype)
   .use(sanitizeTree)
+  // After sanitising: generates its own markup from code text, never from the source's markup.
+  .use(highlightComment)
   .use(rehypeStringify);
 
 export function renderCommentMarkdown(source: string): string {

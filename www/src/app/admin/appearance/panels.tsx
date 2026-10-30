@@ -46,7 +46,6 @@ export function GeneralPanel() {
         <Toggle path="general.features.comments" label="Comments" hint="Signed-in readers can comment and reply under posts. Each post can also lock or close its discussion (Admin → Comments → Discussions)." />
         <Toggle path="general.discussion.requireApproval" label="New reader comments need approval" hint="When on, readers' comments appear after a moderator approves them. Authors' and admins' comments never wait." />
         <NumberField path="general.discussion.editWindowMinutes" label="Readers can edit their comments for" min={0} max={43200} step={30} unit=" min" hint="0 means no time limit. Comments can always be deleted by their author." />
-        <NumberField path="general.discussion.humanCheckHours" label="Remember a passed human check for" min={0} max={720} step={1} unit=" h" hint="Signed-in readers who passed Cloudflare Turnstile (at sign-in or on a comment) are not asked again for this long. 0 asks on every comment. Authors and admins are never asked." />
         <Toggle path="general.features.registration" label="Reader sign-up" hint="New accounts by email or Google/GitHub. Existing users can always sign in." />
         <Toggle path="general.features.contactForm" label="Contact form" hint="Shown on /contact; messages arrive in Admin → Messages." />
       </Panel>
@@ -455,7 +454,7 @@ export function SeoPanel({ ctx }: { ctx: Ctx }) {
         </p>
       </Panel>
       <Panel title="Other services (status)">
-        <StatusRow ok={s.turnstile} label="Cloudflare Turnstile" detail={s.turnstile ? "Configured (sign-in, contact and comments)." : "Not configured: email sign-in and forms are unavailable."} />
+        <StatusRow ok={s.turnstile} label="Cloudflare Turnstile" detail={s.turnstile ? "Configured (sign-in and contact form)." : "Not configured: email sign-in and forms are unavailable."} />
         <StatusRow ok={s.mail} label="Email" detail={s.mail ? "Configured." : "Not configured: password resets are not sent."} />
         <StatusRow ok={s.oauth.length > 0} label="Social sign-in" detail={s.oauth.length ? `Enabled: ${s.oauth.join(", ")}.` : "No provider configured (docs/AUTH.md)."} />
         <StatusRow ok={s.gemini} label="Gemini image generation" detail={s.gemini ? "Configured." : "Not configured."} />

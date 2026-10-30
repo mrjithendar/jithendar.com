@@ -4,7 +4,7 @@ import { getDb, schema } from "@/db";
 import type { FeaturedImage } from "@/db/schema";
 import { rowsOf } from "@/db/rows";
 import { audit } from "./audit";
-import { ASPECT_RATIOS, generateImage, ImageGenError, type AspectRatio, type GeminiImageConfig } from "./gemini";
+import { allowedImageSizes, ASPECT_RATIOS, availableQualities, generateImage, ImageGenError, type AspectRatio, type GeminiImageConfig, type ImageSize, type Quality } from "./gemini";
 import { resolveGeminiImageConfig } from "./integrations";
 import { log } from "./log";
 import { inspectImage, mediaSrc, recordImage, sanitizeFilename } from "./media";
@@ -24,6 +24,7 @@ import { copyObject, deleteObject, getObject, headObject, mediaObjectKey, putObj
 export const RESULT_TTL_MS = 60 * 60 * 1000;
 const PROMPT_MIN = 10;
 const PROMPT_MAX = 2_000;
+const SLOW_TIMEOUT_MAX_MS = 280_000;
 
 export type GenerationLimits = { perUserHourly: number; dailyTotal: number; perUserConcurrent: number };
 
@@ -36,11 +37,22 @@ export function generationLimits(env: Record<string, string | undefined> = proce
   };
 }
 
-/** For the editor: whether to show the button (configured + storage ready). Never exposes keys. */
-export async function imageGenerationStatus(): Promise<{ enabled: boolean; reason?: string; aspectRatios: readonly AspectRatio[] }> {
-  if (!(await resolveGeminiImageConfig())) return { enabled: false, reason: "Image generation is not configured (Admin → Integrations).", aspectRatios: ASPECT_RATIOS };
+export type GenerationStatus = {
+  enabled: boolean;
+  reason?: string;
+  aspectRatios: readonly AspectRatio[];
+  /** Choices for the dialog; "fast" first. Model names are shown so authors know what they get. */
+  qualities?: { id: Quality; model: string }[];
+  sizes?: ImageSize[];
+  defaultSize?: ImageSize;
+};
+
+/** For the editor: whether to show the button (configured + storage ready) and its choices. Never exposes keys. */
+export async function imageGenerationStatus(): Promise<GenerationStatus> {
+  const config = await resolveGeminiImageConfig();
+  if (!config) return { enabled: false, reason: "Image generation is not configured (Admin → Integrations).", aspectRatios: ASPECT_RATIOS };
   if (!(await storageReady())) return { enabled: false, reason: "Configure media storage (R2) first.", aspectRatios: ASPECT_RATIOS };
-  return { enabled: true, aspectRatios: ASPECT_RATIOS };
+  return { enabled: true, aspectRatios: ASPECT_RATIOS, qualities: availableQualities(config), sizes: allowedImageSizes(config), defaultSize: config.imageSize };
 }
 
 const staff = (a: Actor) => a.role === "admin" || a.role === "author";
@@ -55,7 +67,7 @@ export type GenerationResult = { id: string; previewUrl: string; width: number; 
 
 export async function startGeneration(
   actor: Actor,
-  input: { prompt?: unknown; aspectRatio?: unknown },
+  input: { prompt?: unknown; aspectRatio?: unknown; quality?: unknown; imageSize?: unknown },
   opts: { signal?: AbortSignal; config?: GeminiImageConfig | null; fetchImpl?: typeof fetch; limits?: GenerationLimits; now?: number } = {},
 ): Promise<GenerationResult> {
   if (!staff(actor)) throw new PostError("Not allowed.", 403);
@@ -66,13 +78,24 @@ export async function startGeneration(
   if (prompt.length < PROMPT_MIN || prompt.length > PROMPT_MAX) throw new PostError(`The prompt must be ${PROMPT_MIN}–${PROMPT_MAX} characters.`, 400);
   const aspectRatio = ASPECT_RATIOS.find((r) => r === input.aspectRatio);
   if (!aspectRatio) throw new PostError(`Choose an aspect ratio: ${ASPECT_RATIOS.join(", ")}.`, 400);
+  // Quality and size are optional (the configured defaults); anything else must be on offer.
+  const qualities = availableQualities(config);
+  const quality = input.quality === undefined || input.quality === null || input.quality === "" ? qualities[0]! : qualities.find((q) => q.id === input.quality);
+  if (!quality) throw new PostError(`Choose a quality: ${qualities.map((q) => q.id).join(", ")}.`, 400);
+  const sizes = allowedImageSizes(config);
+  const imageSize = input.imageSize === undefined || input.imageSize === null || input.imageSize === "" ? config.imageSize : sizes.find((s) => s === input.imageSize);
+  if (!imageSize) throw new PostError(`Choose an image size: ${sizes.join(", ")}.`, 400);
+  const model = quality.model;
+  // Pro and 4K take longer: give them twice the timeout (within the route's 300 s maxDuration).
+  const timeoutMs = quality.id === "pro" || imageSize === "4K" ? Math.min(config.timeoutMs * 2, SLOW_TIMEOUT_MAX_MS) : config.timeoutMs;
 
   const now = opts.now ?? Date.now();
   await expireGenerations(now).catch((e) => log.warn("expiring generations failed", { err: e }));
   const limits = opts.limits ?? generationLimits(await (await import("./runtime-settings")).effectiveEnv());
   const hourAgo = new Date(now - 3_600_000).toISOString();
   const dayAgo = new Date(now - 86_400_000).toISOString();
-  const runningSince = new Date(now - config.timeoutMs - 30_000).toISOString();
+  // Any request still within the longest timeout (a slow one) counts as running.
+  const runningSince = new Date(now - Math.min(config.timeoutMs * 2, SLOW_TIMEOUT_MAX_MS) - 30_000).toISOString();
   const counted = sql`status not in ('rejected')`;
   if ((await count(sql`user_id = ${actor.id} and created_at > ${hourAgo} and ${counted}`)) >= limits.perUserHourly)
     throw new PostError(`You have reached the limit of ${limits.perUserHourly} generated images per hour. Try again later.`, 429);
@@ -86,9 +109,9 @@ export async function startGeneration(
   await db.insert(schema.imageGeneration).values({
     id,
     userId: actor.id,
-    model: config.model,
+    model,
     aspectRatio,
-    imageSize: config.imageSize,
+    imageSize,
     promptSha256: createHash("sha256").update(prompt).digest("hex"),
     promptChars: prompt.length,
     status: "running",
@@ -107,13 +130,13 @@ export async function startGeneration(
   let bytes: Buffer;
   let declared: string;
   try {
-    const out = await generateImage(config, { prompt, aspectRatio, signal: opts.signal }, opts.fetchImpl);
+    const out = await generateImage({ ...config, timeoutMs }, { prompt, aspectRatio, model, imageSize, signal: opts.signal }, opts.fetchImpl);
     bytes = out.bytes;
     declared = out.mimeType;
   } catch (e) {
     const err = e instanceof ImageGenError ? e : new ImageGenError("unavailable", 503, (e as Error).message);
     await fail(err.code, err.code === "cancelled" ? "cancelled" : "failed");
-    log.warn("image generation failed", { generationId: id, model: config.model, code: err.code, detail: err.detail });
+    log.warn("image generation failed", { generationId: id, model, imageSize, code: err.code, detail: err.detail });
     throw new PostError(err.message, err.status);
   }
 
@@ -140,13 +163,13 @@ export async function startGeneration(
       completedAt: new Date(),
     })
     .where(eq(schema.imageGeneration.id, id));
-  log.info("image generated", { generationId: id, model: config.model, aspectRatio, latencyMs, bytes: bytes.length });
+  log.info("image generated", { generationId: id, model, aspectRatio, imageSize, latencyMs, bytes: bytes.length });
   return {
     id,
     previewUrl: `/api/admin/images/generations/${id}`,
     width: check.width,
     height: check.height,
-    model: config.model,
+    model,
     expiresAt: new Date(Date.now() + RESULT_TTL_MS).toISOString(),
   };
 }

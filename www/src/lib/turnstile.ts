@@ -21,7 +21,7 @@ export async function turnstileKeys(): Promise<{ siteKey: string | undefined; se
   return { siteKey: turnstileSiteKey(env), secret: turnstileSecret(env), production: Boolean(env.TURNSTILE_SITE_KEY) };
 }
 
-/** Server-side Turnstile check for our own forms (contact, comments). Fails closed. */
+/** Server-side Turnstile check for our own forms (contact). Fails closed. */
 export async function verifyTurnstile(token: string | null | undefined, ip?: string | null): Promise<boolean> {
   const { secret } = await turnstileKeys();
   if (!secret || !token) return false;

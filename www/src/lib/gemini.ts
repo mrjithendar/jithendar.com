@@ -7,17 +7,49 @@
  *   { model, input, response_format: { type: "image", mime_type, aspect_ratio, image_size }, store: false }
  *   → { id, status, steps: [{ type: "model_output", content: [{ type: "image", data, mime_type }, …] }], errors? }
  *
- * The model is configuration (GEMINI_IMAGE_MODEL); nothing here assumes a particular model name.
+ * The models are configuration (GEMINI_IMAGE_MODEL for "Fast", optional GEMINI_IMAGE_PRO_MODEL for "Pro");
+ * nothing here assumes a particular model name.
  * The API key never leaves the server.
  */
 
 /** A subset of the API's aspect_ratio enum that suits article covers and inline images. */
 export const ASPECT_RATIOS = ["16:9", "4:3", "3:2", "1:1", "21:9"] as const;
 export type AspectRatio = (typeof ASPECT_RATIOS)[number];
+/** Smallest to largest: larger sizes cost more and take longer. */
 export const IMAGE_SIZES = ["512", "1K", "2K", "4K"] as const;
+export type ImageSize = (typeof IMAGE_SIZES)[number];
+/** "fast" uses GEMINI_IMAGE_MODEL; "pro" uses GEMINI_IMAGE_PRO_MODEL (offered only when set). */
+export const QUALITIES = ["fast", "pro"] as const;
+export type Quality = (typeof QUALITIES)[number];
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
 
-export type GeminiImageConfig = { apiKey: string; model: string; imageSize: (typeof IMAGE_SIZES)[number]; timeoutMs: number; endpoint: string };
+export type GeminiImageConfig = {
+  apiKey: string;
+  model: string;
+  /** Higher-quality model offered as "Pro" in the editor; none when unset. */
+  proModel?: string;
+  /** Default size in the editor. */
+  imageSize: ImageSize;
+  /** Largest size authors may choose (cost cap); defaults to the larger of imageSize and 2K. */
+  maxImageSize?: ImageSize;
+  timeoutMs: number;
+  endpoint: string;
+};
+
+const sizeRank = (s: ImageSize) => IMAGE_SIZES.indexOf(s);
+const asSize = (v: string | undefined): ImageSize | undefined => IMAGE_SIZES.find((s) => s === v?.trim());
+
+/** Sizes authors may choose, smallest first: up to maxImageSize, always including the default size. */
+export function allowedImageSizes(config: GeminiImageConfig): ImageSize[] {
+  const max = config.maxImageSize ?? (sizeRank(config.imageSize) > sizeRank("2K") ? config.imageSize : "2K");
+  const cap = Math.max(sizeRank(max), sizeRank(config.imageSize));
+  return IMAGE_SIZES.filter((s) => sizeRank(s) <= cap);
+}
+
+/** Qualities authors may choose, with the model each one uses. */
+export function availableQualities(config: GeminiImageConfig): { id: Quality; model: string }[] {
+  return [{ id: "fast", model: config.model }, ...(config.proModel && config.proModel !== config.model ? [{ id: "pro" as const, model: config.proModel }] : [])];
+}
 
 /**
  * From environment variables only. Code paths that generate images use resolveGeminiImageConfig() (lib/integrations),
@@ -27,11 +59,14 @@ export function geminiImageConfig(env: Record<string, string | undefined> = proc
   const apiKey = env.GEMINI_API_KEY?.trim();
   const model = env.GEMINI_IMAGE_MODEL?.trim();
   if (!apiKey || !model) return null;
-  const size = (env.GEMINI_IMAGE_SIZE?.trim() || "1K") as GeminiImageConfig["imageSize"];
+  const proModel = env.GEMINI_IMAGE_PRO_MODEL?.trim();
+  const maxImageSize = asSize(env.GEMINI_IMAGE_MAX_SIZE);
   return {
     apiKey,
     model,
-    imageSize: IMAGE_SIZES.includes(size) ? size : "1K",
+    ...(proModel ? { proModel } : {}),
+    imageSize: asSize(env.GEMINI_IMAGE_SIZE) ?? "1K",
+    ...(maxImageSize ? { maxImageSize } : {}),
     timeoutMs: Math.min(Math.max(Number(env.GEMINI_IMAGE_TIMEOUT_MS) || 90_000, 5_000), 300_000),
     endpoint: env.GEMINI_API_ENDPOINT?.trim() || ENDPOINT,
   };
@@ -54,7 +89,7 @@ const MESSAGES: Record<ImageGenErrorCode, string> = {
   quota: "The image service's quota or rate limit has been reached. Try again later.",
   timeout: "Image generation took too long and was stopped. Try again, or simplify the prompt.",
   cancelled: "Generation cancelled.",
-  unsupported: "The image service rejected these options for the configured model. Try another aspect ratio.",
+  unsupported: "The image service rejected these options for this model. Try another aspect ratio, size or quality.",
   auth: "The Gemini API key was rejected. An admin must check the key in Admin → Integrations.",
   model: "The configured image model is not available. An admin must check the model in Admin → Integrations.",
   unavailable: "The image service is unavailable right now. Try again in a minute.",
@@ -103,12 +138,14 @@ function fromHttp(status: number, body: string): ImageGenError {
 export type GeneratedImage = { bytes: Buffer; mimeType: string; interactionId?: string };
 
 /**
- * Generate one image. `signal` aborts the upstream request (the author pressed Cancel or closed the
- * dialog); the configured timeout aborts it too. Throws ImageGenError for every failure.
+ * Generate one image. `model` and `imageSize` default to the configured ones (the caller validates
+ * overrides against availableQualities/allowedImageSizes). `signal` aborts the upstream request (the
+ * author pressed Cancel or closed the dialog); the configured timeout aborts it too. Throws
+ * ImageGenError for every failure.
  */
 export async function generateImage(
   config: GeminiImageConfig,
-  input: { prompt: string; aspectRatio: AspectRatio; signal?: AbortSignal },
+  input: { prompt: string; aspectRatio: AspectRatio; model?: string; imageSize?: ImageSize; signal?: AbortSignal },
   fetchImpl: typeof fetch = fetch,
 ): Promise<GeneratedImage> {
   const timeout = AbortSignal.timeout(config.timeoutMs);
@@ -119,9 +156,9 @@ export async function generateImage(
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": config.apiKey },
       body: JSON.stringify({
-        model: config.model,
+        model: input.model ?? config.model,
         input: input.prompt,
-        response_format: { type: "image", mime_type: "image/jpeg", aspect_ratio: input.aspectRatio, image_size: config.imageSize },
+        response_format: { type: "image", mime_type: "image/jpeg", aspect_ratio: input.aspectRatio, image_size: input.imageSize ?? config.imageSize },
         // Do not keep the prompt or result on Google's side for later retrieval.
         store: false,
       }),
