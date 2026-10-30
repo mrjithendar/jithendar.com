@@ -28,18 +28,30 @@ export async function PageView({ page, notice, after }: { page: Page; notice?: R
     <>
       <JsonLd data={breadcrumbLd(crumbs)} />
       {notice}
-      <PageHeader
-        title={fm.title}
-        description={fm.description}
-        eyebrow="Publication info"
-        crumbs={crumbs}
-      >
-        {fm.updatedAt && (
-          <p className="text-sm text-fg-subtle">
-            Last updated <time dateTime={fm.updatedAt}>{formatDate(fm.updatedAt)}</time>
-          </p>
-        )}
-      </PageHeader>
+      {page.slug === "about" ? (
+        // Same description-only band as the listings: title, breadcrumbs, label and date dropped on purpose.
+        <div className="border-b border-line bg-surface-muted">
+          <Container className="py-8 sm:py-10">
+            <h1 className="sr-only">{fm.title}</h1>
+            {fm.description && (
+              <p className="max-w-3xl text-[1.0625rem] leading-relaxed text-fg-muted text-pretty sm:text-lg">{fm.description}</p>
+            )}
+          </Container>
+        </div>
+      ) : (
+        <PageHeader
+          title={fm.title}
+          description={fm.description}
+          eyebrow="Publication info"
+          crumbs={crumbs}
+        >
+          {fm.updatedAt && (
+            <p className="text-sm text-fg-subtle">
+              Last updated <time dateTime={fm.updatedAt}>{formatDate(fm.updatedAt)}</time>
+            </p>
+          )}
+        </PageHeader>
+      )}
       <Container className="pt-8 sm:pt-12">
         {fm.featuredImage && (
           <figure className="mb-8 overflow-hidden rounded-xl border border-line bg-surface-sunken sm:mb-12">
