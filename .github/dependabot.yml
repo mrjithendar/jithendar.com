@@ -41,6 +41,12 @@ updates:
           - react-dom
           - "@types/react"
           - "@types/react-dom"
+      # @vercel/otel pins the OpenTelemetry SDK, and the SDK pins @opentelemetry/api to a narrow
+      # range; moving them separately breaks `npm ci` with ERESOLVE (api 1.10.0, 2026-10-30).
+      opentelemetry:
+        patterns:
+          - "@opentelemetry/*"
+          - "@vercel/otel"
       npm-minor-patch:
         update-types:
           - minor
@@ -49,6 +55,10 @@ updates:
       # Tracks the Node major in www/.nvmrc and the Dockerfiles; bump those together by hand.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+      # SDK 2.x (required by @vercel/otel 2.x) accepts api <1.10. Remove once @vercel/otel supports
+      # the 3.x SDK, then bump @vercel/otel, the SDK packages and the api together.
+      - dependency-name: "@opentelemetry/api"
+        versions: [">=1.10.0"]
 
   # Base images in www/Dockerfile and www/Dockerfile.ci
   - package-ecosystem: docker
