@@ -26,7 +26,7 @@ function loadScript(): Promise<void> {
 }
 
 /**
- * Cloudflare Turnstile human check. Loaded only on pages with forms (login, contact, comments),
+ * Cloudflare Turnstile human check. Loaded only on pages with forms (login, contact),
  * never on article reading pages. Calls onToken(null) when the token expires.
  */
 export function Turnstile({ siteKey, onToken, resetKey = 0 }: { siteKey: string; onToken: (token: string | null) => void; resetKey?: number }) {

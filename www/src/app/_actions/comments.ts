@@ -1,6 +1,5 @@
 "use server";
 
-import { headers } from "next/headers";
 import {
   deleteOwnComment,
   editComment,
@@ -12,7 +11,6 @@ import {
   submitComment,
   type CommentView,
 } from "@/lib/comments";
-import { needsHumanCheck } from "@/lib/human-check";
 import { PostError } from "@/lib/posts";
 import { hit } from "@/lib/rate-limit";
 import { getSessionUser, type SessionUser } from "@/lib/session";
@@ -24,10 +22,6 @@ import { getSessionUser, type SessionUser } from "@/lib/session";
 export type CommentResult<T = object> = ({ ok: true; message?: string } & T) | { ok: false; error: string; signedOut?: true };
 
 const SIGNED_OUT = { ok: false as const, error: "Your session has ended. Sign in again to continue.", signedOut: true as const };
-
-async function clientIp() {
-  return (await headers()).get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-}
 
 async function signedIn<T extends object>(fn: (user: SessionUser) => Promise<T & { message?: string }>): Promise<CommentResult<T>> {
   const user = await getSessionUser();
@@ -48,14 +42,13 @@ async function threadOf(postId: string, id: string, user: SessionUser): Promise<
   return page.threads[0] ?? null;
 }
 
-export async function postCommentAction(input: { postId: string; parentId?: string | null; body: string; clientKey: string; token: string | null }) {
+export async function postCommentAction(input: { postId: string; parentId?: string | null; body: string; clientKey: string }) {
   return signedIn(async (user) => {
-    const r = await submitComment(user, { postId: input.postId, parentId: input.parentId ?? null, body: input.body, clientKey: input.clientKey, turnstileToken: input.token, ip: await clientIp() });
+    const r = await submitComment(user, { postId: input.postId, parentId: input.parentId ?? null, body: input.body, clientKey: input.clientKey });
     return {
       id: r.id,
       status: r.status,
       thread: await threadOf(input.postId, r.id, user),
-      needsVerification: await needsHumanCheck(user),
       message: r.status === "approved" ? "Your comment is published." : "Thanks! Your comment will appear after a moderator approves it.",
     };
   });

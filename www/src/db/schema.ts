@@ -47,7 +47,7 @@ export const user = pgTable("user", {
   banned: boolean("banned").default(false),
   banReason: text("ban_reason"),
   banExpires: ts("ban_expires"),
-  /** Last passed Turnstile check (sign-in or comment); comments skip the check for a while after it. */
+  /** Unused since comments dropped Turnstile (kept to avoid a destructive migration). */
   humanVerifiedAt: ts("human_verified_at"),
 });
 

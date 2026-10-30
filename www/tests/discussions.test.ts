@@ -14,15 +14,12 @@ vi.mock("@/lib/session", () => ({ getSessionUser: async () => currentUser }));
 
 const settings = {
   features: { comments: true, registration: true, contactForm: true },
-  discussion: { requireApproval: true, editWindowMinutes: 1440, humanCheckHours: 0 },
+  discussion: { requireApproval: true, editWindowMinutes: 1440 },
 };
 vi.mock("@/lib/settings", () => ({ getSettings: async () => settings }));
 
-// Turnstile: every token passes except "bad".
-const turnstile = vi.fn(async (_url: unknown, init?: RequestInit) => {
-  const token = new URLSearchParams(String(init?.body)).get("response");
-  return new Response(JSON.stringify({ success: token !== "bad" }), { headers: { "content-type": "application/json" } });
-});
+// Commenting needs a session, not Turnstile: any outbound request (e.g. siteverify) is a bug.
+const outbound = vi.fn(async () => new Response("unexpected request", { status: 500 }));
 
 type Role = "admin" | "author" | "user";
 const people: Record<string, { id: string; role: Role; email: string }> = {
@@ -41,9 +38,9 @@ let keyN = 0;
 const key = () => `client-key-${++keyN}`;
 
 beforeEach(async () => {
-  vi.stubGlobal("fetch", turnstile);
+  vi.stubGlobal("fetch", outbound);
   settings.features.comments = true;
-  settings.discussion = { requireApproval: true, editWindowMinutes: 1440, humanCheckHours: 0 };
+  settings.discussion = { requireApproval: true, editWindowMinutes: 1440 };
   currentUser = null;
   db = await freshDb();
   for (const [who, p] of Object.entries(people)) await db.insert(schema.user).values({ id: p.id, name: `${who[0]!.toUpperCase()}${who.slice(1)}`, email: p.email, role: p.role });
@@ -70,10 +67,10 @@ async function actions() {
 }
 
 /** Post as a user through the server action (session, Turnstile and all checks). */
-async function postAs(who: keyof typeof people, body: string, opts: { postId?: string; parentId?: string | null; clientKey?: string; token?: string } = {}) {
+async function postAs(who: keyof typeof people, body: string, opts: { postId?: string; parentId?: string | null; clientKey?: string } = {}) {
   currentUser = as(who);
   const { postCommentAction } = await actions();
-  return postCommentAction({ postId: opts.postId ?? postA, parentId: opts.parentId ?? null, body, clientKey: opts.clientKey ?? key(), token: opts.token ?? "ok" });
+  return postCommentAction({ postId: opts.postId ?? postA, parentId: opts.parentId ?? null, body, clientKey: opts.clientKey ?? key() });
 }
 
 async function approved(who: keyof typeof people, body: string, parentId: string | null = null, postId = postA) {
@@ -95,7 +92,7 @@ describe("posting", () => {
   it("requires a session; readers' comments wait for approval, staff comments do not", async () => {
     currentUser = null;
     const { postCommentAction } = await actions();
-    expect(await postCommentAction({ postId: postA, body: "Hello there", clientKey: key(), token: "ok" })).toMatchObject({ ok: false, signedOut: true });
+    expect(await postCommentAction({ postId: postA, body: "Hello there", clientKey: key() })).toMatchObject({ ok: false, signedOut: true });
 
     const reader = await postAs("alice", "A first comment");
     expect(reader).toMatchObject({ ok: true, status: "pending" });
@@ -106,28 +103,17 @@ describe("posting", () => {
     expect(await postAs("bob", "Published at once")).toMatchObject({ ok: true, status: "approved" });
   });
 
-  it("checks Turnstile and length", async () => {
-    expect(await postAs("alice", "Hello there", { token: "bad" })).toMatchObject({ ok: false, error: expect.stringMatching(/verification/) });
+  it("needs no human verification (sign-in already did), and checks length", async () => {
+    expect(await postAs("alice", "Hello there")).toMatchObject({ ok: true });
+    expect(outbound).not.toHaveBeenCalled();
     expect(await postAs("alice", " x ")).toMatchObject({ ok: false, error: expect.stringMatching(/2–5000/) });
     expect(await postAs("alice", "y".repeat(5001))).toMatchObject({ ok: false, error: expect.stringMatching(/2–5000/) });
-  });
-
-  it("remembers a passed human check for the configured hours; staff are never asked", async () => {
-    settings.discussion.humanCheckHours = 24;
-    expect(await postAs("alice", "First comment, verified", { token: "bad" })).toMatchObject({ ok: false, error: expect.stringMatching(/verification/) });
-    expect(await postAs("alice", "First comment, verified")).toMatchObject({ ok: true, needsVerification: false });
-    // Within the window a missing or failing token is not needed.
-    expect(await postAs("alice", "Second comment, no check", { token: "bad" })).toMatchObject({ ok: true });
-    // Once the window has passed, Turnstile is required again.
-    await db.update(schema.user).set({ humanVerifiedAt: new Date(Date.now() - 25 * 3_600_000) }).where(eq(schema.user.id, "alice"));
-    expect(await postAs("alice", "Third comment, stale check", { token: "bad" })).toMatchObject({ ok: false, error: expect.stringMatching(/verification/) });
-    expect(await postAs("author", "Staff comment without a token", { token: "bad" })).toMatchObject({ ok: true });
   });
 
   it("ignores a resubmitted form (same client key) and refuses the same text twice", async () => {
     const k = key();
     const first = await postAs("alice", "Only once please", { clientKey: k });
-    const again = await postAs("alice", "Only once please", { clientKey: k, token: "bad" });
+    const again = await postAs("alice", "Only once please", { clientKey: k });
     expect(first.ok && again.ok && again.id === first.id).toBe(true);
     expect(await postAs("alice", "Only once please")).toMatchObject({ ok: false, error: "You already posted this comment." });
     expect(await db.select().from(schema.comment)).toHaveLength(1);

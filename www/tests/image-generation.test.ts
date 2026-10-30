@@ -11,7 +11,7 @@ vi.mock("@/lib/storage", async (importOriginal) => ({ ...(await importOriginal<t
 const session = vi.hoisted(() => ({ user: null as null | { id: string; name: string; email: string; role: string; emailVerified: boolean } }));
 vi.mock("@/lib/session", () => ({ getSessionUser: async () => session.user }));
 
-const { generateImage, geminiImageConfig, ImageGenError } = await import("@/lib/gemini");
+const { allowedImageSizes, availableQualities, generateImage, geminiImageConfig, ImageGenError } = await import("@/lib/gemini");
 const { acceptGeneration, discardGeneration, expireGenerations, startGeneration } = await import("@/lib/image-generation");
 const { createPost, getPostRow } = await import("@/lib/posts");
 const { POST: generateRoute } = await import("@/app/api/admin/images/generate/route");
@@ -45,6 +45,21 @@ describe("Gemini client", () => {
     expect(geminiImageConfig({ GEMINI_API_KEY: "k" })).toBeNull();
     expect(geminiImageConfig({ GEMINI_IMAGE_MODEL: "m" })).toBeNull();
     expect(geminiImageConfig({ GEMINI_API_KEY: "k", GEMINI_IMAGE_MODEL: "m", GEMINI_IMAGE_TIMEOUT_MS: "1" })).toMatchObject({ model: "m", imageSize: "1K", timeoutMs: 5_000 });
+  });
+
+  it("offers Pro only when a separate Pro model is set, and sizes up to the cap", () => {
+    expect(availableQualities(config)).toEqual([{ id: "fast", model: "configured-image-model" }]);
+    expect(availableQualities({ ...config, proModel: "configured-image-model" })).toHaveLength(1);
+    expect(availableQualities({ ...config, proModel: "pro-model" })).toEqual([
+      { id: "fast", model: "configured-image-model" },
+      { id: "pro", model: "pro-model" },
+    ]);
+    expect(allowedImageSizes(config)).toEqual(["512", "1K", "2K"]);
+    expect(allowedImageSizes({ ...config, maxImageSize: "4K" })).toEqual(["512", "1K", "2K", "4K"]);
+    expect(allowedImageSizes({ ...config, maxImageSize: "512" })).toEqual(["512", "1K"]); // never below the default
+    expect(allowedImageSizes({ ...config, imageSize: "4K" })).toEqual(["512", "1K", "2K", "4K"]);
+    expect(geminiImageConfig({ GEMINI_API_KEY: "k", GEMINI_IMAGE_MODEL: "m", GEMINI_IMAGE_PRO_MODEL: "p", GEMINI_IMAGE_MAX_SIZE: "4K" })).toMatchObject({ proModel: "p", maxImageSize: "4K" });
+    expect(geminiImageConfig({ GEMINI_API_KEY: "k", GEMINI_IMAGE_MODEL: "m", GEMINI_IMAGE_MAX_SIZE: "8K" })).not.toHaveProperty("maxImageSize");
   });
 
   it("sends the documented Interactions request with the key in a header and storage disabled", async () => {
@@ -110,6 +125,23 @@ describe("generation workflow", () => {
   it("validates the prompt and aspect ratio", async () => {
     await expect(start(author, fetchReturning(imageReply), { prompt: "short" })).rejects.toMatchObject({ status: 400 });
     await expect(start(author, fetchReturning(imageReply), { aspectRatio: "7:3" })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("uses the chosen quality and size, and refuses ones the site does not offer", async () => {
+    const proConfig = { ...config, proModel: "pro-model", maxImageSize: "4K" as const };
+    const f = fetchReturning(imageReply);
+    const g = await startGeneration(author, { prompt: PROMPT, aspectRatio: "16:9", quality: "pro", imageSize: "4K" }, { config: proConfig, fetchImpl: f, limits });
+    expect(g.model).toBe("pro-model");
+    expect(JSON.parse(String(f.mock.calls[0]![1]!.body))).toMatchObject({ model: "pro-model", response_format: { image_size: "4K" } });
+    const [row] = await db.select().from(schema.imageGeneration).where(eq(schema.imageGeneration.id, g.id));
+    expect(row).toMatchObject({ model: "pro-model", imageSize: "4K" });
+
+    // Without a Pro model or above the cap: refused before anything is sent.
+    const none = fetchReturning(imageReply);
+    await expect(start(other, none, { quality: "pro" })).rejects.toMatchObject({ status: 400 });
+    await expect(start(other, none, { imageSize: "4K" })).rejects.toMatchObject({ status: 400 });
+    await expect(start(other, none, { imageSize: "huge" })).rejects.toMatchObject({ status: 400 });
+    expect(none).not.toHaveBeenCalled();
   });
 
   it("keeps a verified result in temporary storage and records metadata, not the prompt", async () => {

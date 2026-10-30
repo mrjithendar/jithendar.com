@@ -127,12 +127,12 @@ suspicious successful sign-ins (`src/lib/security.ts`). They only point at entri
 Better Auth's rate limits and Turnstile, or by hand (ban, Traefik/Cloudflare deny list). CSV export:
 `/api/admin/audit?…` with the same filters (spreadsheet formula characters are neutralised).
 
-## Remembered human check for comments
+## No human check on comments
 
-A passed Turnstile check (password sign-in, sign-up or a comment) sets `user.human_verified_at`. Comments skip
-Turnstile while that is younger than Admin → Appearance → Features → “Remember a passed human check for”
-(default 24 h, 0 = every comment). Authors and admins are never asked. Rate limits, duplicate detection and
-moderation still apply. Social sign-ins do not pass Turnstile, so those readers are asked on their first comment.
+Comments need a signed-in session; Turnstile guards email sign-in and sign-up, and Google/GitHub sign-in is
+checked by the provider, so comments carry no Turnstile challenge. Rate limits (5 per 10 minutes per account),
+duplicate detection and moderation still apply. The column `user.human_verified_at` (migration 0009) is no
+longer read or written.
 
 ## Profile pictures and links
 

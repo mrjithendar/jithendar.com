@@ -7,9 +7,10 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { Alert, Button, Field, Textarea } from "@/components/ui/form";
 import { REPORT_NOTE_MAX, REPORT_REASONS, reportReasonLabels, type CommentView, type ReportReason } from "@/lib/comment-types";
 import { Composer, type ComposerSubmit } from "./Composer";
+import { copyCodeOnClick } from "./copy-code";
 
 export type ItemHandlers = {
-  reply: (parent: CommentView, body: string, token: string | null, clientKey: string) => ReturnType<ComposerSubmit>;
+  reply: (parent: CommentView, body: string, clientKey: string) => ReturnType<ComposerSubmit>;
   edit: (comment: CommentView, body: string) => ReturnType<ComposerSubmit>;
   remove: (comment: CommentView) => Promise<string | null>;
   like: (comment: CommentView) => void;
@@ -50,7 +51,6 @@ export function CommentItem({
   comment: c,
   level,
   path,
-  siteKey,
   formatTime,
   highlight,
   signInHref,
@@ -60,7 +60,6 @@ export function CommentItem({
   comment: CommentView;
   level: number;
   path: string;
-  siteKey?: string;
   formatTime: (iso: string) => string;
   highlight: string | null;
   signInHref: (anchor: string) => string;
@@ -101,7 +100,7 @@ export function CommentItem({
       <ol className={`mt-4 space-y-5 border-l-2 border-line pl-3 sm:pl-5`} aria-label={`Replies to ${c.author?.name ?? "a removed comment"}`}>
         {c.replies.map((r) => (
           <li key={r.id}>
-            <CommentItem comment={r} level={level + 1} path={path} siteKey={siteKey} formatTime={formatTime} highlight={highlight} signInHref={signInHref} signedIn={signedIn} handlers={handlers} />
+            <CommentItem comment={r} level={level + 1} path={path} formatTime={formatTime} highlight={highlight} signInHref={signInHref} signedIn={signedIn} handlers={handlers} />
           </li>
         ))}
       </ol>
@@ -155,7 +154,6 @@ export function CommentItem({
                 submitLabel="Save changes"
                 pendingLabel="Saving…"
                 initial={editSource}
-                verify={false}
                 autoFocus
                 onCancel={() => setMode("view")}
                 onSubmit={async (body) => {
@@ -167,7 +165,8 @@ export function CommentItem({
             </div>
           ) : (
             // Sanitised on the server (lib/comment-markdown): only basic formatting, safe links, no raw HTML.
-            <div className="comment-body mt-1.5" dangerouslySetInnerHTML={{ __html: c.html }} />
+            // The click handler only serves the code blocks' real <button>s (keyboard works through them).
+            <div className="comment-body mt-1.5" onClick={copyCodeOnClick} dangerouslySetInnerHTML={{ __html: c.html }} />
           )}
 
           {mode !== "edit" && (
@@ -231,12 +230,10 @@ export function CommentItem({
               <Composer
                 label={`Reply to ${author.name}`}
                 submitLabel="Post reply"
-                siteKey={siteKey}
-                verify={Boolean(siteKey)}
                 autoFocus
                 onCancel={() => setMode("view")}
-                onSubmit={async (body, token, key) => {
-                  const r = await handlers.reply(c, body, token, key);
+                onSubmit={async (body, key) => {
+                  const r = await handlers.reply(c, body, key);
                   if (r.ok) setMode("view");
                   return r;
                 }}
