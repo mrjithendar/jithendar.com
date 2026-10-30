@@ -1,7 +1,7 @@
 # Self-hosted GitHub Actions runners
 
 > **Not used by CI since 2026-10-29.** `.github/workflows/ci-jithendar-com.yml` runs on GitHub-hosted runners
-> (`ubuntu-24.04`, `ubuntu-24.04-arm`) and signs in to AWS with a push-only IAM user key (`scripts/setup-ci-ecr-user.sh`; OIDC planned). Builds on
+> (`ubuntu-latest`, `ubuntu-24.04-arm`) and signs in to AWS with a push-only IAM user key (`scripts/setup-ci-ecr-user.sh`; OIDC planned). Builds on
 > the mk4 server competed with the cluster for memory and disk and froze the host twice. Do not install these
 > runners on the server that runs the cluster; remove existing ones with `bash runner/setup.sh remove`.
 > If runners must stay on that host, run `scripts/protect-host.sh` there to cap them.
