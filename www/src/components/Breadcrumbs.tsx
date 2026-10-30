@@ -6,7 +6,8 @@ export function Breadcrumbs({ crumbs }: { crumbs: Crumb[] }) {
     <nav aria-label="Breadcrumb" className="text-sm text-fg-subtle">
       <ol className="flex flex-wrap items-center gap-1.5">
         {crumbs.map((crumb, i) => (
-          <li key={crumb.path} className="flex min-w-0 items-center gap-1.5">
+          // On phones the last crumb of a deep trail is the title shown right below it: not repeated on its own line.
+          <li key={crumb.path} className={`flex min-w-0 items-center gap-1.5 ${i === crumbs.length - 1 && crumbs.length > 2 ? "max-sm:hidden" : ""}`}>
             {i > 0 && (
               <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 shrink-0 text-fg-subtle opacity-70" aria-hidden="true">
                 <path d="m6 4 4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />

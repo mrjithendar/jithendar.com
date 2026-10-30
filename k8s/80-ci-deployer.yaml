@@ -1,0 +1,49 @@
+# GitHub Actions (.github/workflows/ci-jithendar-com.yml) restarts deployment/jithendar-com after pushing a new
+# :latest image. This ServiceAccount may only do that: watch deployments in jithendar and restart jithendar-com.
+# scripts/setup-ci-deployer.sh applies this file and stores a kubeconfig for it as the repository secret KUBECONFIG_MK4.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: github-ci-deployer
+  namespace: jithendar
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: github-ci-deployer
+  namespace: jithendar
+rules:
+# kubectl rollout status
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+# kubectl rollout restart (patches the pod template's restartedAt annotation)
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  resourceNames: ["jithendar-com"]
+  verbs: ["patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: github-ci-deployer
+  namespace: jithendar
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: github-ci-deployer
+subjects:
+- kind: ServiceAccount
+  name: github-ci-deployer
+  namespace: jithendar
+---
+# Long-lived token for the kubeconfig; the token controller fills in data.token. Delete this Secret to revoke it
+# (ROTATE=1 scripts/setup-ci-deployer.sh does that and issues a new one).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-ci-deployer-token
+  namespace: jithendar
+  annotations:
+    kubernetes.io/service-account.name: github-ci-deployer
+type: kubernetes.io/service-account-token

@@ -82,7 +82,7 @@ function Hero({ s }: { s: Of<"hero"> }) {
       <h1 id={`${s.id}-title`} className={`text-display font-bold text-fg text-balance ${s.eyebrow ? "mt-4" : ""}`}>
         {s.heading} {s.highlight && <span className="text-accent-text">{s.highlight}</span>}
       </h1>
-      {s.subtitle && <p className={`mt-5 max-w-2xl text-lg leading-8 text-fg-muted ${center ? "mx-auto" : ""}`}>{s.subtitle}</p>}
+      {s.subtitle && <p className={`mt-5 max-w-2xl text-[1.0625rem] leading-relaxed text-fg-muted text-pretty sm:text-lg ${center ? "mx-auto" : ""}`}>{s.subtitle}</p>}
       {(s.primary.href || s.secondary.href) && (
         <div className={`mt-8 flex flex-col gap-3 sm:flex-row ${center ? "sm:justify-center" : ""}`}>
           <ButtonLink href={s.primary.href} label={s.primary.label} variant="primary" />
@@ -278,7 +278,7 @@ function TextBlock({ s }: { s: Of<"text"> }) {
             {s.heading}
           </h2>
         )}
-        <div className={`space-y-4 text-lg leading-8 text-fg-muted ${s.heading ? "mt-4" : ""}`}>
+        <div className={`space-y-4 text-[1.0625rem] leading-relaxed text-fg-muted sm:text-lg ${s.heading ? "mt-4" : ""}`}>
           {paragraphs.map((p, i) => (
             <p key={i} className="whitespace-pre-line">
               {p}

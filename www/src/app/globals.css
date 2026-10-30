@@ -307,7 +307,8 @@ body:has([data-admin-shell]) .site-header-inner {
 
 /* --- Article typography -------------------------------------------------------------------- */
 
-/* The reading body: 17px on phones, 18px from sm, ~1.75 line height, theme colours from tokens.
+/* The reading body: 17px on phones (~1.65 line height: short lines need less), 18px from sm at the configured
+   line height (~1.75), theme colours from tokens.
    Explicit colours beat the typography plugin's lab() fallbacks in both themes. */
 .article-body {
   --tw-prose-body: var(--fg);
@@ -324,7 +325,7 @@ body:has([data-admin-shell]) .site-header-inner {
   --tw-prose-th-borders: var(--line-strong);
   --tw-prose-td-borders: var(--line);
   font-size: min(1.0625rem, var(--article-size));
-  line-height: max(1.65, calc(var(--article-line-height) - 0.03));
+  line-height: max(1.6, calc(var(--article-line-height) - 0.1));
 }
 @media (min-width: 640px) {
   .article-body {
@@ -414,9 +415,19 @@ body:has([data-admin-shell]) .site-header-inner {
 .prose .table-scroll thead {
   @apply bg-surface-muted;
 }
+/* Cells wrap on every screen. Each column keeps a readable minimum (~22 characters) and long ones stop at
+   ~45, so on a phone a wide table scrolls a little instead of turning every sentence into one endless line. */
 .prose .table-scroll th,
 .prose .table-scroll td {
-  @apply whitespace-nowrap px-4 py-2.5 sm:whitespace-normal;
+  @apply min-w-[11rem] max-w-[24rem] px-4 py-2.5 align-top leading-relaxed;
+}
+/* Short identifier columns (a single word or code name) do not need the minimum. */
+.prose .table-scroll :where(th, td):first-child {
+  @apply min-w-0 max-w-none;
+}
+.prose .table-scroll td :not(pre) > code,
+.prose .table-scroll td > code {
+  @apply whitespace-nowrap;
 }
 .prose table {
   @apply text-[0.875em];

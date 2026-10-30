@@ -1,5 +1,27 @@
 # Progress log — jithendar.com
 
+## Draft articles: RoboShop AI on Amazon EKS — system design + deployment guide (2026-10-30, owner request)
+
+**What changed**
+- New `content/blog/roboshop-ai-eks-system-design.mdx` (analysis) and `content/blog/deploy-roboshop-ai-amazon-eks.mdx` (tutorial), both `status: review` (visible only in `npm run preview`; never published by this change). Written against roboshop-ai commit `692e72d` plus its uncommitted `deploy/eks/` folder, which is the authoritative configuration; the articles link to it instead of copying files.
+- Eight diagrams in `public/images/roboshop-eks/eks-*.svg`, copied from `roboshop-ai/deploy/eks/diagrams/svg/` (generated there by `build_diagrams.py`, stdlib; Mermaid sources beside it). 720 px wide, `<title>` + `<desc>` on each, alt text and captions in the articles.
+
+**Commands → result**
+| Command | Result |
+|---|---|
+| `npx vitest run tests/content.test.ts tests/links.test.ts tests/editor-workflow.test.ts` | pass (3 files, 41 tests) |
+| `npm test` | pass (40 files, 383 tests) |
+| `npm run lint` / `npm run typecheck` | pass |
+| `npm run build` | pass |
+| Local preview (`CONTENT_PREVIEW=true CONTENT_DIR=content next dev`) | both pages 200 with the preview badge; 8 figures render; SVGs served as `image/svg+xml` |
+| Diagram inspection | each SVG rendered with macOS Quick Look and checked for overlaps/clipping; fixed several before copying |
+
+**Manual steps (owner)**
+1. Commit/push `roboshop-ai/deploy/eks`, then pin the `tree/master`/`blob/master` links in both articles to that commit.
+2. The guide has not been run on AWS: deploy once, record region/date and fixes, then remove the "not yet run" wording.
+3. The roboshop-ai licence is "all rights reserved": decide whether readers may deploy their own copy before publishing.
+4. Review the `<Todo>` notes, add commentary, set `status`/`publishedAt`.
+
 ## Draft article: RoboShop AI microservices, benefits and trade-offs (2026-10-29, owner request)
 
 **What changed**

@@ -1,0 +1,25 @@
+# Kubeconfig template for ServiceAccount jithendar/github-ci-deployer (k8s/80-ci-deployer.yaml).
+# The "Restart jithendar-com" step in workflows/ci-jithendar-com.yml fills it in with envsubst:
+#   ${MK4_API_SERVER}  repository variable  cluster API URL
+#   ${MK4_CA_DATA}     repository variable  base64 CA certificate of the cluster
+#   ${MK4_CI_TOKEN}    repository secret    token from Secret jithendar/github-ci-deployer-token
+# scripts/setup-ci-deployer.sh sets all three (and renders this file locally to test it).
+# Never commit a filled-in copy.
+apiVersion: v1
+kind: Config
+clusters:
+- name: mk4
+  cluster:
+    server: ${MK4_API_SERVER}
+    certificate-authority-data: ${MK4_CA_DATA}
+users:
+- name: github-ci-deployer
+  user:
+    token: ${MK4_CI_TOKEN}
+contexts:
+- name: mk4
+  context:
+    cluster: mk4
+    user: github-ci-deployer
+    namespace: jithendar
+current-context: mk4

@@ -1,0 +1,109 @@
+# Dependabot version updates. Pull requests run the `check` job in ci-jithendar-com.yml (lint,
+# typecheck, test, build, render manifests). Merging to master releases an image; ./deploy.sh still
+# has to be run to roll it out.
+#
+# Minor and patch updates are grouped to keep the PR count down; majors arrive one PR each.
+# Security updates are not grouped and are not held back by the cooldown.
+
+version: 2
+
+updates:
+  # Next.js app: www/package.json + www/package-lock.json
+  - package-ecosystem: npm
+    directory: /www
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/New_York
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 10
+    versioning-strategy: increase
+    commit-message:
+      prefix: "deps(www)"
+      include: scope
+    labels:
+      - dependencies
+      - npm
+    groups:
+      tiptap:
+        patterns:
+          - "@tiptap/*"
+      aws-sdk:
+        patterns:
+          - "@aws-sdk/*"
+      next-react:
+        patterns:
+          - next
+          - eslint-config-next
+          - react
+          - react-dom
+          - "@types/react"
+          - "@types/react-dom"
+      npm-minor-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Tracks the Node major in www/.nvmrc and the Dockerfiles; bump those together by hand.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+
+  # Base images in www/Dockerfile and www/Dockerfile.ci
+  - package-ecosystem: docker
+    directory: /www
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/New_York
+    commit-message:
+      prefix: "deps(docker)"
+    labels:
+      - dependencies
+      - docker
+    groups:
+      node-images:
+        patterns:
+          - node
+
+  # postgres and redis images in the Kubernetes manifests
+  - package-ecosystem: docker
+    directory: /k8s
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/New_York
+    commit-message:
+      prefix: "deps(k8s)"
+    labels:
+      - dependencies
+      - kubernetes
+    ignore:
+      # Major Postgres upgrades need a dump/restore or pg_upgrade of the data volume.
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
+      - dependency-name: redis
+        update-types: ["version-update:semver-major"]
+      # The app image is built by CI and pinned by ./deploy.sh, not by Dependabot.
+      - dependency-name: "*/jithendar-com"
+
+  # Actions in .github/workflows (pinned by commit SHA; Dependabot updates the SHA and the comment)
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/New_York
+    commit-message:
+      prefix: "deps(ci)"
+    labels:
+      - dependencies
+      - github-actions
+    groups:
+      actions:
+        patterns:
+          - "*"

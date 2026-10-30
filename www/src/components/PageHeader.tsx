@@ -30,7 +30,7 @@ export function PageHeader({
           <div className="min-w-0 max-w-3xl">
             {eyebrow && <p className="eyebrow">{eyebrow}</p>}
             <h1 className={`text-title font-bold text-fg [overflow-wrap:anywhere] ${eyebrow ? "mt-2" : ""}`}>{title}</h1>
-            {description && <div className="mt-4 text-lg leading-8 text-fg-muted">{description}</div>}
+            {description && <div className="mt-4 text-[1.0625rem] leading-relaxed text-fg-muted text-pretty sm:text-lg">{description}</div>}
             {children && <div className="mt-6">{children}</div>}
           </div>
         </div>

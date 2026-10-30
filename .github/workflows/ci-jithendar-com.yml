@@ -3,10 +3,13 @@ name: jithendar.com
 # check   → pull requests: lint, typecheck, test, build, render manifests
 # release → default branch: npm ci once; lint, tests and the production build (in turn); package the
 #           build into an arm64 image, smoke-test the image, push jithendar-com:<commit-sha> and move
-#           jithendar-com:latest to it in ECR
+#           jithendar-com:latest to it in ECR, then `kubectl rollout restart deploy/jithendar-com` so the
+#           cluster pulls the new :latest
 #
-# CI does not deploy and has no cluster access. ./deploy.sh pins the image digest in
-# k8s/kustomization.yaml and applies it with kubectl (see k8s/README.md).
+# CI's only cluster access is that restart (kubeconfig template .github/jithendar-ci-deployer.yaml, filled
+# from variables MK4_API_SERVER, MK4_CA_DATA and secret MK4_CI_TOKEN set by scripts/setup-ci-deployer.sh); it
+# never applies manifests. ./deploy.sh pins the image digest in k8s/kustomization.yaml and applies it with
+# kubectl (see k8s/README.md).
 #
 # Both jobs run on GitHub-hosted runners, never on the mk4 server: builds there competed with the cluster
 # for memory and disk and froze the host (2026-10-29). The release job signs in to AWS with the access key
@@ -147,6 +150,28 @@ jobs:
           docker push --quiet "$REGISTRY_IMAGE:$GITHUB_SHA"
           docker tag "$REGISTRY_IMAGE:$GITHUB_SHA" "$REGISTRY_IMAGE:latest"
           docker push --quiet "$REGISTRY_IMAGE:latest"
+      # The live deployment runs jithendar-com:latest with imagePullPolicy Always, so a restart pulls the image
+      # just pushed. Signs in as ServiceAccount jithendar/github-ci-deployer, which may only restart and watch
+      # deployment/jithendar-com: the template .github/jithendar-ci-deployer.yaml filled in with the values that
+      # scripts/setup-ci-deployer.sh stored.
+      - name: Restart jithendar-com
+        env:
+          MK4_API_SERVER: ${{ vars.MK4_API_SERVER }}
+          MK4_CA_DATA: ${{ vars.MK4_CA_DATA }}
+          MK4_CI_TOKEN: ${{ secrets.MK4_CI_TOKEN }}
+        run: |
+          set -euo pipefail
+          for v in MK4_API_SERVER MK4_CA_DATA MK4_CI_TOKEN; do
+            [[ -n "${!v}" ]] || { echo "::error::$v is not set; run scripts/setup-ci-deployer.sh"; exit 1; }
+          done
+          export KUBECONFIG="$RUNNER_TEMP/kubeconfig"
+          trap 'rm -f "$KUBECONFIG"' EXIT
+          (umask 077; perl -pe 's/\$\{(MK4_[A-Z_]+)\}/$ENV{$1}/g' ../.github/jithendar-ci-deployer.yaml > "$KUBECONFIG")
+          kubectl -n jithendar rollout restart deploy/jithendar-com
+          if ! kubectl -n jithendar rollout status deploy/jithendar-com --timeout=5m; then
+            echo "::error::Rollout of jithendar-com did not finish within 5 minutes"
+            exit 1
+          fi
       - name: Record image
         env:
           REGISTRY_IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.REPOSITORY }}
