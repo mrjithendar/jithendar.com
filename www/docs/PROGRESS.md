@@ -1,5 +1,16 @@
 # Progress log — jithendar.com
 
+## Article update: How We Implemented RAG and Skills in MOKS (2026-11-01, owner request)
+
+**What changed**
+- `content/blog/moks-rag-and-skills-design.mdx` rewritten against moks `9c150e9`. Same slug, `status: review`, not published. The live post is in Postgres, so the owner pastes this into the editor.
+- Two Mermaid sources in `docs/diagrams/moks-rag-skills/`, rendered with mermaid-cli 11.4.2 to `public/images/moks/moks-rag-{knowledge-flow,skills-runtime}.svg`. The older SVGs stay because the live post uses them.
+- `VERIFICATION.md`, `article_trace_test.py`, `trace-summary.txt` and `trace-probes.txt` in the same folder. `docs/CONTENT_AUDIT.md` row 7 marked drafted.
+
+**Commands → result**: `vitest` 395 of 395 passed; article compiled and rendered through `compileMdx`. MOKS backend from a clean export: 835 passed, 3 failed (terminal chart tests), 4 skipped. Lint, typecheck and build not run (content and static assets only).
+
+**Open**: four gaps listed in the article are unfixed in MOKS (citation existence only, freshness labels with no prompt rule, prompt truncation of passages, no knowledge effect in rule-based reports). No MOKS code changed.
+
 ## Content audit, Batch 1 (2026-11-01, owner request)
 
 **What changed** (uncommitted, nothing published)
