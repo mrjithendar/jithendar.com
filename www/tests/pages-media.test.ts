@@ -61,7 +61,7 @@ describe("bundled posts added after setup", () => {
     const id = await importBundledPost(admin, "blog", "roboshop-ai-microservices");
     const [row] = await db.select().from(schema.post);
     expect(row).toMatchObject({ id, status: "draft", publishedAt: null, authorId: "admin" });
-    expect(row!.title).toMatch(/^Inside RoboShop AI/);
+    expect(row!.title).toMatch(/^RoboShop AI microservices/);
     expect((await bundledPostsNotImported()).some((b) => b.slug === "roboshop-ai-microservices")).toBe(false);
     await expect(importBundledPost(admin, "blog", "roboshop-ai-microservices")).rejects.toMatchObject({ status: 409 });
   });

@@ -1,0 +1,36 @@
+---
+config:
+  htmlLabels: false
+  flowchart: {htmlLabels: false, curve: basis, nodeSpacing: 22, rankSpacing: 38, wrappingWidth: 230}
+  themeVariables: {fontSize: 15px, fontFamily: "Inter, Segoe UI, system-ui, Helvetica, Arial, sans-serif"}
+---
+flowchart TD
+  accTitle: MOKS component architecture
+  accDescr: The API, or an alert, queues an investigation in PostgreSQL. The worker claims it and runs a LangGraph StateGraph whose nodes call Investigator methods. Model calls pass through MoksChatModel and budget.complete to a provider. Tool calls reach the ToolExecutor, which calls connectors and kb_search and stores evidence and audit records in PostgreSQL. Write access exists only in the separate moks-executor process, which runs approved action plans and which the graph cannot reach.
+
+  API["moks-api (FastAPI)<br/>RBAC, scope, rate limit, SSE"] -->|"queued row"| PG[("PostgreSQL: investigations, events,<br/>evidence, audit, budgets, knowledge")]
+  PG -->|"claim: SKIP LOCKED"| I
+
+  subgraph W["moks-worker"]
+    G["LangGraph StateGraph<br/>orchestrator/graph.py"] <-->|"nodes call methods"| I["Investigator<br/>orchestrator/engine.py"]
+    I --> M["MoksChatModel<br/>langchain-core chat model"]
+    I --> T["StructuredTool wrappers<br/>langchain-core, planner only"]
+    I -->|"baseline, logs,<br/>skills, rules"| X
+    T --> X["ToolExecutor: allowlist, schema,<br/>RBAC, scope, timeout, redaction, audit"]
+    M --> B["budget.complete<br/>reserve, call, settle"]
+  end
+
+  B --> L["LLM provider<br/>(six adapters)"]
+  X --> C["Connectors: Kubernetes,<br/>Prometheus, Loki, Grafana,<br/>CloudWatch, Git, FinOps"]
+  X -->|"kb_search"| R["RAG service<br/>rag/service.py"]
+  X ~~~ EX["moks-executor (separate process)<br/>only write credentials, approved<br/>action plans, not reachable from the graph"]
+
+  classDef fw fill:#ede9fe,stroke:#6d28d9,color:#2e1065
+  classDef own fill:#f1f5f9,stroke:#475569,color:#0f172a
+  classDef gate fill:#dcfce7,stroke:#15803d,color:#052e16
+  classDef ext fill:#fff7ed,stroke:#c2410c,color:#431407
+  style W fill:#fafafa,stroke:#94a3b8,color:#0f172a
+  class G,M,T fw
+  class API,I,B,R own
+  class X,EX gate
+  class L,C,PG ext

@@ -1,0 +1,9 @@
+%% Editable equivalent of public/images/roboshop-ai/roboshop-ai-eks-delivery.svg (checked 2026-11-01).
+flowchart TD
+  tools["tools repo"] -- "infrastructure/" --> tf["Create infrastructure<br/>self-hosted runner, applies on push"]
+  robo["roboshop-ai repo"] -- "services/*" --> ci["Service workflows<br/>linux/arm64 images"]
+  ci -- push --> ecr["Amazon ECR"]
+  tools & robo -. read .-> argo["Argo CD on mk4<br/>syncs by hand"]
+  tf -- creates --> eks["EKS cluster roboshop-demo"]
+  argo -- sync --> eks
+  ecr -- pull --> eks

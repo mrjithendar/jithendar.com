@@ -1,271 +1,394 @@
 ---
-title: "Deploy RoboShop AI on Amazon EKS: Terraform, Istio, Gatekeeper, KEDA and Karpenter step by step"
+title: "Deploy a microservices app on Amazon EKS with Terraform, Argo CD and Istio"
 slug: deploy-roboshop-ai-amazon-eks
-description: "A step-by-step EKS runbook for RoboShop AI: Terraform, controllers, secrets, Istio and policy rollout, autoscaling tests, observability, rollback and teardown."
+description: "A checked EKS walkthrough from RoboShop AI: Terraform, a remote Argo CD hub, an NLB in front of Istio, a safe mesh rollout, failure modes and teardown."
 author: jithendar-dharmapuri
 category: kubernetes
-tags: [Amazon EKS, Terraform, Istio, KEDA, Karpenter, Argo CD, Runbook]
+tags: [Amazon EKS, Terraform, Argo CD, Istio, AWS Load Balancer Controller, cert-manager, Runbook]
 contentType: tutorial
 status: review
+publishedAt: "2026-10-30T10:15:31+05:30"
 related: [blog/roboshop-ai-eks-system-design, blog/roboshop-ai-microservices, projects/roboshop-ai]
 ---
-<Todo>Reviewed against roboshop-ai commit 692e72d1f119c20e3bfb32f2e189e5a376a12c4c on 2026-10-30 plus the uncommitted deploy/eks folder. After pushing it, pin every `master` link below to that commit SHA. This guide has NOT been run end to end on AWS: run it once yourself, record the date, region and any fixes, and only then remove this note and the "not yet run" wording. Decide whether the repository licence allows readers to deploy their own copy. Suggested SEO title: "How to Deploy a Microservices App on Amazon EKS with Istio, KEDA and Karpenter".</Todo>
+<Todo>Draft for editorial review, checked against the running cluster on 2026-11-01 (roboshop-ai c81e85a, tools 5ea85b7). Before publishing: (1) the tools repo has an uncommitted move from eks-argocd/ to deploy/eks/; after you push it, re-point the three tools links here and re-apply the Applications; (2) decide whether roboshop-demo-moks should run, then update the status table; (3) if you enforce STRICT mTLS or the AuthorizationPolicies, move step 8 out of "not done yet"; (4) answer the two notes in step 2 and step 3 about why you made those choices; (5) tick Substantive update in the editor when you save.</Todo>
 
-This guide deploys [RoboShop AI](/projects/roboshop-ai), a personal showcase project, onto Amazon EKS, from an empty AWS account to scaling tests and teardown. It is the companion to [RoboShop AI on Amazon EKS: system design](/blog/roboshop-ai-eks-system-design), which explains why each component is there.
+Moving a multi-service application from a single server to Amazon EKS rarely fails on the big decisions. It fails on ordering. A Certificate synced before its issuer exists, a sidecar that arrives after the pod started, or a security policy enforced before anyone has seen real traffic can each take the shop down, and none of them looks like the cause when you first read the error.
 
-Every command comes from the repository runbook, [`deploy/eks/RUNBOOK.md`](https://github.com/mrjithendar/roboshop-ai/blob/master/deploy/eks/RUNBOOK.md). The configuration files stay authoritative in the repository; this page links to them instead of copying them.
-
-**Tested so far:**
-
-- **Passed offline, with no AWS account:** Terraform validate and mocked plan tests, Helm template of every chart, a full manifest render, and a policy pre-check.
-- **Not yet run on real AWS:** the end-to-end deployment.
-
-Steps marked *runtime check* confirm behaviour that cannot be proven offline.
+This guide walks through the order that took [RoboShop AI](/projects/roboshop-ai), a personal demo store, onto EKS: the AWS layer in Terraform, a remote Argo CD hub, an NLB in front of Istio, and the workloads. Each step says what to check before moving on. The design reasons are in [RoboShop AI on Amazon EKS: system design](/blog/roboshop-ai-eks-system-design).
 
 ::toc
 
-## Before you start
+## What is running, and what is not
 
-**Audience:** you are comfortable with the AWS CLI, Terraform and kubectl, and you use a sandbox AWS account where you may create VPCs, EKS clusters and IAM roles.
+This list was checked against the cluster on 2026-11-01. The earlier version of this article described Gatekeeper, KEDA and Karpenter. They were a design for a larger stack, they are not on this cluster, and this version no longer covers them.
 
-**Tools:** AWS CLI v2, Terraform 1.10 or later, kubectl 1.35–1.37, Helm 3.8 or later, envsubst, jq and git.
-
-**You provide:**
-
-- a region and two or three Availability Zones;
-- an S3 bucket for Terraform state;
-- your public IP for API access;
-- a hostname in a Route 53 hosted zone you control;
-- an email address for Let's Encrypt;
-- a commit SHA whose images you will build.
-
-**Defaults:** payments stay in Razorpay test mode, and no AI provider is configured.
-
-**Cost:** the control plane, two system nodes, a NAT gateway, the NLB and EBS volumes all bill while the cluster exists, even when idle. The [README's cost section](https://github.com/mrjithendar/roboshop-ai/blob/master/deploy/eks/README.md#cost-drivers-no-prices-quoted-check-the-aws-pricing-pages-for-your-region) lists the drivers. Tear down when you finish.
-
-| Component | Version |
+| State | What |
 | --- | --- |
-| EKS (Kubernetes) | 1.36 |
-| Karpenter | 1.15.1 |
-| Istio | 1.30.7 |
-| Gatekeeper | 3.23.1 |
-| KEDA | 2.21.0 |
+| **Running** | EKS 1.36.5 with two `t4g.large` nodes, Istio 1.30.7, the NLB, a Let's Encrypt certificate and 14 RoboShop workloads, each with a sidecar. The shop answers at [eks.jithendar.com/roboshop](https://eks.jithendar.com/roboshop/). |
+| **Rehearsal only** | mTLS is `PERMISSIVE`, and all 15 AuthorizationPolicies are in dry run. Nothing is being denied yet. |
+| **Not deployed** | The Moks shopping assistant. Its Application is not registered, so chat returns 502 while the rest of the shop works. |
+| **Not done yet** | The switch to `STRICT` and enforcement in step 8, and moving `jithendar.com` itself to this cluster. |
+| **Traffic** | A demo. Payments stay in Razorpay test mode. There are no production load figures here because there is no production load. |
+
+:::callout{type="info" title="Adapting this guide"}
+RoboShop AI's code is public to read but proprietary, so you cannot deploy your own copy of it. Read the commands as a sequence to apply to your own workloads, and swap in your names. Hostnames and service names below are the real ones. Account IDs, subnets and allowlisted addresses are placeholders.
+:::
+
+## Prerequisites and tested versions
+
+You should be comfortable with Terraform, `kubectl` and the AWS CLI, and have an AWS account where you may create VPCs, EKS clusters and IAM roles.
+
+| Component | Version on 2026-11-01 |
+| --- | --- |
+| Amazon EKS | 1.36 (server 1.36.5, platform `eks.17`) |
+| Nodes | Two `t4g.large` On-Demand, arm64, Amazon Linux 2023 |
+| Istio charts | 1.30.7 |
 | AWS Load Balancer Controller | 3.6.2 |
-| cert-manager · External Secrets | v1.21.3 · 2.14.0 |
-| Argo CD | 3.5.6 (chart 10.11.6) |
+| Argo CD (hub) | 3.5.5 |
+| Terraform | 1.16.6 in CI, AWS provider 6.x |
 
-The full matrix, with sources, is in [`versions.md`](https://github.com/mrjithendar/roboshop-ai/blob/master/deploy/eks/versions.md).
+Two dates matter. [Istio 1.30 is expected to reach end of life around December 2026](https://istio.io/latest/docs/releases/supported-releases/), and 1.31 supports Kubernetes 1.32 to 1.37, so a mesh upgrade is the next piece of work. [EKS 1.36 is in standard support until 2 August 2027](https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html).
 
-## A. Configure and check
+You also need a hostname you control and a DNS provider cert-manager can write to. Here that is Cloudflare, with a token limited to DNS edit and zone read on one zone.
 
-Run from the repository root:
+## How the pieces connect
 
-```bash
-cp deploy/eks/terraform/backend.hcl.example deploy/eks/terraform/backend.hcl
-cp deploy/eks/terraform/demo.tfvars.example deploy/eks/terraform/demo.tfvars
-cp deploy/eks/env/example.env deploy/eks/env/roboshop-demo.env
-# edit all three, replacing every <placeholder>
-deploy/eks/scripts/preflight.sh deploy/eks/env/roboshop-demo.env
+:::figure{caption="Figure 1. AWS resources, images and Kubernetes state each take their own path. Nothing syncs on its own."}
+![Delivery paths. The tools repository's infrastructure folder drives the Create infrastructure workflow on a self-hosted runner, which creates the EKS cluster. Service workflows in roboshop-ai build arm64 images and push them to Amazon ECR, and the cluster pulls from there. Argo CD on the mk4 cluster reads both repositories and an operator syncs Applications to EKS.](/images/roboshop-ai/roboshop-ai-eks-delivery.svg)
+:::
+
+Argo CD does not run on EKS. It runs on `mk4`, a separate cluster, and treats EKS as a remote destination, so every Application carries `destination.name: roboshop-demo`. The Applications are prefixed `roboshop-demo-` because they share the hub's `argocd` namespace with other clusters' apps. Without the prefix, reusing a name would point an existing app at a different cluster.
+
+A request then takes this path:
+
+```text
+Browser
+  -> NLB (TCP passthrough, no certificate)
+  -> Istio ingress gateway (TLS ends, /roboshop stripped)
+  -> web (NGINX) -> ai-gateway -> domain services
 ```
 
-**Expected:** every line reads `ok`, and quotas are printed.
+## Step 1: Create the AWS layer with Terraform
 
-**If it fails:** a low vCPU quota fails late, inside Karpenter. Request an increase now.
+The cluster, node group, add-ons and IAM live in [`infrastructure/`](https://github.com/mrjithendar/tools/tree/5ea85b7bcc1c2aaeaf9c6de237c31d5d133bdba0/infrastructure) in the tools repository. These are the settings worth copying:
 
-## B. Create the AWS infrastructure
-
-```bash
-cd deploy/eks/terraform
-terraform init -backend-config=backend.hcl
-terraform fmt -check && terraform validate && terraform test
-terraform plan -var-file=demo.tfvars -out=eks.tfplan
-terraform apply eks.tfplan
+```hcl
+resource "aws_eks_cluster" "main" {
+  version = var.eks_version
+  access_config {
+    authentication_mode                         = "API"
+    bootstrap_cluster_creator_admin_permissions = false
+  }
+  vpc_config {
+    subnet_ids              = local.privateSubnets
+    endpoint_private_access = true
+    endpoint_public_access  = length(var.eks_public_access_cidrs) > 0
+    public_access_cidrs     = length(var.eks_public_access_cidrs) > 0 ? var.eks_public_access_cidrs : null
+  }
+}
 ```
 
-**What it creates:**
+Access entries replace the old `aws-auth` ConfigMap, and turning off the creator's implicit admin means every administrator is named in code. The API endpoint's public side is limited to listed addresses.
 
-- a VPC with private worker subnets and one NAT gateway;
-- EKS 1.36 with pinned add-ons, including the VPC CNI with network policy enabled and EBS CSI;
-- a tainted two-node arm64 system node group;
-- EKS Pod Identity roles, each scoped to one service account;
-- Karpenter's IAM roles and interruption queue;
-- immutable ECR repositories;
-- an empty Secrets Manager secret;
-- a log group with 30-day retention.
+The node group is `AL2023_ARM_64_STANDARD` because the CI pipeline only publishes `linux/arm64` images. That choice has a consequence: [Fargate on EKS has no Arm support](https://docs.aws.amazon.com/eks/latest/userguide/fargate.html), so these images have to stay on nodes.
 
-**Check:** `terraform output`.
-
-**If it fails:** `RepositoryAlreadyExistsException` means the repositories already exist in this account. Set `manage_ecr_repositories = false` to reuse them.
-
-Then build and push the arm64 images for one commit, either through the GitHub Actions OIDC role in `terraform output` or locally with `docker buildx --platform linux/arm64` (runbook step B3). Set `IMAGE_TAG` in your env file to that commit SHA.
-
-## C. Connect to the cluster
+**Check:**
 
 ```bash
-$(terraform -chdir=deploy/eks/terraform output -raw kubeconfig_command)
-kubectl get nodes -L roboshop.dev/pool,kubernetes.io/arch
+aws eks update-kubeconfig --name roboshop-demo --region us-east-1 --alias roboshop-demo
+kubectl --context roboshop-demo get nodes -L node.kubernetes.io/instance-type,kubernetes.io/arch
+aws eks list-addons --cluster-name roboshop-demo --region us-east-1
 ```
 
-**Expected:** two `Ready` arm64 nodes labelled `system`.
+**Expected:** two `Ready` nodes showing `t4g.large` and `arm64`, and add-ons that include `aws-ebs-csi-driver`, `cert-manager`, `eks-pod-identity-agent` and `vpc-cni`.
 
-**If it fails:**
+:::callout{type="warning" title="Auto-apply has no review step"}
+In this setup, a push to `master` that touches `infrastructure/` applies Terraform on a self-hosted runner. That suits a one-person lab. For anything shared, add a plan review. Either way, run `terraform plan -lock=false -var-file=vars/terraform.tfvars` before pushing, because a flag flipped back in a commit changes real resources with nobody watching.
+:::
 
-- **Credentials error:** your identity is not in `admin_principal_arns`.
-- **Timeout:** your IP changed. Update `api_public_access_cidrs`.
+## Step 2: Register the cluster with the Argo CD hub
 
-## D. Controllers, rendered layers and secrets
+Log in to the hub, add the cluster once, then create the Applications:
 
 ```bash
-deploy/eks/platform/install.sh deploy/eks/env/roboshop-demo.env
-deploy/eks/scripts/render.sh deploy/eks/env/roboshop-demo.env
-git add deploy/eks/clusters/roboshop-demo && git commit -m "Render roboshop-demo" && git push   # your fork
-kubectl apply -f deploy/eks/clusters/roboshop-demo/argocd/manifests.yaml
-deploy/eks/scripts/put-secrets.sh deploy/eks/env/roboshop-demo.env
+argocd cluster add roboshop-demo --name roboshop-demo --yes
+kubectl --context mk4 apply -f <platform-applications-directory>/
 ```
 
-**Install order** (`install.sh` uses pinned Helm charts and always this order): Karpenter first, then the load balancer controller, cert-manager, External Secrets, Prometheus, Istio, Gatekeeper, KEDA, the telemetry agents and Argo CD.
+Creating Applications changes nothing on EKS, because none has an automated sync policy. Every sync is a person running a command after reading the diff.
 
-**Rendering:** `render.sh` resolves every image to a digest, so the Git diff shows exactly what will run.
+<Todo>Confirm: the reason for manual sync is that you want to review each diff before it reaches the cluster.</Todo>
 
-**Sync order:** Argo CD syncs the layers in waves:
+Two settings protect you here. Each Application carries `argocd.argoproj.io/sync-options: Prune=false,Delete=false`, and you never pass `--prune`. If a path changes in Git and an Application is synced with prune, the resources it stopped seeing are deleted.
 
-1. namespace and storage;
-2. NodePools, secrets and TLS;
-3. policy templates, mesh configuration and monitors;
-4. applications;
-5. policy constraints and autoscaling.
+## Step 3: Install add-ons in dependency order
 
-**Secrets:** `put-secrets.sh` generates random credentials locally and stores them in Secrets Manager. It asks for the super admin silently and never prints a value.
-
-**Check:** `kubectl -n roboshop-ai get externalsecret` shows `Ready`, and `kubectl get nodepools` shows two `Ready` pools.
-
-**If it fails:** if the ingress gateway's first install times out, the NodePools did not exist yet. Re-run `install.sh <env> istio` after they sync.
-
-## E. Data and explicit migrations
-
-The demo data stores start as single pods on encrypted gp3 volumes. Shipping applies its own schema migrations at start-up, serialized by an advisory lock. Confirm them, then run the one-off location seed:
+Istio's CRDs must exist before its control plane, and the gateway goes last because its Service creates the NLB, which starts billing.
 
 ```bash
-kubectl -n roboshop-ai exec deploy/shipping-db -- psql -U shipping -d shipping \
-  -c 'SELECT version, applied_at FROM public.shipping_migrations ORDER BY version'
-kubectl apply --server-side -f deploy/eks/clusters/roboshop-demo/jobs/manifests.yaml
-kubectl -n roboshop-ai wait job/shipping-location-import --for=condition=Complete --timeout=10m
+for a in metrics-server prometheus-agent aws-load-balancer-controller \
+         istio-base istiod istio-ingressgateway; do
+  argocd app diff argocd/roboshop-demo-$a
+  argocd app sync argocd/roboshop-demo-$a
+  argocd app wait argocd/roboshop-demo-$a --health --timeout 300
+done
 ```
 
-The demo keeps the gateway's single-writer JSON ledger, so it runs one replica and needs no migration. Moving to the PostgreSQL ledger is a reviewed production step. These volumes have no automatic backups, so snapshot them before you rely on any data.
+`argocd app diff` exits non-zero when there is a difference, so don't run this loop under `set -e`.
 
-## F. Roll out the mesh and policies gradually
-
-The first render uses three permissive settings:
+Then wait for the CRDs before syncing anything that uses them:
 
 ```bash
-MTLS_MODE=PERMISSIVE   # sidecars accept plaintext as well as mTLS
-AUTHZ_DRY_RUN=true     # Istio only logs would-be denials
-POLICY_ACTION=dryrun   # Gatekeeper only reports violations
+kubectl --context roboshop-demo wait --for=condition=Established --timeout=2m \
+  crd/clusterissuers.cert-manager.io crd/certificates.cert-manager.io \
+  crd/gateways.networking.istio.io crd/virtualservices.networking.istio.io
 ```
 
-Check each layer before tightening:
+**Expected:** four `condition met` lines.
+
+Add-ons are Argo CD Applications that point at pinned Helm charts, and Terraform keeps only what lives in AWS.
+
+<Todo>Confirm: you moved the Helm releases from Terraform to Argo CD so each resource has a single owner.</Todo>
+
+If you make the same move later, make Terraform forget the releases with a `removed` block and `destroy = false`. Deleting the resources from Terraform would uninstall them, and with the gateway that deletes the NLB.
+
+## Step 4: Put the NLB in front of Istio
+
+The gateway's Service is the only thing that defines the load balancer. These values are from the Helm values file, with placeholders for your subnets and addresses:
+
+```yaml
+service:
+  type: LoadBalancer
+  loadBalancerClass: service.k8s.aws/nlb
+  allocateLoadBalancerNodePorts: false
+  loadBalancerSourceRanges:
+  - <your-address>/32
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+    service.beta.kubernetes.io/aws-load-balancer-subnets: <public-subnet-a>,<public-subnet-b>
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: http
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: "15021"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: /healthz/ready
+```
+
+Three of these lines are easy to get wrong:
+
+- **`scheme`** defaults to `internal`, which a browser cannot reach.
+- **`nlb-target-type: ip`** registers the gateway pods directly, so no NodePorts are needed.
+- **`loadBalancerSourceRanges`** becomes the NLB's security group rules. An empty list opens it to the internet, so an accidental deletion here is an exposure, not a no-op.
+
+There is deliberately no `aws-load-balancer-ssl-cert`. The NLB passes TCP, and TLS ends on the gateway pods. The trade-off is that certificates live in the cluster instead of AWS Certificate Manager, in return for one Layer 7 hop and one set of routing rules.
+
+**Check:**
 
 ```bash
-kubectl get constraints -o custom-columns=NAME:.metadata.name,ACTION:.spec.enforcementAction,VIOLATIONS:.status.totalViolations
+kubectl --context roboshop-demo -n istio-ingress get pods,svc,hpa
 ```
 
-**Check:** Gatekeeper reports zero violations, which is what the offline pre-check found.
+**Expected:** two gateway pods `Running`, an `EXTERNAL-IP` ending in `elb.amazonaws.com`, and an HPA from 2 to 3.
 
-*Runtime check:*
+## Step 5: Issue the certificate
 
-1. Raise each sidecar's `rbac` log level with `istioctl proxy-config log`.
-2. Use the shop for a few minutes: browse, sign in, add to cart, test checkout and open the assistant.
-3. Search the proxy logs for `shadow denied`. Each line names a call the code makes that the policy does not yet allow.
-
-Then change the three values to `STRICT`, `false` and `deny`, re-render, commit and push. Rolling back is the same three values in reverse.
-
-## G. Release a new version
-
-Build images for the new commit, then:
+Let's Encrypt needs proof you control the name. With the NLB locked to your own address, an HTTP-01 challenge cannot reach the cluster, so this setup uses DNS-01 through Cloudflare. The token is created by hand and never enters Git:
 
 ```bash
-sed -i.bak "s/^IMAGE_TAG=.*/IMAGE_TAG=<new-sha>/" deploy/eks/env/roboshop-demo.env
-deploy/eks/scripts/render.sh deploy/eks/env/roboshop-demo.env
-git diff deploy/eks/clusters/roboshop-demo/apps     # only digests should change
-git commit -am "Deploy <new-sha>" && git push
+read -rs CF_TOKEN
+kubectl --context roboshop-demo -n cert-manager create secret generic \
+  cloudflare-api-token --from-literal=api-token="$CF_TOKEN"
+unset CF_TOKEN
 ```
 
-## H. DNS, TLS and the public endpoint
+Order matters: the Certificate needs an issuer, and the Gateway needs the Secret the Certificate writes.
 
 ```bash
-kubectl -n istio-ingress get svc istio-ingressgateway -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+argocd app sync argocd/roboshop-demo-letsencrypt-issuers
+kubectl --context roboshop-demo wait clusterissuer letsencrypt-prod letsencrypt-staging \
+  --for=condition=Ready --timeout=3m
+argocd app sync argocd/roboshop-demo-ingress
+kubectl --context roboshop-demo -n istio-ingress wait certificate/jithendar-com \
+  --for=condition=Ready --timeout=10m
 ```
 
-1. Point your hostname at that NLB with a Route 53 alias record.
-2. Wait for the staging certificate: `kubectl -n istio-ingress get certificate roboshop`.
-3. Set `CERT_ISSUER=letsencrypt-prod`, re-render and push.
-4. Run the checks:
+If you already hold a certificate for the same names on another cluster, count both. Let's Encrypt allows [five certificates per exact set of identifiers every seven days](https://letsencrypt.org/docs/rate-limits/), across all accounts. Testing against `letsencrypt-staging` avoids burning that limit.
+
+## Step 6: Give each workload storage and an identity
+
+Sync storage first. The EBS CSI add-on supplies the driver, and `gp3-encrypted` is the default StorageClass:
+
+```yaml
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  encrypted: "true"
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+```
+
+`Retain` means deleting a PVC leaves the EBS volume, and its bill, behind. That protects data from a mistake, and it also means teardown needs its own step.
+
+Next comes the mesh Application. It creates one ServiceAccount per workload, which is what gives each pod a distinct identity, and it starts in the safest state: permissive mTLS and policies in dry run.
 
 ```bash
-curl -sSI https://<your-host>/ | head -1
-deploy/eks/scripts/verify.sh deploy/eks/env/roboshop-demo.env
+argocd app sync argocd/roboshop-demo-storage
+argocd app sync argocd/roboshop-demo-mesh
+argocd app sync argocd/roboshop-demo-roboshop-config
+kubectl --context roboshop-demo get namespace roboshop-ai -L istio-injection
 ```
 
-*Runtime check:* the ingress gateway's access log should show your public IP, not an NLB address. If requests hang, proxy protocol is enabled on one side only.
+**Expected:** `ISTIO-INJECTION` shows `enabled`.
 
-## I. Prove the scaling chain
+Application secrets are created by hand once the namespace exists, and Argo CD does not manage them. Only then do workloads start.
 
-KEDA reads queue depth through the RabbitMQ management API using a monitoring-only user, which you create once (runbook step I1). Then run the controlled test:
+## Step 7: Sync data stores, then services
+
+Stores go first, so services don't start against nothing:
 
 ```bash
-deploy/eks/scripts/backlog-test.sh deploy/eks/env/roboshop-demo.env 60
+for app in redis rabbitmq postgres mongodb kafka-bridge; do
+  argocd app sync argocd/roboshop-demo-$app
+  argocd app wait argocd/roboshop-demo-$app --health --timeout 300
+done
+for app in user-service catalogue-service cart-service payment-service \
+           shipping-service currency-service mcp-server ai-gateway web; do
+  argocd app sync argocd/roboshop-demo-$app
+  argocd app wait argocd/roboshop-demo-$app --health --timeout 300
+done
 ```
 
-The test uses a throwaway queue and a throwaway Deployment, so real orders are never touched. Synthetic events on the real queue would fail the worker's fail-closed checks and fill the dead-letter queue.
+The Applications read the [`argocd-eks` catalog](https://github.com/mrjithendar/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b/argocd-eks), and sidecars are native sidecars, so they appear under `initContainers`. A pod created before the namespace label has no sidecar until it restarts.
 
-**Expected output:** replicas rise towards six, some pods sit `Pending`, Karpenter NodeClaims appear, and the pods become ready. The script then cleans up, and Karpenter removes the extra nodes about five minutes later.
+### The trap in `ai-gateway`
 
-## J. Observability
+`web` forwards the browser's `Host` header to `ai-gateway`. A sidecar treating that port as HTTP routes by Host, finds no matching Service and falls back to plaintext passthrough, which fails under `STRICT`. The fix is one patch in the Application, which declares the port as TCP:
+
+```yaml
+- target:
+    kind: Service
+    name: ai-gateway
+  patch: |-
+    - op: add
+      path: /spec/ports/0/appProtocol
+      value: tcp
+```
+
+The sidecar then routes by destination address, and mTLS applies. You give up Layer 7 metrics on that hop. Policies on it can only use identities and ports, which is all they need here.
+
+## Validate the deployment
+
+These commands were run on 2026-11-01, and the results are shown as they came back:
 
 ```bash
-kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80
-kubectl -n observability port-forward svc/jaeger 16686:16686
+curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' 'https://eks.jithendar.com/roboshop?x=1'
+curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' http://eks.jithendar.com/roboshop/
+curl -sSI https://eks.jithendar.com/roboshop/ | grep -iE '^(HTTP|server)'
+curl -sS -o /dev/null -w '%{http_code}\n' https://eks.jithendar.com/roboshop/metrics
 ```
 
-**Where to look:**
+```text
+308 https://eks.jithendar.com/roboshop/?x=1
+301 https://eks.jithendar.com/roboshop/
+HTTP/2 200
+server: istio-envoy
+404
+```
 
-- **Prometheus targets:** the `roboshop-mesh` PodMonitor should list every application pod.
-- **Container logs:** CloudWatch Logs group `/roboshop/<cluster>/containers`, one stream per pod.
-- **Control-plane logs:** CloudWatch Logs group `/aws/eks/<cluster>/cluster`.
+How to read them:
 
-**Investigating a failed checkout:**
+- **`308` with `?x=1` kept** shows the VirtualService adds the trailing slash and leaves the query string alone.
+- **`301`** comes from the Gateway's HTTPS redirect on port 80.
+- **`server: istio-envoy`** proves the response came through the mesh gateway.
+- **`404` on `/metrics`** shows application metrics have no public route.
 
-1. The `RoboShopHighErrorRatio` alert names a workload.
-2. A Prometheus query on `istio_requests_total` by response code shows whether payment-service is returning errors.
-3. CloudWatch Logs Insights finds the error line and its `traceId`.
-4. Jaeger shows the full span tree: ingress, web, ai-gateway, payment-service and the Razorpay call.
+Then check the cluster's own view:
 
-## K. Roll back and tear down
+```bash
+kubectl --context mk4 -n argocd get applications.argoproj.io | grep roboshop-demo
+kubectl --context roboshop-demo -n roboshop-ai get pods
+kubectl --context roboshop-demo -n roboshop-ai get peerauthentication default
+```
 
-**Roll back:**
+**Expected:** every Application `Synced` and `Healthy`, every pod ready with one more container than the app defines, and mode `PERMISSIVE` until you complete step 8.
 
-- **An application release:** `git revert` the deploy commit and push. For an immediate fix, `kubectl rollout undo` first.
-- **A controller:** set the previous version in `platform/versions.env` and re-run `install.sh <env> <component>`.
+## Step 8: Tighten the mesh (not done yet on this cluster)
 
-**Tear down, in this order.** The runbook has the exact commands.
+This step has not been run on `roboshop-demo`, so treat it as a plan rather than a result. The reason for the staging is that a wrong policy looks like an application bug.
 
-1. Snapshot the EBS volumes you want to keep.
-2. Delete the Argo CD applications.
-3. Uninstall the ingress gateway, so the NLB is deleted before the VPC.
-4. Delete the namespace and the NodePools, then wait for Karpenter's nodes to go.
-5. Delete the persistent volumes. This is a separate step, because the StorageClass retains volumes.
-6. Run `terraform plan -destroy` and apply it.
+**1. Move to `STRICT` mTLS.** Set `mode: STRICT` in the PeerAuthentication, push and sync. From then on, sidecars refuse anything without a mesh certificate.
 
-**If it fails:** a `DependencyViolation` on the VPC means a controller-created load balancer or network interface still exists.
+**2. Review the dry run.** Policies carry the annotation `istio.io/dry-run: "true"`, so Envoy only records what it would have denied. Turn on debug logging, use the shop through a full checkout, then count:
 
-## Troubleshooting quick reference
+```bash
+istioctl --context roboshop-demo -n roboshop-ai proxy-config log deploy/payment-service --level rbac:debug
+kubectl --context roboshop-demo -n roboshop-ai logs deploy/payment-service -c istio-proxy --since=30m \
+  | grep -c 'shadow denied'
+```
 
-| Symptom | Likely cause | Fix |
+Repeat for each workload. A non-zero count names a call that enforcement would break. Istio labels [dry run as Alpha](https://istio.io/latest/docs/tasks/security/authorization/authz-dry-run/), so it is a strong hint and not a guarantee.
+
+**3. Enforce.** Remove the dry-run patch from the Kustomize overlay, then push and sync. Keep the fast rollback ready:
+
+```bash
+kubectl --context roboshop-demo -n roboshop-ai annotate authorizationpolicy --all istio.io/dry-run=true --overwrite
+kubectl --context roboshop-demo -n roboshop-ai patch peerauthentication default \
+  --type merge -p '{"spec":{"mtls":{"mode":"PERMISSIVE"}}}'
+```
+
+That changes live objects, and the next sync will restore what Git says, so fix Git straight afterwards.
+
+One limit remains after this step. The cluster's VPC CNI does not enforce NetworkPolicy, so the data stores rely on the mesh and their passwords, not on network isolation.
+
+## Troubleshooting
+
+| Symptom | Likely cause | What to do |
 | --- | --- | --- |
-| Pods `Pending`, no new nodes | NodePool limit, vCPU quota or Spot capacity | `kubectl describe nodepool`, quota increase, or allow more instance types |
-| `ExternalSecret` not ready | Secret name or Region mismatch | Name must be `<prefix>/<environment>/app` |
-| Certificate stuck | Wrong hosted zone ID | Check cert-manager logs for Route 53 `AccessDenied` |
-| 403 between services after `STRICT` | Missing allow edge | Find the `shadow denied` line from step F and add the edge only if the code makes that call |
-| ScaledObject not ready | KEDA user missing or blocked | Runbook step I1; NetworkPolicy must allow the `keda` namespace on port 15672 |
-| VPC destroy fails | Load balancer or network interface left behind | Delete the ingress gateway before `terraform destroy` |
+| PVC stays `Pending` | EBS CSI add-on missing, or no default StorageClass | `aws eks list-addons`, then `kubectl get sc` |
+| ClusterIssuer `Ready=False`, `secrets not found` | Cloudflare token not created | Create the Secret from step 5 |
+| Certificate stuck, `InvalidSolver` or a `403` from Cloudflare | Token missing, or lacking DNS edit or zone read | `kubectl -n istio-ingress describe challenge` |
+| `EXTERNAL-IP` stays `<pending>` | The controller could not build the NLB | `kubectl -n istio-ingress describe svc istio-ingressgateway`. `AccessDenied` points to IAM or Pod Identity |
+| Gateway pods `Running` but not Ready | Readiness gate waiting for NLB target health | Check controller logs and the security group rule for port 15021 |
+| Timeout reaching the NLB | Your address is not in `loadBalancerSourceRanges` | `curl -s https://checkip.amazonaws.com`, then update the value |
+| `404` with no `x-envoy-upstream-service-time` header | No gateway route for that Host or path | `istioctl -n istio-ingress proxy-config routes deploy/istio-ingressgateway` |
+| `502` or `504` on `/api/*` | `web` cannot reach `ai-gateway`, usually a missing `appProtocol: tcp` | `kubectl -n roboshop-ai get svc ai-gateway -o jsonpath='{.spec.ports[0].appProtocol}'` |
+| `502` on chat only | The assistant is not deployed | Expected on this cluster today |
+| `403 RBAC: access denied` after enforcing | A policy is missing a legitimate caller | Read the `rbac:debug` log, fix Git, or use the fast rollback |
+| No `istio-proxy` in a pod | The pod predates the namespace label | `kubectl -n roboshop-ai rollout restart deploy/<name>` |
+
+When a request misbehaves at the gateway, temporary access logs help. They include query strings, so remove them afterwards.
+
+## Roll back
+
+Argo CD deploys Git, so rolling back means reverting. This is the documented path and has not been exercised on this cluster:
+
+```bash
+git revert <commit> && git push
+argocd app diff argocd/roboshop-demo-<app>
+argocd app sync argocd/roboshop-demo-<app>
+```
+
+Don't run `helm uninstall` on anything Argo CD manages. With the gateway, that deletes the NLB.
+
+## Clean up and cost
+
+This cluster bills while idle. The main drivers are the EKS control plane, two `t4g.large` On-Demand nodes, NAT gateways, the NLB, public IPv4 addresses, about 24 GiB of `gp3` volumes, and control-plane logs (all five log types are on, kept for 30 days). This guide quotes no monthly figure, because prices vary by Region and this cluster has not been through a full billing cycle. The [EKS pricing](https://aws.amazon.com/eks/pricing/) and [EC2 pricing](https://aws.amazon.com/ec2/pricing/) pages have current rates.
+
+This teardown comes from the repository runbook and has not been run on this cluster. Tear down in this order, because the NLB and the volumes are two things Terraform cannot clean up for you:
+
+First, snapshot any volume you want to keep. Then delete the workload Applications from the hub. They carry `Delete=false`, so delete their resources from EKS as well.
+
+Next, delete the gateway Service while the load balancer controller is still running, so it can remove the NLB and its security groups:
+
+```bash
+kubectl --context roboshop-demo -n istio-ingress delete service istio-ingressgateway
+aws elbv2 describe-load-balancers --names roboshop-demo-ingress 2>&1 | grep -c LoadBalancerNotFound
+```
+
+**Expected:** `1`.
+
+Finally, delete the namespaces and then the persistent volumes, because `Retain` left them behind. Run `terraform plan -destroy`, read it, and apply it.
+
+A `DependencyViolation` on the VPC means a load balancer or network interface is still there.
+
+## Where to go next
+
+For the reasons behind these choices, read the [EKS system design](/blog/roboshop-ai-eks-system-design). For what the services themselves do and what the split costs, read [RoboShop AI's microservices architecture and trade-offs](/blog/roboshop-ai-microservices).

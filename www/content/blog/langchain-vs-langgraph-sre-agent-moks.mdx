@@ -1,0 +1,454 @@
+---
+title: "LangChain vs LangGraph for an SRE agent: what MOKS actually uses"
+slug: langchain-vs-langgraph-sre-agent-moks
+description: "How the MOKS SRE agent uses LangGraph for its investigation loop and langchain-core for thin adapters, with real code, a traced run and known gaps."
+author: jithendar-dharmapuri
+category: ai-agents
+tags: [LangGraph, LangChain, AI Agents, SRE, Kubernetes, LLMOps]
+contentType: analysis
+status: draft
+related: [blog/moks-rag-and-skills-design]
+sources:
+  - title: LangGraph overview
+    url: https://docs.langchain.com/oss/python/langgraph/overview
+    publisher: LangChain
+  - title: LangGraph Graph API (state, reducers, edges, super-steps, recursion limit)
+    url: https://docs.langchain.com/oss/python/langgraph/graph-api
+    publisher: LangChain
+  - title: LangGraph persistence
+    url: https://docs.langchain.com/oss/python/langgraph/persistence
+    publisher: LangChain
+  - title: LangGraph interrupts
+    url: https://docs.langchain.com/oss/python/langgraph/interrupts
+    publisher: LangChain
+  - title: LangGraph streaming
+    url: https://docs.langchain.com/oss/python/langgraph/streaming
+    publisher: LangChain
+  - title: LangChain overview
+    url: https://docs.langchain.com/oss/python/langchain/overview
+    publisher: LangChain
+  - title: LangChain models (tool calling and structured output)
+    url: https://docs.langchain.com/oss/python/langchain/models
+    publisher: LangChain
+  - title: LangChain tools
+    url: https://docs.langchain.com/oss/python/langchain/tools
+    publisher: LangChain
+  - title: BaseChatModel reference (langchain-core)
+    url: https://reference.langchain.com/python/langchain-core/language_models/chat_models/BaseChatModel
+    publisher: LangChain
+---
+<Todo>Written against moks commit 9c150e9 on 2026-11-01. Suggested SEO title: "LangChain vs LangGraph for an SRE Agent: What MOKS Uses". Excerpt: "MOKS runs its investigations on LangGraph, but it installs only langchain-core and skips native tool calling. Here is what each framework really does in an AI SRE agent, traced through the code." Before publishing: (1) if a chat model has now answered a live request, replace the walkthrough label and the "Not proven" list; (2) publish moks-rag-and-skills-design first, or remove the links to it, because a published article cannot link to an unpublished one; (3) decide whether to fix the two gaps listed under "Gaps today" and update them; (4) add your own commentary, confirm the AI-assistance line at the end against the AI use policy, then set status and publishedAt.</Todo>
+
+If you are choosing between LangChain and LangGraph for an SRE agent, the first thing to know is that they are not really alternatives. LangChain's own agents [run on LangGraph](https://docs.langchain.com/oss/python/langchain/overview), and LangGraph [can be used without LangChain](https://docs.langchain.com/oss/python/langgraph/overview). The useful question is which parts you need.
+
+This article answers that with one real codebase. MOKS is an SRE investigation portal I am building: an engineer asks a question, MOKS gathers live evidence through read-only tools, and it returns a report that keeps facts, suspected causes and missing evidence apart. It is a personal project on a small lab, not a service with users.
+
+The accurate summary of how MOKS uses these frameworks is narrower than "built with LangChain and LangGraph":
+
+- **LangGraph** runs the investigation. It owns the control flow, including the loop.
+- **LangChain** appears only as `langchain-core`, used for three thin things: a chat model adapter, message classes and a tool wrapper. The `langchain` package itself is not installed.
+- **Most of the agent is neither.** Permissions, budgets, tool validation, evidence, prompts and report checks are plain Python.
+
+Several well-known features are deliberately absent, including native tool calling, checkpointing and `create_agent`. Each absence is explained below. All code links point to [commit `9c150e9`](https://github.com/mrjithendar/moks/tree/9c150e99b8825c481430bdb9a2bf10df82756cb9).
+
+::toc
+
+## Why MOKS needs a workflow, not one prompt
+
+Take the question "why is this deployment restarting?" A single prompt cannot answer it, for reasons that come from operations rather than from AI:
+
+- **The answer is in live systems.** Pod state, previous container logs, rollouts and alerts have to be fetched, and which ones depends on what the last fetch showed.
+- **Order matters.** A crash-looping container's current log is often empty during back-off, so the previous instance's log is the one to read. MOKS reads logs [in every mode](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/backend/moks/orchestrator/engine.py), so finding a cause never depends on a model thinking to look.
+- **The work must be bounded.** An investigation may not call tools forever, spend without limit or read outside the requester's namespaces.
+- **It has to survive the model.** If a provider fails or no model is configured, an on-call engineer should still get a report.
+- **Claims need evidence.** Every fact in the report has to cite something that was actually collected.
+
+That calls for a workflow where some steps are fixed, some are chosen by a model, and every exit is defined.
+
+## What LangChain is, and which parts MOKS uses
+
+LangChain is a framework for building LLM applications. Its current docs centre on agents: [`create_agent`](https://docs.langchain.com/oss/python/langchain/overview) takes a model, tools and a system prompt, and runs the model and tool loop for you, with middleware for customization. It is much more than linear chains, and the agent it creates runs on LangGraph.
+
+MOKS pins only the lower layer, in [`backend/requirements.txt`](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/backend/requirements.txt):
+
+```text
+langchain-core==1.7.3
+langgraph==1.2.19
+```
+
+`import langchain` fails in an environment built from that file. A [test](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/backend/tests/test_investigation_graph.py) also checks that vendor packages such as `langchain-openai` stay out. Here is what is used and what is not:
+
+| LangChain feature | In MOKS? | Detail |
+| --- | --- | --- |
+| `BaseChatModel` | Yes | Subclassed once, as `MoksChatModel` |
+| `SystemMessage`, `HumanMessage`, `AIMessage` | Yes | Built for each model call |
+| `StructuredTool` | Yes | Wraps planner tools around the policy path |
+| `bind_tools` | No | Calling it on `MoksChatModel` raises `NotImplementedError` |
+| `with_structured_output` | No | Also raises `NotImplementedError` here |
+| `ToolMessage` | No | Tool results return another way, covered below |
+| `create_agent`, retrievers, prompt templates | No | Not installed or not imported |
+| Vendor packages such as `langchain-openai` | No | Excluded on purpose |
+| LangSmith tracing | No | Forced off |
+
+### The chat model adapter
+
+[`backend/moks/llm/lc.py`](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/backend/moks/llm/lc.py) implements the `BaseChatModel` interface over MOKS's own LLM path:
+
+```python
+class MoksChatModel(BaseChatModel):
+    ...
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        raise NotImplementedError("MOKS is async: use ainvoke")
+
+    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+        system = "\n\n".join(str(m.content) for m in messages if isinstance(m, SystemMessage))
+        turns = [{"role": ROLES[m.type], "content": str(m.content)} for m in messages if m.type in ROLES]
+        resp = await budget.complete(self.provider, system, turns, json_mode=self.json_mode, ...)
+```
+
+The [reference](https://reference.langchain.com/python/langchain-core/language_models/chat_models/BaseChatModel) lists `_generate` as required and `_agenerate` as an optional native async method. MOKS only ever calls the model asynchronously, so the sync path refuses.
+
+The important line is the call to `budget.complete`, because it is why vendor packages are excluded. A package such as `langchain-openai` would talk to the provider directly, past budget reservations, daily limits and metering. So I kept my own [provider adapters](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/backend/moks/llm/providers.py) and put the LangChain interface on top.
+
+Importing this module also sets the LangSmith tracing variables to `false`, because a trace would send prompts holding redacted evidence to a third party. I checked this with `LANGSMITH_TRACING=true` set in the environment: after import, `langsmith`'s own `tracing_is_enabled()` returned `False`. The `langsmith` package is still installed, since `langchain-core` depends on it. Traces go to OpenTelemetry instead, with one `node <name>` span per step.
+
+### The tool wrapper
+
+[`backend/moks/tools/lc.py`](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/backend/moks/tools/lc.py) turns tool specs into `StructuredTool` objects:
+
+```python
+def wrap(spec: ToolSpec) -> StructuredTool:
+    async def run(**args: Any) -> Any:
+        purpose = args.pop("__purpose", None)
+        return await call(spec.name, args, purpose)
+    schema = spec.args.model_json_schema()
+    schema["title"] = spec.name
+    return StructuredTool.from_function(coroutine=run, name=spec.name, description=spec.description or spec.name, args_schema=schema)
+```
+
+[LangChain accepts](https://docs.langchain.com/oss/python/langchain/tools) either a Pydantic model or a JSON Schema dict as `args_schema`. MOKS passes the dict on purpose. With a Pydantic schema, a bad call would fail inside LangChain and never reach the audit log or the rejected list the planner learns from. With a dict, the arguments pass through to the `ToolExecutor`, which stays the only validator.
+
+To be fair to the reader: this wrapper does very little. The tool schema the model sees does not come from it, and nothing here uses LangChain's tool-calling flow. It is a uniform call interface around a function that already did the work.
+
+### Why not native tool calling?
+
+In LangChain's documented flow, you [`bind_tools`](https://docs.langchain.com/oss/python/langchain/models), the model returns tool calls, and either your code or an agent runs them and sends results back. MOKS does not do this. Tools are listed as JSON in the prompt, and the model replies with one JSON object, as defined in [`prompts.py`](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/backend/moks/orchestrator/prompts.py):
+
+```json
+{"tool_calls": [{"tool": "<name>", "args": {}, "purpose": "<at most 12 words>"}], "done": false}
+```
+
+The reason is recorded in the [architecture notes](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/docs/ARCHITECTURE.md): MOKS supports six provider types, and a JSON protocol behaves the same on all of them. The cost is real. Parsing, retrying a malformed reply and schema enforcement are all my code rather than the provider's.
+
+## What LangGraph is, shown through the MOKS graph
+
+LangGraph describes itself as a [low-level orchestration framework and runtime](https://docs.langchain.com/oss/python/langgraph/overview). You define a graph of functions over shared state, and it runs them. All of the MOKS graph is in 114 lines of [`backend/moks/orchestrator/graph.py`](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/backend/moks/orchestrator/graph.py), added in [commit `74cc81d`](https://github.com/mrjithendar/moks/commit/74cc81d) to replace a hand-written `for` loop over rounds.
+
+### State
+
+[State](https://docs.langchain.com/oss/python/langgraph/graph-api) is a shared snapshot that nodes read and update. Here it is a `TypedDict`:
+
+```python
+class State(TypedDict, total=False):
+    namespace: str
+    round: int
+    calls: list[dict]
+    use_rules: bool
+    finished: bool
+    report: Any
+    mode: str
+```
+
+Look at what is missing. There is no `messages` list and no evidence. Graph state holds only what routing needs, and the investigation itself lives on an `Investigator` object and in PostgreSQL. MOKS defines no reducers, so each update simply [overwrites its key](https://docs.langchain.com/oss/python/langgraph/graph-api), which is LangGraph's default.
+
+### Nodes
+
+A node is a function that takes state and returns an update. MOKS has eight: `triage`, `logs`, `skills`, `plan`, `act`, `rules`, `correlate` and `report`. Each one is thin and calls a method on `Investigator`. The docstring states the design: "The graph only decides what happens next."
+
+### Edges, routing and the loop
+
+Fixed edges say what always follows. Conditional edges run a function on state and return the next node's name. These three lines are the agent's control flow:
+
+```python
+graph.add_conditional_edges("skills", lambda s: "plan" if provider else "rules", ["plan", "rules"])
+graph.add_conditional_edges("plan", lambda s: "rules" if s.get("use_rules") else "act" if s.get("calls") else "correlate", ["rules", "act", "correlate"])
+graph.add_conditional_edges("act", lambda s: "correlate" if s.get("finished") else "plan", ["plan", "correlate"])
+```
+
+The loop is simply `act` routing back to `plan`. Nothing in a graph makes a loop finite, so MOKS bounds it in the `plan` node with its own counters, and sets a [recursion limit](https://docs.langchain.com/oss/python/langgraph/graph-api) as a backstop:
+
+```python
+limit = 2 * inv.settings.max_llm_rounds + 12  # every path is bounded; this only catches a mistake in the graph
+return await compiled.ainvoke({"namespace": namespace}, {"recursion_limit": limit})
+```
+
+That explicit value matters. The limit counts super-steps, and the documented default from LangGraph 1.1.4 is 10,007, which I also confirmed in the 1.2.19 source. A routing bug under that default could run for a very long time. With the MOKS default of 4 rounds the limit is 20, and the longest path I traced ran 14 nodes.
+
+### What MOKS does not use from LangGraph
+
+| Feature | In MOKS? | What happens instead |
+| --- | --- | --- |
+| [Checkpointers](https://docs.langchain.com/oss/python/langgraph/persistence) | No, `compile()` takes none | Evidence is committed to PostgreSQL as it is collected |
+| [Interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts) for human input | No | They need a checkpointer. Approval sits outside the graph, in action plans |
+| [Streaming](https://docs.langchain.com/oss/python/langgraph/streaming) | No, the graph uses `ainvoke` | Nodes write events to a table, and an SSE endpoint polls it |
+| Node retry policies | No | Provider adapters retry calls, and bad JSON gets one re-ask |
+| Parallel branches | No | `act` runs tool calls one at a time |
+
+The checkpointer decision has a cost worth stating. If a worker dies, a reaper marks the run failed after its heartbeat goes stale for two minutes. The evidence survives, but [the run cannot be resumed](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/docs/LIMITATIONS.md): someone re-runs it or asks a follow-up.
+
+## LangChain vs LangGraph
+
+| | LangChain | LangGraph |
+| --- | --- | --- |
+| **Main purpose** | Build LLM applications and agents quickly | Orchestrate long-running, stateful workflows |
+| **Core abstractions** | Chat models, messages, tools, `create_agent`, middleware | State, nodes, edges, super-steps, checkpointers |
+| **Control flow** | A ready-made model and tool loop that you customize | The flow you define, including loops and branches |
+| **State and persistence** | Agent state, with persistence from the LangGraph runtime underneath | Explicit state schema, with optional checkpoints by thread |
+| **Tool execution** | Defines tools; the agent loop runs them, or your code does | Runs whatever your node does, or a prebuilt tool node |
+| **Appropriate use** | A standard agent, wide provider support, fast results | Mixed deterministic and model-driven steps, strict exits, custom recovery |
+| **Role in MOKS** | `langchain-core` only: model adapter, messages, tool wrapper | The whole investigation control flow |
+
+They complement each other because they sit at different layers. LangChain gives you standard interfaces and a harness. LangGraph gives you the runtime and explicit flow. The docs themselves recommend LangGraph for needs that [combine deterministic and agentic work](https://docs.langchain.com/oss/python/langchain/overview).
+
+For an SRE agent, I would decide on this basis: if your agent is a model choosing tools until it finishes, start with `create_agent`. If your process has mandatory steps that must run regardless of the model, plus defined fallbacks, write the graph. MOKS is the second case, because triage, logs and skills run before any model is consulted, and the run must finish with no model at all. I have not built this on `create_agent` and middleware, so this is a reason for my choice and not proof that it could not work.
+
+## The implementation, step by step
+
+### How a request enters
+
+`POST /moks/api/investigations` reaches [`start_investigation`](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/backend/moks/api/investigations.py). It applies a rate limit and queue limit, resolves environment and namespace from the request or the question, checks RBAC and scope, and clamps the time window. It then inserts a `queued` row with an audit record. No model is involved yet.
+
+A [worker](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/backend/moks/orchestrator/worker.py) claims the row with `FOR UPDATE SKIP LOCKED`, so PostgreSQL is the only queue. `Investigator._run` starts a wall-clock timeout and a watcher for cancellation and revoked access. `_investigate` then re-checks authorization, because access may have changed since the request, and calls `graph.run`. The browser follows along on `GET /investigations/{id}/events`, a server-sent events stream.
+
+### How state is represented
+
+State lives in three places, which is the main thing to understand about this design:
+
+| Layer | Holds | Lifetime |
+| --- | --- | --- |
+| Graph `State` | Namespace, round, pending calls, routing flags, report | One run, in memory |
+| `Investigator` object | Evidence, findings, notes, seen calls, rejected calls, token counts | One run, in memory |
+| PostgreSQL | Events, evidence rows, audit, conversation messages, final report | Durable |
+
+A conversation is a series of investigations. For a follow-up, [`conversations.history`](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/backend/moks/conversations.py) loads up to 12 recent messages the person may still read, and they reach the model as untrusted context.
+
+### How models and tools are configured
+
+Model settings are data, not code. One `LLMConfig` row with purpose `chat` is active at a time, and `provider_for` picks one of six adapters: `anthropic`, `openai`, `azure_openai`, `gemini`, `ollama` or `bedrock`. If no row is active, `provider` is `None` and the graph takes the rules path.
+
+Tools are typed `ToolSpec` entries in a [registry](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/backend/moks/tools/contracts.py). There are 45, and all are read-only. `tools_for_planner` filters them per run by configured connectors and the requester's access, so the model only sees what could work.
+
+### How the workflow chooses its next action
+
+The fixed start is `triage`, `logs`, `skills`. After that, `plan` makes one model call and sets state, and the router reads it. The model influences the path only through `tool_calls` and `done`. Code makes the rest of the decision:
+
+```python
+async def plan(state: State) -> dict:
+    number = state.get("round", 0) + 1
+    if number > inv.settings.max_llm_rounds or inv.tool_calls >= inv.settings.max_tool_calls:
+        return {"calls": [], "finished": True}
+    try:
+        decided = await inv._plan_round(provider, cfg, inv._with_history(question), scope_info, number, ctx)
+    except failures as exc:
+        ...
+        return {"use_rules": True}
+    calls = decided.get("tool_calls") if isinstance(decided.get("tool_calls"), list) else []
+    return {"round": number, "calls": calls, "finished": not calls or decided.get("done") is True}
+```
+
+### How tool results return to the model
+
+`act` runs up to four calls per round through `_call`, which skips exact repeats and enforces the tool budget, then through the [`ToolExecutor`](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/backend/moks/tools/executor.py). Each result is redacted, truncated, stored and given a reference such as `E7`.
+
+There is no `ToolMessage` and no growing transcript. Each round, `prompts.planner_user` rebuilds a single user message from the question, scope, tool list, remaining budget, findings, an evidence digest and the rejected requests. In a traced run, the two planning prompts were each one user message, of 13,566 and 14,003 characters.
+
+This has two consequences. Prompt size is capped: 3,500 characters per evidence item and 40,000 in total, with older detail cut to summaries. But the model has no memory of its own earlier reasoning. It sees only what was collected and what was refused.
+
+### How execution terminates
+
+| Condition | Enforced by | Result |
+| --- | --- | --- |
+| Model returns no calls or `done: true` | `plan`, `act` | Moves to `correlate` |
+| A round produces no new call | `act` | Moves to `correlate` |
+| 4 rounds used (`MOKS_MAX_LLM_ROUNDS`) | `plan` | Moves to `correlate` |
+| Tool budget spent (`MOKS_MAX_TOOL_CALLS`) | `plan`, `_call` | Moves to `correlate` |
+| Model error, or token budget of 60,000 | `plan`, `_check_budget` | Moves to `rules` |
+| 180 seconds (`MOKS_MAX_DURATION_SECONDS`) | `asyncio.timeout` | Failed, with a partial report |
+| Cancelled | Watcher | Cancelled, with a partial report |
+| Access revoked | Guard and watcher | Stopped, with no report stored |
+| Recursion limit | LangGraph | Failed as an internal error, with a partial report |
+
+The code default for tool calls is 16, and the Helm chart [sets 24](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/deploy/helm/moks/values.yaml). Only the recursion limit is enforced by LangGraph. Every other bound is MOKS code.
+
+### How the answer carries evidence and uncertainty
+
+The `report` node asks for a fixed JSON shape: `summary`, `observed_facts`, `suspected_causes`, `missing_evidence`, `next_steps` and `proposed_remediation`. The model's reply is not trusted. [`validate_llm_report`](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/backend/moks/orchestrator/report.py) applies these rules:
+
+- A fact with no real evidence reference is dropped.
+- A cause with no real evidence falls to `low` confidence.
+- Words such as "root cause is confirmed" get an explicit "unverified" note.
+- Remediation is forced to `requires_approval=True` and `executable=False`.
+
+After the graph, `verify_causes` builds a separate list. A cause counts as verified only when a deterministic detector observed the fault directly, such as `oomkilled` or `crash_log_reason`. Model causes stay suspected however confident they sound. The stored report also has a coverage section listing sources used, failed tools and whether the budget ran out, so a clean answer is not mistaken for a complete one.
+
+### Framework behaviour vs MOKS logic
+
+| Provided by LangGraph or LangChain | Written in MOKS |
+| --- | --- |
+| Running nodes, applying state updates, routing | The routing rules and every node's content |
+| Recursion limit and `GraphRecursionError` | Round, tool, token, cost and time limits |
+| `ainvoke` plumbing on the chat model | Provider calls, retries, budgets, metering |
+| `StructuredTool` call interface | Tool registry, validation, RBAC, audit, evidence |
+| Message classes | Prompts, JSON protocol, parsing, report validation |
+
+## Architecture and workflow diagrams
+
+Both diagrams show implemented behaviour only. Proposed changes are listed separately under "Proposed improvements".
+
+:::figure{caption="Figure 1. Components as implemented. Purple boxes use LangGraph or langchain-core. The ToolExecutor also writes evidence and audit records to PostgreSQL. No path leads from the graph to the write-capable executor." align="wide"}
+![MOKS component architecture. moks-api queues an investigation row in PostgreSQL. In moks-worker, the Investigator claims it with SKIP LOCKED and runs with a LangGraph StateGraph whose nodes call its methods. It calls MoksChatModel, then budget.complete, then an LLM provider. It reaches the ToolExecutor directly for baseline, logs, skills and rules, and through StructuredTool wrappers for planner calls. The ToolExecutor calls connectors and, through kb_search, the RAG service. moks-executor is a separate process with the only write credentials, and it is not reachable from the graph.](/images/moks/moks-langgraph-architecture.svg)
+:::
+
+:::figure{caption="Figure 2. The compiled graph, with routing conditions taken from graph.py. Timeouts, cancellation and revocation can stop a run at any node and are not drawn."}
+![MOKS investigation workflow. START leads to triage, logs and skills. From skills, a configured model goes to plan and no model goes to rules. From plan, returned tool calls go to act, no calls or a spent budget go to correlate, and an LLMError or BudgetExceeded goes to rules. From act, more work returns to plan, and done or no new call goes to correlate. Rules goes to correlate, then report, then END. After the graph, engine.py verifies causes, adds coverage and skill contracts, and stores the report.](/images/moks/moks-langgraph-workflow.svg)
+:::
+
+## Walking through one investigation
+
+:::callout{type="warning" title="What this trace is, and is not"}
+I ran this locally on 2026-11-01 at the commit above. The API, `Investigator`, LangGraph graph, `ToolExecutor`, detectors, skills and report validation are the real code, on PostgreSQL 17. **The cluster is the repository's recorded `crashloop-invalid-config` fixture, and the model is a script.** No real model reasoned about this, no real pod crashed, and no knowledge base was indexed. It shows how MOKS handles a run. It does not show diagnostic quality. I give no timings because a fixture's timings mean nothing.
+:::
+
+The question: **"Why is the payments deployment repeatedly restarting?"**
+
+**`triage`.** `k8s_triage` becomes evidence `E1` and produces three findings, including `crashloop` for pod `payments-5c4-z9` with 9 restarts and `workload_unavailable` for the deployment.
+
+**`logs`.** No model is involved. MOKS lists pods (`E2`), describes the pod (`E3`), then reads the previous container's log because the container restarted (`E4`) and the current log (`E5`). The last exit code was 78, so `_crash_reason` adds a `crash_log_reason` finding quoting the fixture's log line:
+
+```text
+{"level":"fatal","event":"config_invalid","message":"invalid PAYMENT_MODE=lve (expected live|sandbox)"}
+```
+
+**`skills`.** Two skills are selected, and the report records why:
+
+```text
+crashloop-triage   findings: crashloop; question: restarting
+rollout-failures   findings: workload_unavailable; resource: Deployment
+```
+
+Their steps add `k8s_rollout_history` (`E6`), `k8s_events` (`E8`) and two `kb_search` calls (`E7`, `E9`) that return no passages, as nothing was indexed. The steps that would repeat `E3` and `E4` are recorded as "already collected in this run" and do not spend budget.
+
+**`plan` and `act`, round 1.** The scripted model asks for four calls, chosen to show each outcome:
+
+| Request | What happened |
+| --- | --- |
+| `k8s_events` in `moks-lab` | Exact repeat, skipped |
+| `k8s_pod_logs` for the previous container | Exact repeat, skipped |
+| `restart_deployment` | Rejected as `unknown_tool`, audited and added to the rejected list |
+| `k8s_events` in `kube-system` | Ran and failed because the fixture has one namespace. Stored as failed evidence `E10` |
+
+`restart_deployment` is not refused by a prompt. It is not in the tool registry at all.
+
+**`plan` and `act`, round 2.** The script asks for a repeat. `_act` counts zero new calls, so `finished` becomes true and the loop exits. This is the "no new call" exit, not a model decision.
+
+**`correlate`.** The only rollout is older than the 60-minute window, so no rollout finding is added.
+
+**`report`.** The script deliberately returns a bad report, to exercise validation:
+
+| The script sent | The stored report shows |
+| --- | --- |
+| A fact with no evidence, and one citing `E99` | Both dropped (`uncited_facts_dropped: 2`) |
+| "Node pressure", confidence `high`, citing `E99` | Confidence `low`, citation removed |
+| A summary saying the root cause "is confirmed" | "(Unverified: no change has been made or validated.)" appended |
+| Remediation with `executable: true` | `executable: false`, `requires_approval: true` |
+| "Invalid PAYMENT_MODE", `high`, citing `E3` | **Unchanged**, and still not verified |
+
+The last row is a limitation. `E3` exists, so the citation passes, even though the log line is in `E4`. Validation proves that a reference is real. It does not prove that the evidence supports the claim.
+
+Separately, `verified_causes` holds the `crash_log_reason` finding citing `E4`, labelled `deterministic detector: crash_log_reason`. Skill contracts passed, and `crashloop-triage` produced two suggestions, `rollback_deployment` and `open_pull_request`, neither of which runs anything. Even "verified" has a precise meaning here: the process stated this reason before exiting. The real cause [can lie deeper](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/docs/LIMITATIONS.md).
+
+The same fixture took different paths under other conditions:
+
+| Run | Nodes after `skills` | Outcome |
+| --- | --- | --- |
+| No model | `rules`, `correlate`, `report` | Completed, `generated_by: rules` |
+| Scripted model (above) | `plan`, `act`, `plan`, `act`, `correlate`, `report` | Completed, `generated_by: llm` |
+| Provider down | `plan`, `rules`, `correlate`, `report` | Completed, rule-based, with notes saying so |
+| Model never stops | 4 × (`plan`, `act`), `plan`, `correlate`, `report` | Completed. 5 model calls: 4 plans and the report |
+| Model sends an argument named `self` | `plan`, `act`, then stops | **Failed**, see "Gaps today" |
+
+## RAG, skills, tools and the graph
+
+These four are easy to blur together. In MOKS they are separate on purpose, because they carry different levels of trust:
+
+| Concept | Question it answers | Comes from | Trust |
+| --- | --- | --- | --- |
+| **RAG** (`kb_search`) | What did we write down about this? | Git, uploads, approved postmortems | Untrusted data |
+| **Skills** (`SKILL.md`) | How should an SRE investigate this? | Container image or reviewed ConfigMap | Trusted instructions |
+| **Tools** | What is true right now? | Live systems, through connectors | Untrusted data, policy-checked access |
+| **Graph** | What happens next? | `graph.py` | Code |
+
+**Skills.** 51 are built in. [`select`](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/backend/moks/skills/__init__.py) uses plain rules: a matching finding scores 3, a question keyword 1, a matching resource type 1, and up to three skills are kept. There is no semantic matching. Eligibility is decided first, so a skill lacking a connector takes no place from one that can run. A skill affects a run in two ways: its steps run in the `skills` node, with or without a model, and its body joins the system prompt as trusted guidance.
+
+**RAG.** [`kb_search`](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/backend/moks/tools/phase2.py) takes only `query` and `k`. Environment and namespace come from the run's context, so a model cannot widen the search. [Retrieval](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/backend/moks/rag/service.py) fuses keyword, exact-identifier and, when available, vector rankings with reciprocal rank fusion, then re-checks every candidate against PostgreSQL. Each passage carries a citation, and the result becomes ordinary evidence with an `E` reference. MOKS's RAG does not use LangChain retrievers. The [RAG and skills article](/blog/moks-rag-and-skills-design) covers indexing and retrieval in depth.
+
+**How they connect.** Knowledge reaches the model through a tool, inside an `<untrusted_data>` block with a random tag. A skill can call `kb_search` as a step, which is how the two meet. The graph knows nothing about any of this. To it, `skills` is one node like the others. A retrieved document that looks exactly like a skill stays data, because skills load only from the image and ConfigMap.
+
+## Reliability and security
+
+Using LangGraph does not make an agent safe. A graph makes control flow explicit, and it will loop forever or call anything you wire in. Every control below is ordinary code around the framework.
+
+### Controls present today
+
+| Area | Control |
+| --- | --- |
+| Tool permissions | Read-only tools only. The `ToolExecutor` checks the tool, arguments, RBAC and scope on every call, and audits denials |
+| Scope | RBAC intersected with environment allow and deny lists, re-checked when the job runs and before each tool call and model call |
+| Kubernetes access | The chart's reader role has read verbs only, with no Secrets, `pods/exec` or port-forward |
+| Command execution | The model has no shell or exec tool. Diagnostic sessions and the web terminal are separate and not exposed to it |
+| Timeouts | 45 seconds per tool call, a per-provider timeout (default 60), and 180 seconds per investigation |
+| Limits | 4 rounds, 4 calls per round, 16 tool calls by default (24 in the chart), 60,000 tokens, plus reserved daily budgets |
+| Errors | A failed tool becomes failed evidence, a missing connector becomes a note, and a model failure moves to rules |
+| Sensitive data | Pattern-based redaction on evidence and prompts, untrusted-data tags with random ids, LangSmith forced off |
+| Changes | A report only proposes. Plans go through a separate approval flow, and only the `moks-executor` process holds write credentials |
+
+### Gaps today
+
+These are current limits, not plans:
+
+- **A malformed argument can fail the run.** While writing this I sent an argument named `self` from a scripted model. It raised a `TypeError` inside LangChain's tool wrapper, before the `ToolExecutor`, and the investigation failed as an internal error with a partial report. A real model is unlikely to send this, but `_act` has no per-call exception handling.
+- **Arguments are not always untouched.** The `tools/lc.py` docstring says they pass through unchanged, but LangChain dropped keys named `config` and `run_manager` in my test, so those never reached the validator. LangChain [documents `config` as reserved](https://docs.langchain.com/oss/python/langchain/tools).
+- **Citations are existence-checked only**, as the walkthrough showed.
+- **No resume.** A stopped worker's run is marked failed and must be repeated.
+- **The `mode` field is misleading.** The investigation row's `mode` keeps its default of `llm`, even for rule-based runs. The report's `generated_by` is correct.
+- **Redaction is pattern-based**, so it [cannot recognize every secret](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/docs/LIMITATIONS.md). Redacted evidence still goes to whichever provider you configure.
+- **Prompt injection is contained, not prevented.** Text in a log cannot add a tool or widen scope, but it can still mislead a suspected cause.
+- **One shared identity.** The Kubernetes connector uses one ServiceAccount across users, so isolation relies on MOKS's checks, not impersonation.
+- **Separation of duties has an exception.** A global administrator can [approve their own plans](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/docs/SECURITY.md), including in production. That is audited, but one account can change production alone.
+
+### Not proven
+
+The repository's [status document](https://github.com/mrjithendar/moks/blob/9c150e99b8825c481430bdb9a2bf10df82756cb9/docs/LIMITATIONS.md) records that no chat model has answered a live request in the lab, so reports there have come from the rule-based path. The plan and act loop has been exercised only with a scripted model. That is the biggest gap in this article: the graph's mechanics are tested, and the quality of real model-led investigations is unmeasured. No action plan has run against a real API server either.
+
+### Proposed improvements
+
+None of these exist yet:
+
+- Reject reserved argument names and catch exceptions per call in `_act`, so a bad request becomes a rejection the planner can learn from.
+- Check that a cited evidence item actually relates to the claim.
+- Run the lab scenarios against a real model and record the results.
+- Evaluate a checkpointer once real runs show whether resuming is worth more than simply re-running.
+
+## Lessons and trade-offs
+
+**What got easier.** Routing is now visible in three lines and testable as data: one test reads the compiled graph and asserts its nodes and edges. Paths like "no model" and "planning failed" are edges rather than branches buried in a loop. Per-node spans take one small wrapper. Cancellation also carried over, and a test covers cancelling during `act`.
+
+**What got harder.** State now lives in three places, and a reader must learn that the graph holds only routing data. Nodes change `Investigator` directly, so the graph's state does not show what an investigation knows, which is unusual for LangGraph. Adopting a checkpointer later would need that reworked.
+
+**What the frameworks did not do.** Most of the reliability work is still mine. LangGraph supplies a recursion limit, and everything else in the termination table is MOKS code. On the LangChain side, the tool wrapper in particular adds little, and a dictionary of async functions would behave almost the same. Its dependencies also came along: `langchain-core` brings in `langsmith`, which then had to be switched off.
+
+**The tool-calling trade-off.** The JSON protocol gives identical behaviour across providers and keeps one validator. It gives up provider-enforced schemas, costs a re-ask on bad JSON, and resends the tool list every round.
+
+**What is unfinished.** There are no real-model results, no resume, and evidence checks are shallow. The graph is sound as a control structure, but whether MOKS is a good investigator is still an open question.
+
+*This article was drafted with AI assistance from the repository and official documentation, and reviewed by the author before publication.*

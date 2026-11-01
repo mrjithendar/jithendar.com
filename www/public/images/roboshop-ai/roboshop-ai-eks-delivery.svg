@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 690" width="560" height="690" role="img" aria-labelledby="roboshop-ai-eks-delivery-title roboshop-ai-eks-delivery-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="roboshop-ai-eks-delivery-title">How RoboShop AI reaches Amazon EKS</title>
+<desc id="roboshop-ai-eks-delivery-desc">Terraform in the tools repository creates the AWS layer through a self-hosted runner when infrastructure changes reach master. Service workflows in roboshop-ai build arm64 images and push them to Amazon ECR. Argo CD runs on a separate cluster, mk4, reads both Git repositories and syncs Applications to the EKS cluster by hand. EKS nodes pull images from ECR, and a Prometheus agent writes metrics back to mk4.</desc>
+<defs><marker id="arrow-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker><marker id="arrow-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="13" markerHeight="13" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#be123c"/></marker><marker id="arrow-telemetry" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#15803d"/></marker><marker id="arrow-dlq" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#be123c"/></marker></defs>
+<rect width="100%" height="100%" rx="18" fill="#ffffff"/>
+<text x="24" y="40" font-size="20" font-weight="700" fill="#0f172a" text-anchor="start">How RoboShop AI reaches EKS</text>
+<text x="24" y="62" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">Three separate paths: AWS resources, images and Kubernetes state.</text>
+<rect x="12" y="80" width="536" height="106" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="29" y="133.0" transform="rotate(-90 29 133.0)" font-size="11" font-weight="700" fill="#475569" text-anchor="middle" letter-spacing="1">GIT</text>
+<rect x="48" y="106" width="230" height="64" rx="10" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+<text x="163.0" y="133.0" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">tools</text>
+<text x="163.0" y="153.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">Terraform, add-ons, ingress</text>
+<rect x="306" y="106" width="230" height="64" rx="10" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+<text x="421.0" y="133.0" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">roboshop-ai</text>
+<text x="421.0" y="153.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">services, argocd-eks, mesh</text>
+<rect x="12" y="198" width="536" height="110" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="29" y="253.0" transform="rotate(-90 29 253.0)" font-size="11" font-weight="700" fill="#475569" text-anchor="middle" letter-spacing="1">BUILDERS</text>
+<rect x="48" y="222" width="230" height="64" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+<text x="163.0" y="239.0" font-size="15" font-weight="700" fill="#1e1b4b" text-anchor="middle">Create infrastructure</text>
+<text x="163.0" y="259.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">self-hosted runner</text>
+<text x="163.0" y="279.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">applies on push</text>
+<rect x="306" y="222" width="230" height="64" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+<text x="421.0" y="249.0" font-size="15" font-weight="700" fill="#1e1b4b" text-anchor="middle">Service workflows</text>
+<text x="421.0" y="269.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">build linux/arm64 images</text>
+<path d="M120,170 L120,222" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<text x="128" y="202" font-size="12" font-weight="600" fill="#1e293b" text-anchor="start" paint-order="stroke" stroke="#ffffff" stroke-width="5" stroke-linejoin="round">infrastructure/</text>
+<path d="M421,170 L421,222" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<text x="413" y="202" font-size="12" font-weight="600" fill="#1e293b" text-anchor="end" paint-order="stroke" stroke="#ffffff" stroke-width="5" stroke-linejoin="round">services/*</text>
+<rect x="12" y="320" width="536" height="110" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="29" y="375.0" transform="rotate(-90 29 375.0)" font-size="11" font-weight="700" fill="#475569" text-anchor="middle" letter-spacing="1">CONTROL</text>
+<rect x="104" y="342" width="174" height="68" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="2.4"/>
+<text x="191.0" y="361.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">Argo CD on mk4</text>
+<text x="191.0" y="381.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">reads both repos,</text>
+<text x="191.0" y="401.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">syncs by hand</text>
+<rect x="306" y="342" width="230" height="68" rx="10" fill="#fffbeb" stroke="#b45309" stroke-width="1.6"/>
+<text x="421.0" y="371.0" font-size="15" font-weight="700" fill="#451a03" text-anchor="middle">Amazon ECR</text>
+<text x="421.0" y="391.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">service images</text>
+<path d="M421,286 L421,342" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<text x="429" y="326" font-size="12" font-weight="600" fill="#1e293b" text-anchor="start" paint-order="stroke" stroke="#ffffff" stroke-width="5" stroke-linejoin="round">push</text>
+<rect x="12" y="442" width="536" height="170" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="29" y="527.0" transform="rotate(-90 29 527.0)" font-size="11" font-weight="700" fill="#475569" text-anchor="middle" letter-spacing="1">AWS</text>
+<rect x="48" y="500" width="488" height="90" rx="10" fill="#f5f3ff" stroke="#6d28d9" stroke-width="2.4"/>
+<text x="292.0" y="530.0" font-size="15" font-weight="700" fill="#2e1065" text-anchor="middle">EKS cluster roboshop-demo</text>
+<text x="292.0" y="550.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">two t4g.large nodes, Kubernetes 1.36</text>
+<text x="292.0" y="570.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">Istio, RoboShop workloads, data stores</text>
+<path d="M72,286 L72,500" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<text x="80" y="474" font-size="12" font-weight="600" fill="#1e293b" text-anchor="start" paint-order="stroke" stroke="#ffffff" stroke-width="5" stroke-linejoin="round">creates</text>
+<path d="M190,410 L190,500" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<text x="198" y="474" font-size="12" font-weight="600" fill="#1e293b" text-anchor="start" paint-order="stroke" stroke="#ffffff" stroke-width="5" stroke-linejoin="round">sync</text>
+<path d="M421,410 L421,500" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<text x="429" y="474" font-size="12" font-weight="600" fill="#1e293b" text-anchor="start" paint-order="stroke" stroke="#ffffff" stroke-width="5" stroke-linejoin="round">pull</text>
+<text x="48" y="636" font-size="12" font-weight="400" fill="#475569" text-anchor="start">A Prometheus agent on EKS writes metrics back to mk4.</text>
+<text x="48" y="656" font-size="12" font-weight="400" fill="#475569" text-anchor="start">Nothing here deploys automatically: an operator runs every Argo CD sync.</text>
+</svg>

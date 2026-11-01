@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 860" width="560" height="860" role="img" aria-labelledby="roboshop-ai-eks-services-title roboshop-ai-eks-services-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="roboshop-ai-eks-services-title">RoboShop AI on Amazon EKS: what runs today</title>
+<desc id="roboshop-ai-eks-services-desc">A browser connects to an internet-facing Network Load Balancer, which passes TCP to the Istio ingress gateway. The gateway ends public TLS, strips /roboshop and routes to web, which proxies /api to ai-gateway. ai-gateway calls the user, catalogue, cart, payment, shipping and currency services. Paid orders leave the gateway&#x27;s outbox through RabbitMQ to shipping-service and kafka-bridge. mcp-server is private with no public route. The moks shopping assistant is in the repository but is not deployed on this cluster.</desc>
+<defs><marker id="arrow-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker><marker id="arrow-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="13" markerHeight="13" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#be123c"/></marker><marker id="arrow-telemetry" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#15803d"/></marker><marker id="arrow-dlq" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#be123c"/></marker></defs>
+<rect width="100%" height="100%" rx="18" fill="#ffffff"/>
+<text x="24" y="40" font-size="20" font-weight="700" fill="#0f172a" text-anchor="start">RoboShop AI on Amazon EKS</text>
+<text x="24" y="62" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">What runs on the cluster, checked 2026-11-01.</text>
+<rect x="12" y="80" width="536" height="216" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="29" y="188.0" transform="rotate(-90 29 188.0)" font-size="11" font-weight="700" fill="#475569" text-anchor="middle" letter-spacing="1">PUBLIC PATH</text>
+<rect x="48" y="96" width="488" height="44" rx="10" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+<text x="292.0" y="113.0" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">Browser</text>
+<text x="292.0" y="133.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">HTTPS to eks.jithendar.com/roboshop/</text>
+<rect x="48" y="164" width="230" height="56" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+<text x="163.0" y="187.0" font-size="15" font-weight="700" fill="#1e1b4b" text-anchor="middle">Network Load Balancer</text>
+<text x="163.0" y="207.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">TCP 443 and 80, IP targets</text>
+<rect x="306" y="164" width="230" height="56" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+<text x="421.0" y="187.0" font-size="15" font-weight="700" fill="#1e1b4b" text-anchor="middle">Istio ingress gateway</text>
+<text x="421.0" y="207.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">ends TLS, strips /roboshop</text>
+<rect x="306" y="234" width="230" height="50" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+<text x="421.0" y="254.0" font-size="15" font-weight="700" fill="#1e1b4b" text-anchor="middle">web</text>
+<text x="421.0" y="274.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">NGINX + static storefront</text>
+<path d="M163,140 L163,164" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<path d="M278,192 L306,192" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<path d="M421,220 L421,234" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<rect x="12" y="308" width="536" height="118" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="29" y="367.0" transform="rotate(-90 29 367.0)" font-size="11" font-weight="700" fill="#475569" text-anchor="middle" letter-spacing="1">ENTRY</text>
+<rect x="306" y="320" width="230" height="94" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="2.4"/>
+<text x="421.0" y="352.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">ai-gateway</text>
+<text x="421.0" y="372.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">public API, sessions,</text>
+<text x="421.0" y="392.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">JSON ledger, outbox</text>
+<rect x="48" y="320" width="230" height="42" rx="10" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.6"/>
+<text x="163.0" y="336.0" font-size="15" font-weight="700" fill="#2e1065" text-anchor="middle">mcp-server</text>
+<text x="163.0" y="356.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">private, port-forward only</text>
+<rect x="48" y="372" width="230" height="42" rx="10" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="163.0" y="388.0" font-size="15" font-weight="700" fill="#2e1065" text-anchor="middle">moks</text>
+<text x="163.0" y="408.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">not deployed on EKS</text>
+<rect x="212" y="363" width="58" height="18" rx="9" fill="#ffffff" stroke="#6d28d9" stroke-width="1.2"/>
+<text x="241" y="376" font-size="10.5" font-weight="600" fill="#6d28d9" text-anchor="middle" font-style="italic">optional</text>
+<path d="M421,284 L421,320" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<path d="M278,341 L306,341" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<rect x="12" y="438" width="536" height="210" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="29" y="543.0" transform="rotate(-90 29 543.0)" font-size="11" font-weight="700" fill="#475569" text-anchor="middle" letter-spacing="1">DOMAIN SERVICES</text>
+<rect x="48" y="452" width="236" height="54" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6"/>
+<text x="166.0" y="474.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">user-service</text>
+<text x="166.0" y="494.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">MongoDB users</text>
+<rect x="300" y="452" width="236" height="54" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6"/>
+<text x="418.0" y="474.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">catalogue-service</text>
+<text x="418.0" y="494.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">MongoDB products</text>
+<rect x="48" y="516" width="236" height="54" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6"/>
+<text x="166.0" y="538.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">cart-service</text>
+<text x="166.0" y="558.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">Redis</text>
+<rect x="300" y="516" width="236" height="54" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6"/>
+<text x="418.0" y="538.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">payment-service</text>
+<text x="418.0" y="558.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">Razorpay test mode</text>
+<rect x="48" y="580" width="236" height="54" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6"/>
+<text x="166.0" y="602.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">shipping-service</text>
+<text x="166.0" y="622.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">PostgreSQL</text>
+<rect x="300" y="580" width="236" height="54" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6"/>
+<text x="418.0" y="602.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">currency-service</text>
+<text x="418.0" y="622.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">ECB feed</text>
+<path d="M421,414 L421,452" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<text x="429" y="436" font-size="12" font-weight="600" fill="#1e293b" text-anchor="start" paint-order="stroke" stroke="#ffffff" stroke-width="5" stroke-linejoin="round">HTTP</text>
+<rect x="12" y="660" width="536" height="108" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="29" y="714.0" transform="rotate(-90 29 714.0)" font-size="11" font-weight="700" fill="#475569" text-anchor="middle" letter-spacing="1">EVENTS</text>
+<rect x="48" y="686" width="120" height="56" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6"/>
+<text x="108.0" y="709.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">ai-gateway</text>
+<text x="108.0" y="729.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">ledger outbox</text>
+<rect x="206" y="686" width="130" height="56" rx="10" fill="#fff1f2" stroke="#be123c" stroke-width="1.6"/>
+<text x="271.0" y="709.0" font-size="15" font-weight="700" fill="#4c0519" text-anchor="middle">RabbitMQ</text>
+<text x="271.0" y="729.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">roboshop.orders</text>
+<rect x="380" y="676" width="156" height="36" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6"/>
+<text x="458.0" y="699.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">shipping-service</text>
+<rect x="380" y="722" width="156" height="36" rx="10" fill="#ecfdf5" stroke="#047857" stroke-width="1.6"/>
+<text x="458.0" y="745.0" font-size="15" font-weight="700" fill="#064e3b" text-anchor="middle">kafka-bridge</text>
+<path d="M168,714 L206,714" fill="none" stroke="#be123c" stroke-width="3.2" stroke-linejoin="round" marker-end="url(#arrow-async)"/>
+<path d="M336,706 L358,706 L358,694 L380,694" fill="none" stroke="#be123c" stroke-width="3.2" stroke-linejoin="round" marker-end="url(#arrow-async)"/>
+<path d="M336,722 L358,722 L358,740 L380,740" fill="none" stroke="#be123c" stroke-width="3.2" stroke-linejoin="round" marker-end="url(#arrow-async)"/>
+<rect x="12" y="780" width="536" height="66" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="29" y="813.0" transform="rotate(-90 29 813.0)" font-size="11" font-weight="700" fill="#475569" text-anchor="middle" letter-spacing="1">LEGEND</text>
+<path d="M48,803 L78,803" stroke="#475569" stroke-width="1.8" marker-end="url(#arrow-sync)"/>
+<text x="88" y="807.5" font-size="12.5" font-weight="500" fill="#334155" text-anchor="start">Synchronous</text>
+<path d="M185.9,803 L215.9,803" stroke="#be123c" stroke-width="3.2" marker-end="url(#arrow-async)"/>
+<text x="225.9" y="807.5" font-size="12.5" font-weight="500" fill="#334155" text-anchor="start">Asynchronous event</text>
+<rect x="48" y="821" width="26" height="16" rx="4" fill="#ffffff" stroke="#64748b" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="82" y="833.5" font-size="12.5" font-weight="500" fill="#334155" text-anchor="start">In Git, not running</text>
+</svg>

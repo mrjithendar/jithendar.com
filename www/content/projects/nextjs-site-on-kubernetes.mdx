@@ -1,0 +1,174 @@
+---
+title: "How jithendar.com runs: a self-hosted Next.js platform on Kubernetes"
+slug: nextjs-site-on-kubernetes
+description: "The architecture of this site after its WordPress compromise: Next.js on one Minikube server, PostgreSQL, R2, the release path and its failure modes."
+author: jithendar-dharmapuri
+category: devops-sre
+tags: [Next.js, Kubernetes, PostgreSQL, Observability, Security]
+contentType: project
+status: review
+publishedAt: "2026-10-29T20:25:35+05:30"
+related: [projects/roboshop-ai]
+---
+<Todo>Draft for editorial review, checked against this repository at 6bc2304 and the live site on 2026-11-01. Before publishing: (1) decide on the Cloudflare finding: the apex is DNS-only today, so the old CDN, DDoS and hidden-IP claims were false. Either keep this text, or turn the proxy on, confirm SSL mode "Full (strict)" and edit the request path; (2) resolve the image pin: production runs :latest with imagePullPolicy Always while kustomization.yaml pins a digest; (3) confirm whether scheduled backups are enabled and whether a restore has been tested, then complete the Backups section; (4) add why you rebuilt the site and what you learned, in your own words, at the marked place; (5) add the four screenshots at the marked places, blurring IP addresses and emails; (6) say whether to mention plans to move this site off the single server. Tick Substantive update when you save.</Todo>
+
+On 27 October 2026 a stranger installed WordPress on my domain. The old site was a self-hosted chart whose ingress was switched on before its setup had run, so `/wp-admin/install.php` was open to anyone who found it. Someone did, created an admin user and filled the site with spam. There was no genuine content to save, so I removed it the same day.
+
+That incident shaped what replaced it: a single Next.js application with its own editor, admin and security controls, running on Kubernetes on one server. This page explains how a request is served, how a release ships, and which failures the design does not protect against.
+
+<Todo>Your words: why you rebuilt rather than reinstalled, and what you learned.</Todo>
+
+## The request path
+
+A reader's request reaches the origin directly. Cloudflare handles DNS for the domain, but the apex record is [DNS-only](https://developers.cloudflare.com/dns/proxy-status/), so traffic does not pass through Cloudflare's network. That means no CDN caching, no Cloudflare DDoS protection for this traffic, and an origin address anyone can look up.
+
+```text
+Reader
+  -> Traefik (TLS, redirects, compression)
+  -> jithendar-com pod (one of two replicas)
+       -> PostgreSQL (source of truth)
+       -> Redis (optional cache)
+       -> Cloudflare R2 (media, through the app)
+```
+
+1. **Traefik** ends TLS with a Let's Encrypt certificate from cert-manager. It redirects `http` and `www` to the HTTPS apex in one hop, and compresses text with zstd, Brotli or gzip.
+2. **Next.js** runs as two replicas in the `jithendar` namespace. It claims `/`, and Traefik gives longer path rules priority, so tools on other paths of the same host keep working.
+3. **PostgreSQL** holds the content. **Redis** speeds things up, and losing it only sends reads back to Postgres.
+4. **Media** comes from R2 through the app, and `next/image` resizes images to AVIF or WebP inside the pods.
+
+The whole cluster is a four-node Minikube profile on one server, shared with Argo CD and the monitoring stack.
+
+## Why the setup page disappears
+
+The hijack's root cause was exposing an application before it was initialized. The fix here is a rule and a mechanism. The first admin is created at `/setup`, which requires a one-time token from a Kubernetes Secret, and the page stops existing once an admin does. Any new workload with a first-run flow has to be gated the same way before it gets a public route.
+
+## What the stack is
+
+| Layer | Choice | Role here |
+| --- | --- | --- |
+| Framework | Next.js 16, React 19, TypeScript 6 | Pages, admin and API in one app |
+| Styling | Tailwind CSS 4 | Design tokens with light and dark themes |
+| Data | PostgreSQL 18, Drizzle ORM | Posts, users, comments, revisions, jobs, audit log |
+| Cache | Redis 7.4 | Cache, rate limits and invalidation across replicas |
+| Media | Cloudflare R2, `next/image` with sharp | Files, backups and image resizing |
+| Editor | Tiptap 3, remark and rehype | Visual Markdown editing, server rendering |
+| Sign-in | Better Auth, Cloudflare Turnstile | Accounts, roles and bot checks |
+| Cluster | Minikube, Traefik, cert-manager | Hosting, ingress, certificates |
+| Delivery | GitHub Actions, Amazon ECR | Tests, image builds and the registry |
+| Monitoring | Prometheus, Grafana, Loki, Jaeger | Metrics, logs and traces |
+
+## Content is Markdown, and nothing in it runs
+
+Articles live as Markdown in PostgreSQL, and the visual editor is a view over that text. Before opening a document visually, the editor round-trips it. If anything would change, it opens in Markdown mode and says why.
+
+The site compiles post bodies as plain Markdown, never as MDX. After a WordPress compromise, that was the point: raw HTML, JSX and expressions in a post are not executed, so a stolen author account can deface a post but cannot run code through it.
+
+- Every save, publish and restore stores a revision, and history is never rewritten.
+- Scheduled publishing runs in the site pods every 30 seconds, using conditional updates, so a post publishes once across replicas and restarts.
+- After a change, caches clear on every replica, and sitemaps and feeds reflect it on the next request.
+
+## Media on Cloudflare R2
+
+Images up to 10 MB go through a server action, so the app can validate them. Video, audio and PDF files go straight from the browser to R2 with a short-lived signed URL, up to 200 MB, so large uploads never tie up a pod.
+
+R2 speaks the S3 API, so the app uses the standard AWS SDK with a different endpoint. The main attraction is cost: [R2 charges nothing for egress](https://developers.cloudflare.com/r2/pricing/) and bills storage and operations instead, which suits a site whose main traffic is people downloading images. S3 remains the better fit for workloads that live inside AWS. The move from S3 used a built-in migration that copies each file, records both locations and can be rolled back.
+
+Because R2 sits behind the app here, every image request still passes through a pod. Serving files from R2's public domain would take that load off the server, and the app supports it for video, audio and PDFs when a public base URL is configured.
+
+## Keeping bots out of the forms
+
+Password sign-in, sign-up and the contact form use [Cloudflare Turnstile](https://developers.cloudflare.com/turnstile/). This is separate from the DNS question: Turnstile is an API the site calls, and it works whether or not traffic is proxied.
+
+1. The browser widget produces a one-time token.
+2. The form sends it with the rest of the data.
+3. The server verifies it with Cloudflare using a secret key. On failure it rejects the request, and failed sign-in checks are audited.
+
+Comments need a signed-in session, so they rely on the check at sign-in, and signed-in visitors skip it on the contact form. Rate limits and comment moderation still apply.
+
+## Security controls
+
+- New accounts are readers. Only an admin grants author or admin roles, and each admin page checks the role on the server.
+- Passwords are checked against known breaches, and sign-ins are rate-limited.
+- Stored credentials for storage, email and integrations are encrypted in the database.
+- Pods run as non-root with a read-only root filesystem, dropped capabilities and no service-account token.
+- NetworkPolicies allow only site pods to reach Postgres and Redis. Whether they are enforced depends on the cluster's network plugin, so treat them as intent until that is tested.
+
+Sensitive actions go to an audit log with actor, time, IP address and severity. It opens with a summary of the last 24 hours, filters by IP and exports to CSV.
+
+<Todo>Screenshot: Admin → Audit log (24-hour summary). Blur IP and email addresses first.</Todo>
+
+## Backups
+
+Each backup is gzip-compressed and encrypted with AES-256-GCM using a passphrase held by the owner, before it is stored in R2. Backups hold content, configuration and accounts, and leave out password hashes, sessions and stored credentials. They can run daily or weekly with a retention limit, or be started by hand from the admin.
+
+<Todo>State whether a schedule is on, and whether a restore has been tested. A backup with no tested restore should be described as exactly that.</Todo>
+
+<Todo>Screenshot: Admin → Backups.</Todo>
+
+## Seeing what the site is doing
+
+- **Metrics:** Prometheus scrapes request rate and latency per route, runtime metrics and site figures such as pending comments.
+- **Logs:** structured JSON collected by Alloy into Loki, with only allowlisted fields kept.
+- **Traces:** OpenTelemetry spans go to Jaeger, after a filter removes URLs, queries and SQL.
+- **System status:** an admin page checks each dependency live, including the certificate's remaining days and the latest backup.
+
+Three alerts exist: no pod scraped for 5 minutes, more than 5% 5xx responses for 5 minutes, and p95 latency above 2 seconds for 10 minutes. They appear in Prometheus, but no Alertmanager delivers them, so nobody is paged. An outage is only noticed if someone looks.
+
+<Todo>Screenshot: Admin → System status.</Todo>
+
+## How a release ships
+
+Builds moved off the cluster host on 29 October 2026, because running them there competed with the cluster for memory and disk until the server froze. CI now runs on GitHub-hosted runners, with a native `ubuntu-24.04-arm` runner so `sharp`'s prebuilt binaries match the arm64 nodes.
+
+The image packages the standalone build on Debian slim. It isn't Alpine, because `sharp` is built for glibc on the runner:
+
+```dockerfile
+FROM node:26-bookworm-slim
+WORKDIR /app
+ARG GIT_SHA=dev
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=3000 GIT_SHA=$GIT_SHA
+COPY --chown=1000:1000 .next/standalone ./
+COPY --chown=1000:1000 .next/static ./.next/static
+COPY --chown=1000:1000 public ./public
+USER 1000:1000
+CMD ["node", "server.js"]
+```
+
+A push to `master` then does this:
+
+1. Lint, test and run the production build.
+2. Build the image and start it in CI. The job checks that `/api/health` reports the commit, and that the image optimizer returns AVIF or WebP. An image that fails this is never pushed.
+3. Push `jithendar-com:<commit-sha>` and move `latest`.
+4. Restart the Deployment, as a ServiceAccount that may only restart and watch that one Deployment.
+
+`GIT_SHA` makes the check honest, because `/api/health` shows which commit is live:
+
+```bash
+curl -s https://jithendar.com/api/health
+```
+
+```text
+{"status":"ok","version":"6bc23040ea8dcc867e9defd1cb9c7db9cf8bb537"}
+```
+
+A second path exists for manifest changes and rollbacks. `./deploy.sh <commit-sha>` pins the image digest, server dry-runs, applies the manifests, waits for the rollout, undoes it if it fails, and runs a smoke test. ECR keeps the last 30 images, so those are the rollback targets.
+
+The two paths have a cost. CI's restart relies on `:latest` with `imagePullPolicy: Always`, and that is what production runs today. It is simple, but it means a pod restart can pick up a newer image and the running version isn't recorded in Git. The digest pin in `kustomization.yaml` gives you that record, but only for what `deploy.sh` last applied.
+
+Rolling updates surge by one pod, a PodDisruptionBudget covers voluntary disruption, and a `preStop` sleep gives Traefik time to stop routing to a pod before it exits. The container filesystem is read-only, so Next.js gets `emptyDir` volumes for `/tmp` and its cache.
+
+## How it fails
+
+The design is small enough to reason about, so its limits are easy to list:
+
+| Failure | What happens |
+| --- | --- |
+| A pod crashes, or a rollout replaces one | The other replica serves. This is what two replicas buy. |
+| The server or its disk fails | The site is down. Replicas share one machine, and all four Minikube nodes share one disk. |
+| The node holding Postgres goes away | Postgres stays down, because it is pinned to a node with hostpath storage. |
+| Redis is lost | Reads fall back to Postgres, and the site keeps working. |
+| R2 is unreachable | Pages load without media, and uploads and backups fail. |
+| A traffic flood reaches the origin | Nothing in front absorbs it, because the DNS-only record bypasses Cloudflare. |
+| The site goes down overnight | Alerts fire in Prometheus, and nothing tells a person. |
+
+In return, the whole platform is small enough to understand end to end, and every part of it is something I can inspect, change and explain.

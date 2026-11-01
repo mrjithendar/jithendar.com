@@ -1,5 +1,29 @@
 # Progress log — jithendar.com
 
+## Content audit, Batch 1 (2026-11-01, owner request)
+
+**What changed** (uncommitted, nothing published)
+- `docs/CONTENT_AUDIT.md`: inventory, plan, SEO fields, redirects, open questions and validation.
+- Rewrote `content/blog/deploy-roboshop-ai-amazon-eks.mdx` and `content/blog/roboshop-ai-microservices.mdx` (which absorbs `-architecture`), both `status: review`.
+- Replaced `content/projects/jithendar-com.mdx` with `content/projects/nextjs-site-on-kubernetes.mdx`, matching the live slug.
+- New diagrams `roboshop-ai-eks-services.svg` and `roboshop-ai-eks-delivery.svg`, with `.mmd` sources and two functions in `build_diagrams.py`.
+- `tests/pages-media.test.ts`: title assertion follows the new article title.
+
+**Commands → result**: `npm test` 394 passed / 1 failed (`article-route` future-post: fixture date 2026-11-01 has passed; unrelated, fails CI until moved); lint, typecheck and production build pass. Full table in `docs/CONTENT_AUDIT.md` section 10.
+
+**Open**: live posts are in PostgreSQL, so approved drafts must be applied in the editor (audit section 6). Owner decisions are in audit section 7. Batches 2 and 3 wait for editorial review.
+
+## Draft article: LangChain vs LangGraph for an SRE agent (2026-11-01, owner request)
+
+**What changed**
+- New `content/blog/langchain-vs-langgraph-sre-agent-moks.mdx` (analysis, `status: draft`; not published), written against moks commit `9c150e9`. The requested title changed because MOKS installs `langchain-core`, not `langchain`.
+- Two Mermaid diagrams: sources in `docs/diagrams/moks-langgraph/*.mmd`, rendered with mermaid-cli 11.4.2 to `public/images/moks/moks-langgraph-*.svg`.
+- `docs/diagrams/moks-langgraph/VERIFICATION.md`, plus the trace test and its output.
+
+**Commands → result**: `vitest` 3 failed / 392 passed; the same 3 fail without this article (`article-route` future-post, `editor-workflow` deploy-roboshop-ai-amazon-eks, `pages-media` bundled posts). A fourth `article-route` test timed out once and passes alone. Lint, typecheck and build not run (content and static assets only).
+
+**Manual steps**: review the `<Todo>`; publish `moks-rag-and-skills-design` first or remove the links to it; set `status`/`publishedAt`.
+
 ## Draft article: MOKS RAG and skills design (2026-10-31, owner request)
 
 **What changed**

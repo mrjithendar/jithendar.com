@@ -374,8 +374,95 @@ def observability():
     s.render("roboshop-ai-observability")
 
 
+def eks_services():
+    s = Svg(560, 860, "RoboShop AI on Amazon EKS: what runs today",
+            "A browser connects to an internet-facing Network Load Balancer, which passes TCP to the Istio ingress gateway. "
+            "The gateway ends public TLS, strips /roboshop and routes to web, which proxies /api to ai-gateway. ai-gateway "
+            "calls the user, catalogue, cart, payment, shipping and currency services. Paid orders leave the gateway's outbox "
+            "through RabbitMQ to shipping-service and kafka-bridge. mcp-server is private with no public route. The moks "
+            "shopping assistant is in the repository but is not deployed on this cluster.")
+    s.text(24, 40, "RoboShop AI on Amazon EKS", 20, 700, "#0f172a", "start")
+    s.text(24, 62, "What runs on the cluster, checked 2026-11-01.", 12.5, 400, "#475569", "start")
+
+    s.band(12, 80, 536, 216, "Public path", gutter=True)
+    s.node(48, 96, 488, 44, "client", "Browser", ["HTTPS to eks.jithendar.com/roboshop/"])
+    s.node(48, 164, 230, 56, "edge", "Network Load Balancer", ["TCP 443 and 80, IP targets"])
+    s.node(306, 164, 230, 56, "edge", "Istio ingress gateway", ["ends TLS, strips /roboshop"])
+    s.node(306, 234, 230, 50, "edge", "web", ["NGINX + static storefront"])
+    s.arrow([(163, 140), (163, 164)])
+    s.arrow([(278, 192), (306, 192)])
+    s.arrow([(421, 220), (421, 234)])
+
+    s.band(12, 308, 536, 118, "Entry", gutter=True)
+    s.node(306, 320, 230, 94, "svc", "ai-gateway", ["public API, sessions,", "JSON ledger, outbox"], bold=True)
+    s.node(48, 320, 230, 42, "ai", "mcp-server", ["private, port-forward only"])
+    s.node(48, 372, 230, 42, "ai", "moks", ["not deployed on EKS"], optional=True)
+    s.arrow([(421, 284), (421, 320)])
+    s.arrow([(278, 341), (306, 341)])
+
+    s.band(12, 438, 536, 210, "Domain services", gutter=True)
+    tiles = [
+        ("user-service", "MongoDB users"), ("catalogue-service", "MongoDB products"),
+        ("cart-service", "Redis"), ("payment-service", "Razorpay test mode"),
+        ("shipping-service", "PostgreSQL"), ("currency-service", "ECB feed"),
+    ]
+    for i, (name, line) in enumerate(tiles):
+        s.node((48, 300)[i % 2], 452 + (i // 2) * 64, 236, 54, "svc", name, [line])
+    s.arrow([(421, 414), (421, 452)], label="HTTP", at=(429, 436), anchor="start")
+
+    s.band(12, 660, 536, 108, "Events", gutter=True)
+    s.node(48, 686, 120, 56, "svc", "ai-gateway", ["ledger outbox"])
+    s.node(206, 686, 130, 56, "bus", "RabbitMQ", ["roboshop.orders"])
+    s.node(380, 676, 156, 36, "svc", "shipping-service")
+    s.node(380, 722, 156, 36, "svc", "kafka-bridge")
+    s.arrow([(168, 714), (206, 714)], "async")
+    s.arrow([(336, 706), (358, 706), (358, 694), (380, 694)], "async")
+    s.arrow([(336, 722), (358, 722), (358, 740), (380, 740)], "async")
+
+    s.band(12, 780, 536, 66, "Legend", gutter=True)
+    s.legend(48, 803, [("sync", "Synchronous"), ("async", "Asynchronous event")])
+    s.legend(48, 829, [("optional", "In Git, not running")])
+    s.render("roboshop-ai-eks-services")
+
+
+def eks_delivery():
+    s = Svg(560, 690, "How RoboShop AI reaches Amazon EKS",
+            "Terraform in the tools repository creates the AWS layer through a self-hosted runner when infrastructure changes "
+            "reach master. Service workflows in roboshop-ai build arm64 images and push them to Amazon ECR. Argo CD runs on a "
+            "separate cluster, mk4, reads both Git repositories and syncs Applications to the EKS cluster by hand. EKS nodes "
+            "pull images from ECR, and a Prometheus agent writes metrics back to mk4.")
+    s.text(24, 40, "How RoboShop AI reaches EKS", 20, 700, "#0f172a", "start")
+    s.text(24, 62, "Three separate paths: AWS resources, images and Kubernetes state.", 12.5, 400, "#475569", "start")
+
+    s.band(12, 80, 536, 106, "Git", gutter=True)
+    s.node(48, 106, 230, 64, "client", "tools", ["Terraform, add-ons, ingress"])
+    s.node(306, 106, 230, 64, "client", "roboshop-ai", ["services, argocd-eks, mesh"])
+
+    s.band(12, 198, 536, 110, "Builders", gutter=True)
+    s.node(48, 222, 230, 64, "edge", "Create infrastructure", ["self-hosted runner", "applies on push"])
+    s.node(306, 222, 230, 64, "edge", "Service workflows", ["build linux/arm64 images"])
+    s.arrow([(120, 170), (120, 222)], label="infrastructure/", at=(128, 202), anchor="start")
+    s.arrow([(421, 170), (421, 222)], label="services/*", at=(413, 202), anchor="end")
+
+    s.band(12, 320, 536, 110, "Control", gutter=True)
+    s.node(104, 342, 174, 68, "svc", "Argo CD on mk4", ["reads both repos,", "syncs by hand"], bold=True)
+    s.node(306, 342, 230, 68, "store", "Amazon ECR", ["service images"])
+    s.arrow([(421, 286), (421, 342)], label="push", at=(429, 326), anchor="start")
+
+    s.band(12, 442, 536, 170, "AWS", gutter=True)
+    s.node(48, 500, 488, 90, "ai", "EKS cluster roboshop-demo", ["two t4g.large nodes, Kubernetes 1.36", "Istio, RoboShop workloads, data stores"], bold=True)
+    s.arrow([(72, 286), (72, 500)], label="creates", at=(80, 474), anchor="start")
+    s.arrow([(190, 410), (190, 500)], label="sync", at=(198, 474), anchor="start")
+    s.arrow([(421, 410), (421, 500)], label="pull", at=(429, 474), anchor="start")
+    s.text(48, 636, "A Prometheus agent on EKS writes metrics back to mk4.", 12, 400, "#475569", "start")
+    s.text(48, 656, "Nothing here deploys automatically: an operator runs every Argo CD sync.", 12, 400, "#475569", "start")
+    s.render("roboshop-ai-eks-delivery")
+
+
 if __name__ == "__main__":
     overview()
     ai_paths()
     checkout_events()
     observability()
+    eks_services()
+    eks_delivery()

@@ -1,188 +1,175 @@
 ---
-title: "Inside RoboShop AI: Building an AI-Powered E-Commerce Application with Microservices"
+title: "RoboShop AI microservices architecture: service boundaries, request flows and trade-offs"
 slug: roboshop-ai-microservices
-description: "How RoboShop AI splits an AI shopping demo into microservices: request, AI chat and order-event flows, plus the benefits and trade-offs of the design."
+description: "How RoboShop AI splits a demo store into services: three real request flows, what each boundary buys, what it costs, and when a monolith would be simpler."
 author: jithendar-dharmapuri
 category: devops-sre
-tags: [Microservices, Kubernetes, Argo CD, MCP, RabbitMQ, OpenTelemetry]
+tags: [Microservices, Kubernetes, Amazon EKS, MCP, RabbitMQ, Istio]
 contentType: analysis
-status: draft
-related: [projects/roboshop-ai, blog/roboshop-ai-microservices-architecture]
+status: review
+publishedAt: "2026-10-29T18:32:25+05:30"
+related: [blog/deploy-roboshop-ai-amazon-eks, blog/roboshop-ai-eks-system-design, projects/roboshop-ai]
 ---
-<Todo>Reviewed against roboshop-ai commit 692e72d1f119c20e3bfb32f2e189e5a376a12c4c (re-checked 2026-10-30; no architectural change since 8cded0b). Re-check service names, limits and links if the repository has moved on, add your own commentary, then set status and publishedAt. Suggested SEO title: "RoboShop AI Microservices: Architecture, Benefits and Trade-offs".</Todo>
+<Todo>Draft for editorial review, checked against roboshop-ai c81e85a and the live cluster on 2026-11-01. This draft merges blog/roboshop-ai-microservices-architecture into this URL; if you approve, add the 308 from docs/CONTENT_AUDIT.md and archive the old post. Before publishing: (1) the four screenshots predate the move to EKS: open eks.jithendar.com/roboshop and confirm they still match; (2) update "Where it runs" if Moks is deployed or the mesh is enforced; (3) in the admin set the Meta description, which currently repeats the title; (4) add your own commentary at the marked place. Tick Substantive update when you save.</Todo>
 
-RoboShop AI is a hands-on platform showcase I am building: a robot store with a storefront, checkout, an AI shopping assistant and a Model Context Protocol (MCP) server, packaged as separate services and run on a small Kubernetes lab. It is a learning project. Payments default to Razorpay test mode, the catalogue mixes demo and reference listings, and nothing here represents real customers or production traffic.
+Microservices are easy to draw and expensive to run. [RoboShop AI](/projects/roboshop-ai) is a robot store I built as a learning project, split into separately deployed services on purpose, because practising distributed operations is the point. That makes it a useful case study. The boundaries are real, the costs are visible, and for a shop this size a monolith would clearly be simpler.
 
-This article explains how the application is divided, how three kinds of request travel through it, what the microservices architecture buys, and what it costs. Project-specific claims link to the [repository](https://github.com/mrjithendar/roboshop-ai/tree/692e72d1f119c20e3bfb32f2e189e5a376a12c4c). Where something is an architectural possibility rather than demonstrated behaviour, I say "this design enables".
+This article follows three kinds of request through the system: a product page, an AI chat turn and a paid order. It then looks at what each boundary buys, what it costs, and what I would do differently for a real business. It is a demo with test-mode payments and no customers, so where something is an architectural possibility rather than something demonstrated, I say so.
 
 ::toc
 
+## Where it runs
+
+:::callout{type="info" title="Checked on 2026-11-01"}
+The shop runs on a two-node Amazon EKS cluster at [eks.jithendar.com/roboshop](https://eks.jithendar.com/roboshop/). It moved from a Minikube lab, whose RoboShop namespace is gone. Every application Deployment runs one replica. The Moks assistant is **not deployed** on this cluster, so chat fails while shopping works. Sidecars are in place, but mTLS is permissive and mesh policies are in dry run. The [deployment guide](/blog/deploy-roboshop-ai-amazon-eks) has the details.
+:::
+
 ## From Robot Shop to RoboShop AI
 
-RoboShop AI started from Instana's [Robot Shop](https://github.com/instana/robot-shop), a polyglot sample application built for learning container orchestration and monitoring. Several boundaries survive: catalogue, user, cart, shipping and payment. The storefront still ships some of the original image assets under their Apache 2.0 licence.
+RoboShop AI started from Instana's [Robot Shop](https://github.com/instana/robot-shop), a polyglot sample application for learning container orchestration and monitoring. Its catalogue, user, cart, shipping and payment boundaries survive, and the storefront still ships some original images under their Apache 2.0 licence.
 
-The implementations are mostly new. Shipping keeps the legacy Java design but now runs on Java 21 and Spring Boot over PostgreSQL. The dummy payment service became a [Razorpay integration](https://github.com/mrjithendar/roboshop-ai/blob/692e72d1f119c20e3bfb32f2e189e5a376a12c4c/services/payment-service/README.md). The AI gateway, the Moks agent, the MCP server, a currency service and a Kafka bridge were added.
+Most of the implementations are new. Shipping keeps its Java design on Java 21, Spring Boot and PostgreSQL. The dummy payment service became a [Razorpay integration](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/payment-service/README.md). The AI gateway, the Moks agent, the MCP server, a currency service and a Kafka bridge were added.
+
+The storefront itself is a catalogue of twenty robots with search, filters, product pages, a cart and checkout. Prices are labelled as demo prices, and product images are labelled as AI-generated concept renders.
+
+:::figure{caption="The collection view: category filters, search and sorting, with demo prices."}
+![Grid of RoboShop robot products such as AeroInspect A9, AgroBot A200 and Atlas X1 with prices and Add to cart buttons](/images/roboshop-ai/collection.jpg)
+:::
+
+:::figure{caption="A product page, with a note that hardware details are pending supplier confirmation."}
+![RoboShop product page for the AeroInspect A9 drone with price, quantity, Add to cart and technical specifications](/images/roboshop-ai/product-top.jpg)
+:::
 
 ## What makes a service boundary useful
 
 A boundary earns its cost when it matches a capability that changes for its own reasons, owns its data, and is reached through a narrow contract. It works against you when two services must always change together, share tables, or call each other on every request.
 
-Not every box in a diagram is a business microservice. Traefik and NGINX are the edge. MongoDB, Redis and PostgreSQL are data stores. RabbitMQ and Kafka are brokers. Counting them as services inflates the architecture without adding business capability.
+Not every box in a diagram is a business microservice. The NLB, the Istio gateway and NGINX are edge. MongoDB, Redis and PostgreSQL are data stores. RabbitMQ and Kafka are brokers. Counting them as services inflates the architecture without adding business capability.
 
-## How RoboShop AI divides responsibilities
+## How responsibilities are divided
 
-:::figure{caption="Figure 1. Service map: one public origin, the gateway as the API entry point, and each service's data store. Dashed borders mark optional components."}
-![RoboShop AI service map. Browser traffic enters through Traefik and the web NGINX service, which sends /api requests to ai-gateway and /moks requests to the optional Moks agent. A private mcp-server serves MCP clients through the gateway. The gateway calls user, catalogue, cart, payment, shipping and currency services, each labelled with its data store. Paid orders flow from the gateway outbox through RabbitMQ to shipping-service and kafka-bridge.](/images/roboshop-ai/roboshop-ai-overview.svg)
+:::figure{caption="Figure 1. What runs on EKS. One public path, ai-gateway as the API entry point, and each service's data store."}
+![RoboShop AI on Amazon EKS. A browser reaches a Network Load Balancer, then the Istio ingress gateway, which ends TLS and strips /roboshop, then web. web sends API calls to ai-gateway, which calls user, catalogue, cart, payment, shipping and currency services. mcp-server is private. moks is marked as not deployed. Paid orders flow from the gateway outbox through RabbitMQ to shipping-service and kafka-bridge.](/images/roboshop-ai/roboshop-ai-eks-services.svg)
 :::
 
-| Service | Responsibility | Dependencies / data ownership | Deployment unit |
-| --- | --- | --- | --- |
-| `web` | Static TypeScript storefront plus NGINX reverse proxy | Proxies `/api/*`, `/moks/*` and `/api/currency/rates`; no data | Deployment `web` |
-| `ai-gateway` (Python, FastAPI) | Public API, session checks, admin roles, checkout state machine, event outbox | MongoDB settings, chat history and product edits; JSON order ledger on a volume; calls all domain services | Deployment, 1 replica, `Recreate` |
-| `user-service` (Python) | Accounts, sessions, MFA, password recovery, purchase history | MongoDB user collections; Amazon SES for email | Deployment |
-| `catalogue-service` (Node.js) | Product reads, search, keyword recommendations, explicit imports | Reads MongoDB `products` | Deployment |
-| `cart-service` (Python) | Cart lines with compare-and-set revisions | Redis | Deployment |
-| `payment-service` (Node.js) | Razorpay order creation, signature and capture checks | Razorpay API; no database | Deployment |
-| `shipping-service` (Java) | Locations, delivery quotes, shipment requests | Dedicated PostgreSQL; consumes RabbitMQ | Deployment, plus a PostgreSQL Deployment |
-| `currency-service` (Go) | Display exchange rates from the ECB feed | In-memory cache only; optional | Deployment |
-| `moks` (Python, LangGraph) | Shopping-assistant widget and agent engine | catalogue-service; Bedrock or Ollama; no database credentials | Deployment, optional |
-| `mcp-server` (Python, FastMCP) | MCP tools for search, compare and cart | Calls the gateway with the caller's session; no data | Deployment, ClusterIP and NetworkPolicy |
-| `kafka-bridge` (Python) | Copies order events from RabbitMQ to Kafka | RabbitMQ queue, Kafka topics | Container in the `kafka` StatefulSet |
+| Service | Responsibility | Data and dependencies |
+| --- | --- | --- |
+| `web` (NGINX, TypeScript) | Static storefront and reverse proxy | Proxies `/api/*`, `/moks/*` and currency rates; holds no data |
+| `ai-gateway` (Python) | Public API, sessions, admin roles, checkout, event outbox | MongoDB settings and chat history; JSON order ledger on a volume |
+| `user-service` (Python) | Accounts, sessions, MFA, recovery, purchase history | MongoDB users; Amazon SES for email |
+| `catalogue-service` (Node.js) | Product reads, search, recommendations, imports | MongoDB `products` |
+| `cart-service` (Python) | Cart lines with compare-and-set revisions | Redis |
+| `payment-service` (Node.js) | Razorpay orders, signature and capture checks | Razorpay API; no database |
+| `shipping-service` (Java) | Locations, quotes, shipment requests | Own PostgreSQL; consumes RabbitMQ |
+| `currency-service` (Go) | Display exchange rates | In-memory cache of the ECB feed |
+| `moks` (Python, LangGraph) | Shopping assistant, optional | Catalogue, Bedrock or Ollama; no database credentials |
+| `mcp-server` (Python, FastMCP) | MCP tools for search, compare and cart | Calls the gateway with the caller's session |
+| `kafka-bridge` (Python) | Copies order events to Kafka | Container in the Kafka StatefulSet |
 
-The frontend and NGINX are already consolidated. The [`web` README](https://github.com/mrjithendar/roboshop-ai/blob/692e72d1f119c20e3bfb32f2e189e5a376a12c4c/services/web/README.md) describes one image replacing the former `frontend` and `nginx` workloads, and the ingress manifest now targets `web`.
+Data ownership isn't perfectly clean, and it's worth being honest about that. The MongoDB "stores" are collections in one instance with a shared application credential. catalogue-service reads `products`, while the gateway writes admin edits to the same collection. Ownership here is a convention held up by code paths, not by separate databases.
 
-Data ownership is not perfectly clean. The MongoDB "stores" are separate collections in one instance with a shared application credential. catalogue-service reads `products`, while the gateway writes admin edits to the same collection. Ownership here is a convention enforced by code paths, not by separate databases.
+## How a product page request travels
 
-## How an ordinary product request travels
+A product page is a static file. The Istio gateway ends TLS, strips `/roboshop` and forwards the request to `web`, which serves generated HTML.
 
-A product page is a static file. Traefik terminates TLS, strips the `/roboshop` prefix and forwards the request to `web`, which serves the generated HTML.
+The page script then calls `/api/products`. NGINX proxies it to the gateway with no retries or buffering, and the gateway calls catalogue-service, which reads MongoDB.
 
-The page script then calls `/api/products`. NGINX proxies it to the gateway without retries or buffering, adds an `X-Request-ID` and forwards the W3C `traceparent` header. The gateway calls catalogue-service, which reads MongoDB.
+Before responding, [the gateway](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/ai-gateway/server.py) recalculates `instock` from reservations and sales in its own ledger, because stock authority lives with checkout and not the catalogue. A simple product list therefore touches two services and a database.
 
-Before responding, [the gateway](https://github.com/mrjithendar/roboshop-ai/blob/692e72d1f119c20e3bfb32f2e189e5a376a12c4c/services/ai-gateway/server.py) recalculates `instock` from reservations and sales in its own ledger. Stock authority lives with checkout, not the catalogue. A product list therefore touches two services and a database. The browser fetches currency rates separately; if that fails, original prices stay visible.
+Prices show a useful small boundary. `currency-service` downloads the European Central Bank feed hourly, with a five-second deadline and a 64 KiB limit. Requests only ever read the cache, so a slow upstream cannot slow the storefront. After two hours rates are labelled stale, and after seven days they are withdrawn rather than guessed. If the service is gone entirely, the browser shows original prices.
 
-## How an AI shopping request differs
+## How an AI chat turn differs
 
-:::figure{caption="Figure 2. The assistant and MCP are independent entry points. Numbers follow one chat turn."}
+:::figure{caption="Figure 2. The code's design for the assistant and MCP, two independent entry points. Path A is not running on EKS today."}
 ![AI request paths. Path A: browser widget, web, Moks widget routes, ai-gateway /api/chat, Moks engine, which reads catalogue-service, confirms its configuration revision with the gateway and calls Bedrock or Ollama. Path B: MCP client, private mcp-server, ai-gateway, domain services. Moks does not call MCP.](/images/roboshop-ai/roboshop-ai-ai-paths.svg)
 :::
 
-The chat widget posts to `/moks/chat`, and NGINX blocks direct browser calls to `/api/chat`. Moks's widget routes check the session and Origin, then call the gateway. The gateway applies an AI rate limit and allows two concurrent chats; extra requests get `429 assistant-busy`.
+A chat turn has more hops and much tighter limits than a product request. This describes the code, since Moks isn't running on EKS right now.
 
-The gateway adds saved product references, the SKUs that cannot be shown, and the active model configuration with its revision. It then calls the Moks engine with a service token.
+The widget posts to `/moks/chat`, and NGINX blocks browser calls to `/api/chat`. Moks's widget routes check the session and Origin, then call the gateway, which applies a rate limit and allows two concurrent chats. Extra requests get `429 assistant-busy`.
 
-The engine reads the catalogue from catalogue-service and filters evidence by stock, budget and currency, keeping at most four products. It runs a short [LangGraph](https://langchain-ai.github.io/langgraph/) graph: `search_catalogue → ground_evidence → generate_answer`. Before the model call it confirms the configuration revision with the gateway.
+The gateway adds saved product references, the SKUs that cannot be shown and the active model configuration. It calls the Moks engine with a service token. The engine runs a short [LangGraph](https://langchain-ai.github.io/langgraph/) graph: `search_catalogue → ground_evidence → generate_answer`. Before the model call it confirms the configuration revision with the gateway, and only then does Amazon Bedrock or an approved Ollama endpoint generate an answer. A fresh install has no model connected.
 
-Only Amazon Bedrock or an approved Ollama endpoint can generate the answer, and a fresh install has no model connected. The gateway re-applies live stock and saves the turn. See the [Moks README](https://github.com/mrjithendar/roboshop-ai/blob/692e72d1f119c20e3bfb32f2e189e5a376a12c4c/services/moks/README.md) for the full flow.
+Because model calls are slow and paid for, this path has explicit budgets:
 
-Compared with a product request, this path has more hops and explicit budgets:
-
-- a 16-second agent deadline;
+- a 16-second retrieval and inference budget;
 - two concurrent provider calls per process;
-- a circuit breaker that opens after three failures.
+- a [circuit breaker](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/moks/README.md) that opens for 30 seconds after three failures.
 
-Moks has no database credentials and no tools that change carts or orders.
+Model output is guidance only. Moks has no database credentials and no tools that change carts or orders.
 
-The [MCP server](https://github.com/mrjithendar/roboshop-ai/blob/692e72d1f119c20e3bfb32f2e189e5a376a12c4c/services/mcp-server/README.md) is a separate entry point for MCP clients. It accepts the caller's own RoboShop session and forwards it to the gateway, which re-authorizes every call. Ten read tools and `update_cart` are registered; admin write tools require an environment flag and a signed confirmation.
+The [MCP server](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/mcp-server/README.md) is a separate entry point for AI clients. It takes the caller's own RoboShop session and forwards it to the gateway, which re-authorizes every call. Ten read tools and `update_cart` are registered by default, and admin write tools need an environment flag. Moks never calls MCP: the gateway already calls Moks, so that route would create a loop and add a hop without adding any authorization.
 
-The MCP Service is ClusterIP-only, and its NetworkPolicy admits only labelled pods. No workload carries that label today, so access is through local stdio or a port-forward. Moks never calls MCP: the gateway already calls Moks, so routing Moks through MCP would create a loop.
-
-## How checkout and background events work
+## How checkout and order events work
 
 :::figure{caption="Figure 3. Money moves synchronously; fulfilment and analytics follow asynchronously."}
 ![Checkout and paid-order events. The browser creates an order at ai-gateway with an idempotency key; the gateway reserves stock in its ledger and calls payment-service and Razorpay, which can also send a signed webhook. Once paid, the ledger's outbox publishes to RabbitMQ: live orders go to shipping-service and PostgreSQL, with a dead-letter queue after five failures; test orders go to an audit queue; both go through kafka-bridge to Kafka.](/images/roboshop-ai/roboshop-ai-checkout-events.svg)
 :::
 
-Checkout is synchronous and deliberately conservative. The browser creates an order with an `Idempotency-Key`. The gateway snapshots the cart, reserves stock and records the order as `creating` before asking payment-service to create a Razorpay order.
+Checkout is synchronous and deliberately conservative. The browser creates an order with an `Idempotency-Key`. The gateway snapshots the cart, reserves stock and records the order as `creating` before asking payment-service to create a Razorpay order, so two buyers cannot both pay for the last unit.
 
-After payment, the server checks Razorpay's HMAC signature and fetches the payment to confirm it was captured with the expected amount and currency. A signed webhook recovers callbacks the browser missed. If the provider's answer is unknown, the order moves to `payment_review` and keeps its reservation instead of creating a second provider order. The [gateway README](https://github.com/mrjithendar/roboshop-ai/blob/692e72d1f119c20e3bfb32f2e189e5a376a12c4c/services/ai-gateway/README.md#checkout-locking-and-recovery) documents the state machine.
+The server doesn't trust the browser's word that payment succeeded. It checks Razorpay's HMAC signature, then fetches the payment to confirm capture with the expected amount and currency. A signed webhook recovers callbacks the browser missed. If the provider's answer is unknown, the order moves to `payment_review` and keeps its reservation, rather than risking a second provider order. The [gateway README](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/ai-gateway/README.md#checkout-locking-and-recovery) documents the state machine.
 
-The transition to `paid` writes an `order.paid` event in the same ledger update: a [transactional outbox](https://microservices.io/patterns/data/transactional-outbox.html). A background publisher sends it to the `roboshop.orders` exchange using [publisher confirms](https://www.rabbitmq.com/docs/confirms) and [quorum queues](https://www.rabbitmq.com/docs/quorum-queues).
+The move to `paid` writes an `order.paid` event in the same ledger update, which is the [transactional outbox pattern](https://microservices.io/patterns/data/transactional-outbox.html). A background publisher sends it to RabbitMQ with [publisher confirms](https://www.rabbitmq.com/docs/confirms) and [quorum queues](https://www.rabbitmq.com/docs/quorum-queues).
 
-Shipping inserts a shipment request before acknowledging, and unique event IDs make redelivery harmless. Five processing failures route a message to a dead-letter queue. Test-mode orders go to an audit queue and never create shipments. [kafka-bridge](https://github.com/mrjithendar/roboshop-ai/blob/692e72d1f119c20e3bfb32f2e189e5a376a12c4c/services/kafka-bridge/README.md) copies both kinds to Kafka topics for analytics.
+Shipping inserts a shipment request before acknowledging, and unique event IDs make redelivery harmless. Five processing failures send a message to a dead-letter queue. Test-mode orders go to an audit queue and never create shipments. [kafka-bridge](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/kafka-bridge/README.md) copies both kinds to Kafka for analytics, and acknowledges RabbitMQ only after Kafka confirms.
 
 Checkout never waits for shipping or Kafka. If RabbitMQ is down, events wait in the outbox.
 
-## Containers, Kubernetes and GitOps
+## What the boundaries buy, and the conditions behind it
 
-Each service builds from its own directory with its own Dockerfile. Several Dockerfiles run the service's tests during the build. Per-service GitHub Actions workflows call a shared [`publish-ecr.yml`](https://github.com/mrjithendar/roboshop-ai/blob/692e72d1f119c20e3bfb32f2e189e5a376a12c4c/.github/workflows/publish-ecr.yml), which builds `linux/arm64` images on a self-hosted runner and pushes `:latest` to Amazon ECR.
+**Fault isolation.** This one has a live demonstration. On 2026-11-01 the assistant was missing from the cluster and chat returned 502, while the storefront and product API kept answering. That works because of explicit limits, not because of Kubernetes: a shared 23-second downstream budget, at most eight concurrent blocking handlers, and readiness that excludes optional features. Kubernetes restarts pods, but it does not make an application resilient. The gateway is still a single point of failure, and sessions fail closed when user-service is down.
 
-Manifests sit beside each service, and the [Argo CD catalog](https://github.com/mrjithendar/roboshop-ai/tree/692e72d1f119c20e3bfb32f2e189e5a376a12c4c/argocd) defines one Application per workload. None auto-syncs, and pruning and deletion are disabled ([sync options](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/)). Application Deployments use read-only root filesystems plus liveness and readiness [probes](https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/). `/ready` on `web` checks only core gateway dependencies, never AI providers.
+**Independent deployment.** Each service has its own image, workflow and Argo CD Application. This depends on backward-compatible contracts, and rollback is weaker than it looks, because every image is a mutable `:latest`.
 
-These manifests describe intent, not live state. The [tools repository notes](https://github.com/mrjithendar/tools/blob/12eb811c9520121f1cb53ee753bc3cf2fdbe7a0c/observability/README.md) that its Argo CD script creates missing Applications but never edits existing ones, so a live cluster can drift from Git.
+**Independent scaling.** This is mostly potential. Shipping supports multiple replicas, and currency-service keeps a per-replica cache. The gateway cannot scale, because its JSON ledger allows one writer, so it runs one replica with the `Recreate` strategy. A transactional PostgreSQL ledger exists but isn't the default. Every application runs one replica, and no autoscaler is defined for them. Scaling needs externalized state first.
 
-:::figure{caption="Figure 4. Telemetry, deployed from the tools repository. Arrows follow the data."}
-![Telemetry paths. RoboShop services send OTLP spans to the OpenTelemetry Collector and then Jaeger; Prometheus scrapes /metrics; Alloy reads pod logs into Loki; Grafana queries Prometheus and Loki. Moks can also send metadata-only model spans to Langfuse Cloud when credentials exist.](/images/roboshop-ai/roboshop-ai-observability.svg)
-:::
+**Languages suited to the task.** Go's standard library is enough for a small rate cache. Java fits the inherited shipping design. Python carries the AI libraries. You pay for each runtime in base images, dependency updates and expertise.
 
-## Benefits, and the conditions behind them
+**Least privilege.** The Razorpay secret lives only in payment-service, SMTP credentials only in user-service, and Moks has no database access. Most application secrets still share one Kubernetes Secret, though, and MongoDB has one credential. Isolation comes from which keys each Deployment mounts.
 
-**Independent deployment and rollback.** Each service has its own image, workflow and Argo CD Application. The `web` consolidation was planned as a side-by-side rollout with an ingress switch and a documented rollback. This depends on backward-compatible contracts; for example, Moks accepts both old and new history formats during an upgrade. Rollback is weaker than it looks, because every image is a mutable `:latest`.
+**Identity between services.** On EKS, each workload has its own ServiceAccount, and so its own mesh identity. Policies describe the real call graph, with `allow-nothing` as the default. That benefit is prepared but not yet active: until mTLS is `STRICT` and policies leave dry run, nothing is denied.
 
-**Smaller change scopes and clear ownership.** Each folder owns its dependencies, Dockerfile and tests, and the repository documents a future split into separate repositories. One person maintains everything today, so team ownership is something this design enables rather than demonstrates.
+**Testing through contracts.** The gateway has [user-service contract tests](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/ai-gateway/tests/test_user_service_contract.py), and NGINX tests run against a mock gateway. These are hand-written fixtures, so they protect only what someone remembered to assert.
 
-**Languages suited to the task.** Go's standard library is enough for a small rate cache. Java fits the inherited shipping design. Python carries the AI libraries (LangGraph, FastMCP, the AWS SDK). The condition is paying for each runtime: base images, dependency updates and expertise.
+**Reusing business APIs through agents.** MCP tools call the same gateway endpoints as the browser, so authorization stays in one place. Exposing MCP over the internet would also need OAuth 2.1, which is not implemented.
 
-**Independent scaling.** Shipping supports multiple replicas, and currency-service keeps a per-replica cache. The gateway cannot scale: its JSON ledger allows one writer, so it runs one replica with `Recreate`. A PostgreSQL ledger backend exists but is not the default. Every Deployment runs one replica and no autoscaler is defined. Scaling requires externalized state first.
+**Team ownership.** One person maintains everything, so this is something the design enables and does not demonstrate.
 
-**Fault isolation and graceful degradation.** Stopping Moks hides the widget without affecting shopping. A currency outage leaves original prices. Kafka problems never block checkout. This works because of explicit limits: a shared 23-second downstream budget, at most eight concurrent blocking handlers, and readiness that excludes optional features. Kubernetes restarts pods, but it does not make an application resilient: the gateway is still a single point of failure, and sessions fail closed when user-service is down.
+## What the boundaries cost
 
-**Testing through explicit contracts.** The gateway has [user-service contract tests](https://github.com/mrjithendar/roboshop-ai/blob/692e72d1f119c20e3bfb32f2e189e5a376a12c4c/services/ai-gateway/tests/test_user_service_contract.py). MCP tests drive a real client against a synthetic gateway, and NGINX tests run against a mock gateway. These are hand-written fixtures, not consumer-driven contracts, so they protect only what someone remembered to assert.
+- **Latency and partial failure.** Each hop needs a timeout and a distinct failure outcome. A chat turn crosses the gateway, Moks, catalogue-service, a configuration check and a model.
+- **Observability you must keep working.** Distributed tracing is designed in: NGINX, the gateway and MCP propagate [W3C Trace Context](https://www.w3.org/TR/trace-context/). On EKS the OpenTelemetry SDK is currently disabled, and the collector the services point at doesn't exist there. Without traces, you are reading separate logs and correlating by hand.
+- **Coordinated changes.** Some changes need an order, such as upgrading Moks before the gateway. Argo CD doesn't prune old workloads either, so each consolidation needed manual clean-up.
+- **Duplicates.** Delivery is at least once. Shipping deduplicates by event ID, and Kafka consumers must do the same.
+- **No distributed transaction.** Checkout spans the ledger, Redis, Razorpay and user-service. Reservations, idempotency keys and reconciliation replace a transaction, and abandoned checkouts keep their reservations because nothing releases them automatically.
+- **Operational weight.** There are eleven application images and CI workflows, plus Istio, Argo CD and secrets to manage.
+- **Resource cost.** Kafka alone requests 768 MiB of memory. Two `t4g.large` nodes also have to carry a sidecar for every pod.
+- **Distributed-monolith risk.** Every browser API call passes through the gateway, and catalogue reads a collection the gateway writes. If most changes touch several services at once, you have a monolith's coupling plus network costs.
 
-**Configuration, credentials and permissions.** The Razorpay secret lives only in payment-service, SMTP credentials only in user-service, and Moks has no database access. Internal calls use per-purpose service tokens. In the lab, though, most application secrets share one Kubernetes Secret and MongoDB shares one credential. Isolation comes from which keys each Deployment mounts, not separate secret stores.
-
-**Observability across services.** NGINX, the gateway and MCP propagate [W3C Trace Context](https://www.w3.org/TR/trace-context/), so one chat turn can appear as one trace ([context propagation](https://opentelemetry.io/docs/concepts/context-propagation/)). The condition is instrumenting every hop. Jaeger storage here is in-memory, and no Alertmanager is installed, so alerts are evaluated but never delivered.
-
-**Reusing business APIs through agents and MCP.** MCP tools call the same gateway endpoints as the browser, so authorization stays in one place. That holds only while the gateway API stays stable and role-checked. Exposing MCP over the internet would also need OAuth 2.1, which is not implemented.
-
-**Incremental modernization.** Product ingestion and recommendations were folded into catalogue-service, Finder and the shopping agent into Moks, and frontend and NGINX into `web`. Modernization sometimes meant fewer services. Each step required deliberate operator clean-up, because Argo CD does not prune old workloads.
-
-## Trade-offs to weigh honestly
-
-- **Latency and partial failure.** A chat turn crosses the gateway, Moks, catalogue-service, a configuration check and a model. Each hop needs a timeout and a distinct failure outcome: `feature-unavailable`, `assistant-busy` or `LLM_NOT_CONFIGURED`.
-- **Debugging.** Without trace propagation you are reading many separate logs. Access logs deliberately omit bodies, so correlation IDs carry the investigation.
-- **Compatibility and coordinated migrations.** Some changes need an order: upgrade Moks before the gateway; start `web` before switching the ingress.
-- **Eventual consistency and duplicates.** Delivery is at least once. Shipping deduplicates by event ID, and Kafka consumers must do the same.
-- **Data ownership and cross-service transactions.** Checkout spans the ledger, Redis, Razorpay and user-service with no distributed transaction. Reservations, idempotency keys and reconciliation replace it, and abandoned checkouts keep their reservations because nothing releases them automatically.
-- **Operational overhead.** Eleven application images, eleven CI workflows, an Argo CD catalog, ECR token refreshes and secrets to manage.
-- **Resource cost on a small lab.** Kafka alone requests 768 MiB, before RabbitMQ, PostgreSQL, MongoDB and the observability stack.
-- **Distributed-monolith risk.** Every browser API call passes through the gateway, and catalogue reads a collection the gateway writes. If most changes touch several services at once, the system has a monolith's coupling plus network costs.
+Modernizing this system has sometimes meant fewer services, not more. Product ingestion and recommendations folded into catalogue-service, Finder and the shopping agent into Moks, and the frontend and NGINX into `web`.
 
 ## When a modular monolith would be simpler
 
-For one team on one release cadence, a modular monolith is often the better start ([MonolithFirst](https://martinfowler.com/bliki/MonolithFirst.html)). Catalogue, accounts, cart and checkout as modules in one process with one database get in-process calls and ACID transactions for checkout. That removes much of the reservation and reconciliation machinery described above.
+For one team on one release cadence, a modular monolith is often the better start, which is the argument in Martin Fowler's [MonolithFirst](https://martinfowler.com/bliki/MonolithFirst.html). Catalogue, accounts, cart and checkout as modules in one process with one database would get in-process calls and ACID transactions for checkout. That removes most of the reservation and reconciliation machinery above.
 
-RoboShop AI's gateway already behaves like a small modular monolith for checkout. Splitting further is worthwhile here because practising distributed operations is the point of the project. For a small shop, I would start with a monolith and extract a service only when a boundary proves itself.
+RoboShop AI's gateway already behaves like a small modular monolith for checkout. Splitting further makes sense here only because the distributed operation is what's being practised. For a small shop, I would start with a monolith and extract a service only when a boundary proves itself.
 
-## Practical takeaways
+<Todo>Your words: what surprised you, and what you would change.</Todo>
+
+## What to take from this
 
 - Draw boundaries around data and rates of change, then accept that shared infrastructure blurs them.
 - Keep authority in one place. Here the gateway owns stock and payment state, and everything else defers to it.
 - Make optional features optional in readiness, routing and UI, not just in documentation.
 - Design for at-least-once delivery from the first event.
 
-Proposed next steps, not yet implemented:
-
-- pin images by digest;
-- move the gateway to the PostgreSQL ledger so it can run replicas;
-- give each service its own database credential;
-- add durable trace storage and alert delivery.
+Proposed next steps, none of them implemented yet: pin images by digest, move the gateway to the PostgreSQL ledger, give each service its own database credential, and restore tracing with durable storage.
 
 ## References
 
-**Project sources (pinned to the reviewed commit)**
-
-- [roboshop-ai repository](https://github.com/mrjithendar/roboshop-ai/tree/692e72d1f119c20e3bfb32f2e189e5a376a12c4c) and its [service READMEs](https://github.com/mrjithendar/roboshop-ai/tree/692e72d1f119c20e3bfb32f2e189e5a376a12c4c/services)
-- [web](https://github.com/mrjithendar/roboshop-ai/blob/692e72d1f119c20e3bfb32f2e189e5a376a12c4c/services/web/README.md), [ai-gateway](https://github.com/mrjithendar/roboshop-ai/blob/692e72d1f119c20e3bfb32f2e189e5a376a12c4c/services/ai-gateway/README.md), [moks](https://github.com/mrjithendar/roboshop-ai/blob/692e72d1f119c20e3bfb32f2e189e5a376a12c4c/services/moks/README.md), [mcp-server](https://github.com/mrjithendar/roboshop-ai/blob/692e72d1f119c20e3bfb32f2e189e5a376a12c4c/services/mcp-server/README.md), [shipping-service](https://github.com/mrjithendar/roboshop-ai/blob/692e72d1f119c20e3bfb32f2e189e5a376a12c4c/services/shipping-service/README.md), [kafka-bridge](https://github.com/mrjithendar/roboshop-ai/blob/692e72d1f119c20e3bfb32f2e189e5a376a12c4c/services/kafka-bridge/README.md)
-- [Observability stack](https://github.com/mrjithendar/tools/blob/12eb811c9520121f1cb53ee753bc3cf2fdbe7a0c/observability/README.md) and [shared service configuration](https://github.com/mrjithendar/tools/blob/12eb811c9520121f1cb53ee753bc3cf2fdbe7a0c/minikube/roboshop/roboshop-config-configmap.yaml) in the tools repository
-
-**General references**
-
-- Martin Fowler and James Lewis, [Microservices](https://martinfowler.com/articles/microservices.html); Martin Fowler, [MonolithFirst](https://martinfowler.com/bliki/MonolithFirst.html)
+- [roboshop-ai repository](https://github.com/mrjithendar/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b), pinned to the reviewed commit
+- Martin Fowler and James Lewis, [Microservices](https://martinfowler.com/articles/microservices.html)
 - Chris Richardson, [Transactional outbox pattern](https://microservices.io/patterns/data/transactional-outbox.html)
-- RabbitMQ, [Publisher confirms](https://www.rabbitmq.com/docs/confirms) and [Quorum queues](https://www.rabbitmq.com/docs/quorum-queues)
-- Kubernetes, [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) and [Probes](https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/)
-- Argo CD, [Sync options](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/)
-- W3C, [Trace Context](https://www.w3.org/TR/trace-context/); OpenTelemetry, [Context propagation](https://opentelemetry.io/docs/concepts/context-propagation/)
+- OpenTelemetry, [Context propagation](https://opentelemetry.io/docs/concepts/context-propagation/)
 - [Model Context Protocol specification](https://modelcontextprotocol.io/specification)
-- Instana, [Robot Shop](https://github.com/instana/robot-shop)
