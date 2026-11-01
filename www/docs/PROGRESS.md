@@ -1,5 +1,14 @@
 # Progress log — jithendar.com
 
+## Draft series: RoboShop AI knowledge sharing (2026-11-01, owner request)
+
+Four review drafts, nine figures and five editable draw.io files, written against `roboshop-ai` c81e85a. Nothing published or committed.
+
+- **Files:** `content/blog/roboshop-ai-{architecture,gateway,mcp-server,shopping-agent}.mdx`, `docs/knowledge-sharing/roboshop-ai/` (README, evidence map, editorial review, `verify_series.py`, `diagrams/`), `public/images/roboshop-ai-series/`.
+- **Commands:** `npm test` 399 passed; lint, typecheck and production build pass; `verify_series.py` passes. Details and the service test results are in section 3 of `docs/knowledge-sharing/roboshop-ai/editorial-review.md`.
+- **Open:** SVG and PNG files are rendered by `build_diagrams.py`, not exported by draw.io, because the draw.io desktop download was refused by the session's permission policy. The `.drawio` files have not been opened in draw.io. No real model was called. Author decisions are listed in the editorial review.
+- **Found:** a visual-editor bug where a paragraph starting "No. " becomes a list item. Not fixed.
+
 ## Article update: How We Implemented RAG and Skills in MOKS (2026-11-01, owner request)
 
 **What changed**

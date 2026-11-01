@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 800" width="620" height="800" role="img" aria-labelledby="roboshop-ai-architecture-logical-title roboshop-ai-architecture-logical-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="roboshop-ai-architecture-logical-title">RoboShop AI logical architecture</title>
+<desc id="roboshop-ai-architecture-logical-desc">A browser uses web, which proxies API calls to ai-gateway and assistant calls to moks. moks and ai-gateway call each other over private routes; moks reads catalogue-service and calls Amazon Bedrock or Ollama. An optional MCP client reaches the private mcp-server, which forwards the caller&#x27;s session to ai-gateway. ai-gateway calls user, catalogue, cart, payment and shipping services and owns the order ledger. Paid orders flow through RabbitMQ to shipping-service and kafka-bridge, then Kafka.</desc>
+<rect width="620" height="800" fill="#ffffff"/>
+<defs>
+<marker id="roboshop-ai-architecture-logical-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+<marker id="roboshop-ai-architecture-logical-write" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b45309"/></marker>
+<marker id="roboshop-ai-architecture-logical-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#be123c"/></marker>
+<marker id="roboshop-ai-architecture-logical-reject" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b91c1c"/></marker>
+<marker id="roboshop-ai-architecture-logical-dashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+<marker id="roboshop-ai-architecture-logical-life" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#cbd5e1"/></marker>
+</defs>
+<rect x="15" y="12" width="590" height="96" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="28" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Outside the cluster</text>
+<rect x="15" y="120" width="590" height="262" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="136" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Namespace roboshop-ai: application tier</text>
+<rect x="15" y="394" width="590" height="150" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="410" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Domain services</text>
+<rect x="15" y="556" width="590" height="232" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="572" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Data and messaging</text>
+<polyline points="115.0,96 115.0,150" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#roboshop-ai-architecture-logical-sync)"/>
+<polyline points="200,181.0 225,181.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#roboshop-ai-architecture-logical-sync)"/>
+<polyline points="115.0,212 114.76,300" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#roboshop-ai-architecture-logical-sync)"/>
+<polyline points="310.0,150 310.0,96" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#roboshop-ai-architecture-logical-sync)"/>
+<polyline points="276.0,212 275.96,300" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#roboshop-ai-architecture-logical-sync)"/>
+<polyline points="344.08,300 344.0,212" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#roboshop-ai-architecture-logical-sync)"/>
+<polyline points="505.0,96 505.0,150" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#roboshop-ai-architecture-logical-dashed)"/>
+<polyline points="488.0,212 488.12,300" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#roboshop-ai-architecture-logical-sync)"/>
+<polyline points="381.4,212 382,232 573,232 573,400 573.0,418" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#roboshop-ai-architecture-logical-dashed)"/>
+<polyline points="156.88,366 157.5,418" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#roboshop-ai-architecture-logical-sync)"/>
+<polyline points="309.76,366 310.0,418" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#roboshop-ai-architecture-logical-sync)"/>
+<polyline points="200,674.0 225,674.0" fill="none" stroke="#be123c" stroke-width="2.2" marker-end="url(#roboshop-ai-architecture-logical-async)"/>
+<polyline points="395,674.0 420,674.0" fill="none" stroke="#be123c" stroke-width="2.2" marker-end="url(#roboshop-ai-architecture-logical-async)"/>
+<polyline points="310.0,648 310,642 408,642 408,540 310,540 310.0,534" fill="none" stroke="#be123c" stroke-width="2.2" marker-end="url(#roboshop-ai-architecture-logical-async)"/>
+<polyline points="505.0,700 505.0,722" fill="none" stroke="#be123c" stroke-width="2.2" marker-end="url(#roboshop-ai-architecture-logical-async)"/>
+<rect x="30" y="36" width="170" height="60" rx="7" fill="#f8fafc" stroke="#334155" stroke-width="1.4"/>
+<text x="115.0" y="65.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Browser</text>
+<text x="115.0" y="81.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">storefront, Moks widget</text>
+<rect x="225" y="36" width="170" height="60" rx="7" fill="#fdf2f8" stroke="#be185d" stroke-width="1.4"/>
+<text x="310.0" y="65.0" text-anchor="middle" font-size="14" font-weight="600" fill="#500724">Model provider</text>
+<text x="310.0" y="81.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Bedrock or Ollama</text>
+<rect x="420" y="36" width="170" height="60" rx="7" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+<text x="505.0" y="65.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">MCP client</text>
+<text x="505.0" y="81.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">not in the cluster today</text>
+<rect x="30" y="150" width="170" height="62" rx="7" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+<text x="115.0" y="180.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e1b4b">web</text>
+<text x="115.0" y="196.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">NGINX, static storefront</text>
+<rect x="225" y="150" width="170" height="62" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="310.0" y="180.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">moks</text>
+<text x="310.0" y="196.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">widget + LangGraph</text>
+<rect x="420" y="150" width="170" height="62" rx="7" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.4"/>
+<text x="505.0" y="180.0" text-anchor="middle" font-size="14" font-weight="600" fill="#134e4a">mcp-server</text>
+<text x="505.0" y="196.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">FastMCP, private</text>
+<rect x="30" y="300" width="520" height="66" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="290.0" y="332.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">ai-gateway</text>
+<text x="290.0" y="348.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">public API, authorization, LLM settings, chat history, order ledger</text>
+<rect x="30" y="418" width="170" height="52" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="115.0" y="443.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">user-service</text>
+<text x="115.0" y="459.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">accounts, sessions</text>
+<rect x="225" y="418" width="170" height="52" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="310.0" y="443.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">cart-service</text>
+<text x="310.0" y="459.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">carts</text>
+<rect x="420" y="418" width="170" height="52" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="505.0" y="443.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">catalogue-service</text>
+<text x="505.0" y="459.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">products, ranking</text>
+<rect x="30" y="482" width="170" height="52" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="115.0" y="507.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">payment-service</text>
+<text x="115.0" y="523.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Razorpay orders</text>
+<rect x="225" y="482" width="170" height="52" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="310.0" y="507.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">shipping-service</text>
+<text x="310.0" y="523.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">quotes, shipments</text>
+<rect x="420" y="482" width="170" height="52" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="505.0" y="507.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">currency-service</text>
+<text x="505.0" y="523.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">ECB reference rates</text>
+<rect x="30" y="582" width="170" height="52" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="115.0" y="607.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">MongoDB</text>
+<text x="115.0" y="623.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">products, users, chats</text>
+<rect x="225" y="582" width="170" height="52" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="310.0" y="607.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">Redis</text>
+<text x="310.0" y="623.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">cart contents</text>
+<rect x="420" y="582" width="170" height="52" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="505.0" y="607.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">PostgreSQL</text>
+<text x="505.0" y="623.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">shipping data</text>
+<rect x="30" y="648" width="170" height="52" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="115.0" y="673.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">Order ledger</text>
+<text x="115.0" y="689.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">JSON on a volume</text>
+<rect x="225" y="648" width="170" height="52" rx="7" fill="#fff1f2" stroke="#be123c" stroke-width="1.4"/>
+<text x="310.0" y="673.0" text-anchor="middle" font-size="14" font-weight="600" fill="#4c0519">RabbitMQ</text>
+<text x="310.0" y="689.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">roboshop.orders</text>
+<rect x="420" y="648" width="170" height="52" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="505.0" y="673.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">kafka-bridge</text>
+<text x="505.0" y="689.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">analytics copy</text>
+<rect x="420" y="722" width="170" height="52" rx="7" fill="#fff1f2" stroke="#be123c" stroke-width="1.4"/>
+<text x="505.0" y="747.0" text-anchor="middle" font-size="14" font-weight="600" fill="#4c0519">Kafka</text>
+<text x="505.0" y="763.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">order topics</text>
+<rect x="95.4" y="100.5" width="39.2" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="115.0" y="112.5" text-anchor="middle" font-size="12" fill="#0f172a">HTTPS</text>
+<rect x="186.7" y="161.5" width="51.7" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="212.5" y="173.5" text-anchor="middle" font-size="12" fill="#0f172a">/moks/*</text>
+<rect x="70.2" y="247.5" width="45.4" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="92.9" y="259.5" text-anchor="middle" font-size="12" fill="#0f172a">/api/*</text>
+<rect x="268.6" y="107.0" width="82.9" height="32" fill="#ffffff" opacity="0.92"/>
+<text x="310.0" y="119.0" text-anchor="middle" font-size="12" fill="#0f172a">Converse</text>
+<text x="310.0" y="134.0" text-anchor="middle" font-size="12" fill="#0f172a">or /api/chat</text>
+<rect x="151.6" y="240.0" width="132.8" height="32" fill="#ffffff" opacity="0.92"/>
+<text x="218.0" y="252.0" text-anchor="middle" font-size="12" fill="#0f172a">/api/chat</text>
+<text x="218.0" y="267.0" text-anchor="middle" font-size="12" fill="#0f172a">/internal/llm/config</text>
+<rect x="342.4" y="247.5" width="95.4" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="390.0" y="259.5" text-anchor="middle" font-size="12" fill="#0f172a">/internal/chat</text>
+<rect x="472.9" y="114.5" width="64.2" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="505.0" y="126.5" text-anchor="middle" font-size="12" fill="#0f172a">POST /mcp</text>
+<rect x="434.1" y="273.5" width="107.8" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="488.1" y="285.5" text-anchor="middle" font-size="12" fill="#0f172a">caller&#x27;s session</text>
+<rect x="479.5" y="233.5" width="114.1" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="536.6" y="245.5" text-anchor="middle" font-size="12" fill="#0f172a">GET /api/products</text>
+<rect x="315.5" y="375.5" width="132.8" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="381.9" y="387.5" text-anchor="middle" font-size="12" fill="#0f172a">HTTP to each service</text>
+<rect x="189.8" y="654.5" width="45.4" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="212.5" y="666.5" text-anchor="middle" font-size="12" fill="#0f172a">outbox</text>
+<rect x="387.9" y="654.5" width="39.2" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="407.5" y="666.5" text-anchor="middle" font-size="12" fill="#0f172a">queue</text>
+<text x="30" y="734" font-size="12" fill="#475569">Solid: request path</text>
+<text x="30" y="751" font-size="12" fill="#475569">Dashed: read or private path</text>
+<text x="30" y="768" font-size="12" fill="#475569">Red: asynchronous event</text>
+<text x="225" y="734" font-size="12" fill="#475569">Each store has one owner.</text>
+<text x="225" y="751" font-size="12" fill="#475569">The article lists who</text>
+<text x="225" y="768" font-size="12" fill="#475569">owns which.</text>
+</svg>

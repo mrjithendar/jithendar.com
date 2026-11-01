@@ -1,0 +1,206 @@
+---
+title: "Inside RoboShop AI: Architecture of an AI-Powered Shopping Application"
+slug: roboshop-ai-architecture
+description: "How RoboShop AI separates a normal store from its AI features: services, data owners, request flows, failure boundaries and what runs on EKS today."
+seoTitle: "Inside RoboShop AI: Architecture of an AI Shopping App"
+seoDescription: "How RoboShop AI separates a normal store from its AI features: services, data owners, request flows, failure boundaries and what runs on EKS today."
+author: jithendar-dharmapuri
+category: ai-engineering
+tags: [AI Architecture, Microservices, Kubernetes, LangGraph, MCP, Amazon EKS]
+contentType: tutorial
+status: review
+related:
+  - blog/roboshop-ai-gateway
+  - blog/roboshop-ai-mcp-server
+  - blog/roboshop-ai-shopping-agent
+  - blog/roboshop-ai-microservices
+sources:
+  - title: "RoboShop AI source at commit c81e85a"
+    url: https://github.com/mrjithendar/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b
+    publisher: GitHub
+  - title: Istio PeerAuthentication
+    url: https://istio.io/latest/docs/reference/config/security/peer_authentication/
+    publisher: Istio
+  - title: RabbitMQ Quorum Queues
+    url: https://www.rabbitmq.com/docs/quorum-queues
+    publisher: RabbitMQ
+---
+<Todo>Draft for review, written against roboshop-ai commit c81e85a on 2026-11-01. Excerpt: "RoboShop AI keeps its AI features outside the path that takes money. This is the architecture of the store, the assistant and the MCP server, including what is running on EKS today and what is not." Primary keyword: RoboShop AI architecture. Secondary: AI microservices architecture, AI-powered shopping application, AI shopping assistant architecture, microservices failure boundaries. Before publishing: (1) re-check the live-status section, especially whether moks is deployed on EKS; (2) decide how this article and /blog/roboshop-ai-microservices share the same search intent; (3) read docs/knowledge-sharing/roboshop-ai/editorial-review.md.</Todo>
+
+RoboShop AI is a demo robot store built from independent services, with two AI entry points added beside the normal shopping path. A shopping assistant called Moks answers product questions. A private MCP server lets external AI clients search the catalogue and manage a signed-in user's cart. Neither one can take a payment, and the store keeps working when both are gone.
+
+That last property is the most useful thing about the architecture, and it is not theoretical. On 1 November 2026 the EKS deployment had no `moks` Deployment at all. The storefront returned 200, `/ready` reported every dependency ready, and the only visible failure was the assistant widget returning 502.
+
+I built this as a personal project to explore a specific question: how do you add a language model to an application that handles carts and payments without letting it near the parts that must be correct? This series answers that from the code at [commit c81e85a](https://github.com/mrjithendar/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b). It runs in test payment mode by default and its catalogue is demo data, so nothing here describes customers, revenue or production traffic.
+
+The later articles go deeper into the [AI gateway](/blog/roboshop-ai-gateway), the [MCP server](/blog/roboshop-ai-mcp-server) and the [shopping agent](/blog/roboshop-ai-shopping-agent).
+
+::toc
+
+## The services and what each one owns
+
+The system is easier to follow if you ask what each service is the only owner of, instead of what it does. Figure 1 shows the logical view.
+
+![RoboShop AI logical architecture. A browser uses web, which proxies API calls to ai-gateway and assistant calls to moks. moks and ai-gateway call each other on private routes, moks reads catalogue-service directly and calls a model provider. An MCP client outside the cluster reaches the private mcp-server, which forwards the caller's session to ai-gateway. ai-gateway calls six domain services and writes an order ledger, whose outbox publishes to RabbitMQ for shipping-service and kafka-bridge, then Kafka.](/images/roboshop-ai-series/roboshop-ai-architecture-logical.svg)
+
+*Figure 1. Logical architecture. Solid arrows are request paths, dashed arrows are reads or private paths, and red arrows are asynchronous events.*
+
+| Service | Stack | Sole owner of |
+| --- | --- | --- |
+| `web` | TypeScript, NGINX | Static storefront, `/api` proxying, security headers |
+| `ai-gateway` | Python, FastAPI | Public API, authorization decisions, order ledger, LLM settings, chat history |
+| `user-service` | Python | Accounts, sessions, MFA, profiles, purchase history |
+| `catalogue-service` | Node.js | Product reads and keyword ranking |
+| `cart-service` | Python | Redis cart storage. It does not know about prices |
+| `payment-service` | Node.js | Razorpay credentials, provider orders, signature checks |
+| `shipping-service` | Java 21, Spring Boot | Locations, quotes, shipment requests |
+| `currency-service` | Go | European Central Bank reference rates |
+| `moks` | Python, LangGraph | The widget backend and all model calls |
+| `mcp-server` | Python, FastMCP | The Model Context Protocol surface |
+| `kafka-bridge` | Python | Copying order events into Kafka for analytics |
+
+The credential boundaries are what make this list matter. Razorpay secrets exist only in `payment-service`, and the browser receives just a public key ID. The [gateway README](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/ai-gateway/README.md) records that it holds no SMTP, MFA or Turnstile credentials. Moks has no MongoDB connection, so a bug in the assistant cannot query the user database, because the process has nothing to query it with.
+
+## Why microservices, and what they cost
+
+The boundaries buy three concrete things here: credential isolation, failure isolation and the freedom to run a Java, Go, Node and Python service side by side. The last one is partly inherited, since shipping keeps its Java design from the original RoboShop.
+
+The costs are just as concrete.
+
+**The gateway is still a central dependency.** Splitting services did not remove the single point of failure. `ai-gateway` runs one replica with a `Recreate` strategy, because its default order ledger is a JSON file protected by an exclusive `flock`. Upgrades briefly interrupt it. A PostgreSQL ledger exists behind `COMMERCE_BACKEND=postgres`, but it is not selected on EKS, and the README says moving to it is an offline reviewed cutover.
+
+**One product list touches several systems.** `GET /api/products` goes browser, NGINX, gateway, catalogue-service, MongoDB, and then back through the gateway to overlay live stock from its ledger.
+
+**Copies of the same fact need reconciling.** Cart contents live in the gateway ledger and in Redis, and `sync_cart` keeps them aligned. The Redis config sets `maxmemory-policy allkeys-lru` and disables persistence, so Redis can lose a cart, and the ledger copy is how it recovers.
+
+If you are one team shipping one store, a modular monolith would give you most of this with less operational work. The [microservices article](/blog/roboshop-ai-microservices) goes further into that trade-off. Here the split is worth it mainly because it gives the AI features a hard edge.
+
+## Where the data lives
+
+| Store | Used for | Notes |
+| --- | --- | --- |
+| MongoDB | Products, settings, reviews, images, `llm_configuration`, `chat_history`, accounts | Runs as a StatefulSet on EKS |
+| Redis | Cart contents | LRU eviction, no persistence |
+| PostgreSQL | Shipping locations and shipment requests | Separate owner and runtime roles |
+| JSON ledger on a volume | Orders, reservations, cart sessions, outbox | Default `COMMERCE_BACKEND=json`, one writer |
+| RabbitMQ | Order events | Durable quorum queues with a dead-letter exchange |
+| Kafka | Analytics copy of order events | Not on the checkout path |
+
+Service-to-service calls are HTTP inside the cluster, and most private links use their own shared token: `USER_SERVICE_TOKEN`, `CART_SERVICE_TOKEN`, `PAYMENT_SERVICE_TOKEN` and `LLM_SERVICE_TOKEN`. Asynchronous work is limited to what happens after payment.
+
+## A traditional shopping request
+
+A normal request involves no model and no probability. Figure 2 follows browsing and adding to the cart.
+
+![Sequence for a traditional shopping request. The browser requests products through web. ai-gateway reads catalogue-service, overlays live stock from its ledger and responds. Adding to the cart posts a SKU and quantity; ai-gateway checks the session, stock and pending payments, writes through cart-service to Redis and returns a cart with totals it computed itself.](/images/roboshop-ai-series/roboshop-sequence-browse-cart.svg)
+
+*Figure 2. Browse and add to cart. Amber arrows change state.*
+
+The cart API takes a SKU and an absolute quantity, never a price. Inside `Store.update` the gateway validates the SKU, confirms the item can be bought, compares the quantity with available stock and refuses the change while a payment is pending. `cart-service` then applies a Lua script that checks the revision, so a stale write fails instead of overwriting a newer cart. Totals always come from the server.
+
+Anonymous visitors can build a cart. They get an `rs_session` cookie lasting seven days. When they sign in, `Store.session` moves that guest cart to the account.
+
+## Authentication in one paragraph
+
+Login goes through the gateway to `user-service`, which sets an `rs_auth` cookie holding a 64-character hex token. The session lasts eight hours and the server stores only its SHA-256 digest. Passwords use scrypt. On every API request the gateway resolves the token through `user-service`, and if that service is down the check fails closed. Roles are `customer`, `admin` and `superadmin`, and `require_role` in `auth.py` enforces them. UI visibility is a convenience only.
+
+## Checkout and order flow
+
+This is the path the architecture is protecting, so it has the most machinery. Figure 3 shows it.
+
+![Checkout sequence. The signed-in browser posts an order with an idempotency key. ai-gateway reserves stock and saves the order as creating, then asks payment-service to create a Razorpay order, and returns public checkout options in the payment_pending state. After hosted Razorpay checkout the browser posts to verify; ai-gateway has payment-service verify the signature and fetch the capture, with a signed webhook as an alternative route. mark_paid commits the order and an outbox event, which reaches RabbitMQ, then shipping-service and kafka-bridge.](/images/roboshop-ai-series/roboshop-sequence-checkout.svg)
+
+*Figure 3. Checkout, payment and order events. The browser's word is never enough to mark an order paid.*
+
+The important decisions are about what happens when an answer is ambiguous:
+
+- Stock is reserved and the order saved as `creating` **before** the provider is called. If the call fails or times out, the order moves to `payment_review` and keeps its reservation. Retrying checkout reconciles by receipt instead of creating a second provider order.
+- `POST /api/payments/verify` checks an HMAC signature and then fetches the payment, comparing capture status, amount and currency against the server's own record.
+- A signed Razorpay webhook reaches the same result if the browser disappears.
+- `mark_paid` commits inventory and a durable event together. A background `OrderPublisher` sends it to the `roboshop.orders` exchange with publisher confirms, retrying every two seconds, so delivery is at least once.
+
+`shipping-service` consumes `order.paid` and records a shipment request in PostgreSQL. Test-mode events use `order.test-paid`, which shipping does not consume. Carrier fulfilment, refunds and disputes are not automated. These are shipment requests, not shipments.
+
+## An AI-assisted shopping request
+
+Compare that with Figure 4. The route is longer, and it is also structured so that nothing in it can change an order.
+
+![Sequence for an AI-assisted request. The widget posts a message to moks, which checks the session and calls ai-gateway /api/chat with a service token and the user's session. ai-gateway applies a role check and 10 per minute limit, loads history and the LLM snapshot, reads the catalogue, finds unavailable SKUs, and calls moks /internal/chat. moks reads products, retrieves evidence, confirms the configuration revision, calls Converse or Ollama and returns an answer. ai-gateway reapplies stock, saves the turn and returns JSON without streaming.](/images/roboshop-ai-series/roboshop-sequence-assistant.svg)
+
+*Figure 4. The AI-assisted path. The call goes moks, gateway, moks on purpose.*
+
+The odd-looking loop is deliberate. The browser talks to the widget half of `moks`, which calls the gateway so that identity, history, provider configuration and stock stay in one place. The gateway then calls the engine half of `moks`, which never sees a user ID.
+
+There is a second AI path that does not appear in this figure. MCP clients go through `mcp-server` to the gateway using the caller's own session. Moks does not use it: the [MCP server README](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/mcp-server/README.md) explains that routing Moks through MCP would create a gateway to Moks to MCP to gateway loop with no authorization gain.
+
+| Question | Traditional request | Assistant request | MCP request |
+| --- | --- | --- | --- |
+| Who is the caller? | Browser session | Browser session, plus service token | User's session as a bearer token |
+| Can it change a cart? | Yes | No | Yes, with `update_cart` |
+| Can it pay? | Yes, in the browser | No | No |
+| Is a model involved? | No | Yes, once | Only in the external client |
+| Response style | Buffered JSON | Buffered JSON | Buffered JSON |
+
+## Deployment
+
+Figure 5 separates where things run from how they relate logically.
+
+![RoboShop AI on Amazon EKS. Argo CD on the mk4 cluster syncs applications to the roboshop-demo EKS cluster from GitHub and ECR. A browser reaches a Network Load Balancer, then the Istio ingress gateway, which ends TLS and strips /roboshop, then web. In namespace roboshop-ai every pod has an Envoy sidecar. web and ai-gateway run one replica; moks has no Deployment; mcp-server runs with no public route. Mesh policy is PERMISSIVE with authorization policies in dry-run. Metrics use prometheus-agent and Kiali. Traces are disabled.](/images/roboshop-ai-series/roboshop-ai-architecture-deployment.svg)
+
+*Figure 5. Deployment on EKS, checked read-only on 1 November 2026. Dashed boxes mark things that are absent.*
+
+Argo CD runs on a separate cluster and manages `roboshop-demo` remotely, using manual sync with prune turned off. Images come from ECR and manifests from `services/*` and `argocd-eks/`. The Istio `VirtualService` is the only place `/roboshop` is stripped, and `mcp-server` has no route at all.
+
+Three things in that figure should be read as "in progress", not "done":
+
+- **Mesh policy is rehearsing.** `PeerAuthentication` is `PERMISSIVE`, and every `AuthorizationPolicy` is annotated `istio.io/dry-run: "true"`. Mesh identity is not yet enforcing anything.
+- **Traces are off.** `OTEL_SDK_DISABLED` is `true` in the EKS config map. The code emits W3C-propagated spans, but no collector receives them on this cluster.
+- **Moks is absent.** The `roboshop-demo-moks` Application exists in Git but no `moks` workload was running, so `web` returns 502 for `/moks/widget.js`.
+
+## Observability
+
+The Python services log structured JSON with an allowlist of fields, and services expose private `/metrics` endpoints. NGINX returns 404 for `/metrics` on the public path. Every gateway response carries an `X-Request-ID` equal to the trace ID, so a failing request can be found in logs even with tracing off.
+
+Model calls have extra spans (`rag.retrieve`, `shopping_agent.recommend`, `llm.route`, `llm.generate`) and optional Langfuse export, covered in the [agent article](/blog/roboshop-ai-shopping-agent).
+
+## Failure boundaries
+
+These come from reading the code, plus the live Moks result. I have not run a failure-injection exercise against EKS.
+
+| If this fails | What users see | Why |
+| --- | --- | --- |
+| `moks` | Assistant unavailable, shopping unaffected | Gateway readiness never checks it |
+| Model provider | Assistant error, shopping unaffected | Chat returns `feature-unavailable` |
+| `mcp-server` | MCP clients fail, nobody else notices | Nothing in the app calls it |
+| `user-service` | Signed-in API calls fail | Session checks fail closed |
+| Redis or `cart-service` | Cart calls fail, gateway not ready | The cart is a core dependency |
+| Razorpay ambiguous | Order held in `payment_review` | Reservation kept for reconciliation |
+| RabbitMQ | Checkout still completes, events wait | The outbox retries |
+| Kafka | Nothing on the shopping path | The bridge is a separate subscriber |
+| `ai-gateway` | All API traffic fails | One replica, by design of the ledger |
+
+The readiness probe makes this explicit. `gateway_readiness` checks MongoDB, catalogue, users, the ledger writer and the cart. It deliberately does not check AI, so a broken model cannot take the store out of rotation.
+
+## What to take from this design
+
+**Put the AI beside the critical path, not on it.** The most useful test of an AI feature's architecture is deleting it. Here that happened by accident on EKS, and only the widget broke.
+
+**Give the AI process fewer credentials than you think it needs.** Moks cannot read the database, because it was never given a connection. That is stronger than any prompt instruction.
+
+**Keep authorization where it already is.** Both AI paths end at the same gateway that checks a browser. Neither invents a second permission model.
+
+**Be honest about what still has one replica.** Service boundaries do not remove a single-writer ledger, and it is better to say so in the README than to discover it during a scale-out.
+
+## Frequently asked questions
+
+### Does the assistant use the MCP server?
+
+They don't. The two are separate paths that share the gateway, as the [MCP article](/blog/roboshop-ai-mcp-server) explains.
+
+### Can a shopper buy something through the assistant?
+
+Moks has no cart, order or payment action, so a shopper can't. Its replies link to products, and buying happens through the normal storefront.
+
+### Why is the service called an AI gateway if it mostly handles commerce?
+
+The name stuck, and it is a little misleading. The [gateway article](/blog/roboshop-ai-gateway) explains what it does and does not do with models.

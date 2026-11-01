@@ -1,0 +1,265 @@
+---
+title: "Building the RoboShop AI Gateway"
+slug: roboshop-ai-gateway
+description: "What the RoboShop AI gateway really does: authorization, LLM configuration, chat admission and time budgets, and why it never calls a model itself."
+seoTitle: "AI Gateway Architecture: Building the RoboShop AI Gateway"
+seoDescription: "What the RoboShop AI gateway really does: authorization, LLM configuration, chat admission and time budgets, and why it never calls a model itself."
+author: jithendar-dharmapuri
+category: ai-engineering
+tags: [AI Gateway, FastAPI, API Gateway, Rate Limiting, LLMOps, Amazon Bedrock]
+contentType: tutorial
+status: review
+related:
+  - blog/roboshop-ai-architecture
+  - blog/roboshop-ai-mcp-server
+  - blog/roboshop-ai-shopping-agent
+sources:
+  - title: "RoboShop AI gateway source at commit c81e85a"
+    url: https://github.com/mrjithendar/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/ai-gateway
+    publisher: GitHub
+  - title: FastAPI
+    url: https://fastapi.tiangolo.com/
+    publisher: FastAPI
+  - title: Converse API reference
+    url: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html
+    publisher: Amazon Web Services
+  - title: Trace Context
+    url: https://www.w3.org/TR/trace-context/
+    publisher: W3C
+---
+<Todo>Draft for review, written against roboshop-ai commit c81e85a on 2026-11-01. Excerpt: "The RoboShop AI gateway never calls a model. It decides who may ask, which provider is allowed, what the agent may see, and how long everyone waits. Here is how that works, and how to debug it." Primary keyword: AI gateway architecture. Secondary: AI gateway vs API gateway, LLM gateway, rate limiting AI requests, FastAPI gateway. Before publishing: (1) confirm the chat rate-limit finding below on a running cluster and fix it or keep the warning; (2) re-run the debugging commands so their output is current; (3) read docs/knowledge-sharing/roboshop-ai/editorial-review.md.</Todo>
+
+The RoboShop AI gateway is the one service every API request passes through. It authenticates callers, owns the order ledger, stores the active LLM configuration and admits chat requests to the shopping agent. It does not call a language model. There is no model SDK in its dependencies, and that is the first thing to understand about it.
+
+Many products sold as "AI gateways" are proxies that sit in front of model providers, adding keys, caching and token budgets. `services/ai-gateway` is a different thing. It is the store's public API with an AI control plane attached. All inference happens in [Moks](/blog/roboshop-ai-shopping-agent), and the gateway's job is to decide whether Moks gets called, with what, and for how long.
+
+This article assumes you have the shape of the system from the [architecture overview](/blog/roboshop-ai-architecture). It describes [commit c81e85a](https://github.com/mrjithendar/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/ai-gateway).
+
+::toc
+
+## How it differs from an ingress, a proxy and an API gateway
+
+These terms get used loosely, so here is what each layer does in this system.
+
+| Layer | In RoboShop AI | Understands | Does not know |
+| --- | --- | --- | --- |
+| Load balancer | AWS Network Load Balancer | TCP | HTTP paths |
+| Ingress | Istio ingress gateway | TLS, hostnames, `/roboshop` prefix | Users |
+| Reverse proxy | NGINX inside `web` | Paths, timeouts, security headers | Sessions or roles |
+| API gateway | `ai-gateway` | Sessions, roles, Origin, rate limits | Model internals |
+| AI control plane | Also `ai-gateway` | Active provider, history, stock filter | Prompts or token counts |
+| LLM client | `moks`, not the gateway | Bedrock, Ollama, retries, failover | Who the user is |
+
+The reverse proxy adds one hard rule worth seeing. NGINX refuses to let a browser reach chat directly:
+
+```nginx
+# services/web/nginx/snippets/routes.conf
+location = /api/chat { return 403; }
+```
+
+Browsers use `/moks/chat`, which NGINX proxies to the widget half of Moks. So `/api/chat` is callable only from inside the cluster, and the gateway separately demands a service token, which gives two independent barriers.
+
+## Endpoints and internal modules
+
+The gateway is a FastAPI application with very few declared routes. `asgi_app.py` registers `/api/chat`, `/api/admin/llm/status`, `/health/live`, `/health/ready` and a catch-all, and nearly everything goes through `Gateway.route` in `server.py`, a long hand-written dispatcher. FastAPI supplies the server, the OpenAPI document and the middleware. It does not do the routing.
+
+| Route | Who calls it | What it does |
+| --- | --- | --- |
+| `POST /api/chat` | Moks widget, with service token | Runs one assistant turn |
+| `GET /api/chat/history` | Moks widget, with service token | Returns the user's saved turns |
+| `GET /internal/llm/config` | Moks engine | Returns the active config and revision |
+| `GET`, `PUT /api/admin/llm` | Super admin | Reads or saves provider settings |
+| `POST /api/admin/llm/test` | Super admin | Tests a proposed provider |
+| `POST /api/admin/llm/disconnect` | Super admin | Turns the assistant off |
+| `GET /api/status` | Moks widget health check | Reports `assistantMode`, `checkoutMode` |
+| `GET /api/products`, `/api/compare`, `/api/cart` | Browser, MCP server | Commerce reads and writes |
+| `/api/auth/*`, `/api/account/*` | Browser | Forwarded to `user-service` |
+| `/api/payments/*` | Browser, Razorpay | Checkout state machine |
+
+| Module | Responsibility |
+| --- | --- |
+| `asgi_app.py` | Transport: body limits, worker slots, deadline, error mapping, metrics |
+| `server.py` | Domain routing and authorization |
+| `api_models.py` | Pydantic request and response contracts |
+| `llm.py` | LLM configuration, revisions, audit trail |
+| `lib/llm_config.py` | Strict config validation, service token checks |
+| `chat_history.py` | Per-account conversation storage |
+| `user_client.py` | Calls to `user-service` |
+| `store.py`, `postgres_store.py` | JSON and PostgreSQL order ledgers |
+| `readiness.py` | Bounded dependency probes |
+| `lib/runtime.py` | HTTP clients, retries, tracing, structured logging |
+
+## Following one chat request
+
+Figure 1 shows `POST /api/chat`, with the response each step gives when it refuses.
+
+![AI gateway request flow for POST /api/chat. Step 1, the Moks widget adapter checks Origin, a 30 per minute limit, the session, an 8 KiB body and four slots. Inside ai-gateway: step 2, transport limits of 64 KiB, a 10 second body read, 8 workers and a 23 second deadline; step 3, a 300 per minute limit and Origin check; step 4, session lookup, which fails closed; step 5, service token then role; step 6, a 10 per minute limit and the ChatRequest schema; step 7, history and LLM snapshot, returning not-configured if there is no provider; step 8, catalogue and stock; step 9, two admission slots, returning assistant-busy when full; step 10, the call to moks with an 18 second timeout and no retry; step 11, reapply stock, save the turn, validate and return JSON.](/images/roboshop-ai-series/ai-gateway-request-flow.svg)
+
+*Figure 1. Every refusal happens before money is spent on a model call.*
+
+The order matters. Cheap checks come first, and the model call is the last thing that can go wrong. Here is the core of step 5 to step 9:
+
+```python
+# services/ai-gateway/server.py
+authenticate_service(req.headers)
+user = require_role(req.user)
+self.limit(req, True)
+data = req.body()
+message = text(validate(ChatRequest, data).message)
+previous = self.chat_history.read(user["id"])
+active = self.llm.current()
+```
+
+The service token proves the caller is the widget. `require_role` proves there is a signed-in person behind it. The widget forwards exactly one cookie, a validated `rs_auth` value, so no other browser state crosses this boundary.
+
+## Authentication and validation
+
+The gateway treats sessions as opaque. `UserClient.current` posts the token to `user-service` and trusts the answer, with no local fallback.
+
+Validation is layered, and each layer has a different job. `ChatRequest` uses `extra='forbid'` and `strict=True`, limiting `message` to 1,000 characters, so a request cannot smuggle a `userId` or a `history` field. On top of that, the Moks README's claim that "the browser can never supply history" holds up: the widget accepts an optional `context` field for compatibility and throws it away.
+
+Responses are validated too, but only after authorization has run. A comment in `asgi_app.py` explains why: schemas should never be able to disclose an authentication decision. If `ChatResponse.model_validate` fails, the caller gets a 502 with a request ID.
+
+## Provider configuration: control without inference
+
+"Model-provider integration" in this service means managing a small document in MongoDB. The super admin chooses a provider in **Admin → AI / LLM configuration**. Fresh installs start at `provider: none`, and no model is hard-coded.
+
+`LLMConfiguration` stores one record, `_id: "active"`, holding the config, a revision number and a bounded audit list. Saving uses a compare-and-set:
+
+```python
+# services/ai-gateway/llm.py
+result = self.collection.find_one_and_update(
+    {"_id": "active", "revision": revision},
+    update,
+    upsert=revision == 0,
+    return_document=ReturnDocument.AFTER,
+)
+```
+
+`validate_config` is strict because this document decides where customer questions get sent. Bedrock accepts only `provider`, `region` and `model`. There is deliberately no field for credentials, since Bedrock uses the workload's AWS credential chain. Ollama accepts only an alias from the operator's `OLLAMA_ENDPOINTS_JSON`, and those entries must be literal IP addresses, which the code comment says prevents DNS rebinding and proxy bypasses. Automatic failover has only one valid shape, Ollama primary with Bedrock fallback, and saving it requires both providers to pass a live test first.
+
+The revision does a second job. The gateway sends its config and revision to Moks with each chat. Before every provider attempt, Moks calls `GET /internal/llm/config` and refuses to proceed if anything changed. That is how **Disconnect** can stop further paid attempts while a request is already running.
+
+## Streaming: there isn't any
+
+Chat is buffered JSON end to end. The README says so plainly: "No tokens are sent until generation completes." The Ollama adapter sends `"stream": False`, and the Bedrock adapter calls `Converse`, not `ConverseStream`.
+
+This keeps several things simple. The gateway can validate a complete answer, filter its product cards against live stock, and save a finished turn. Only complete responses reach the customer. The price is perceived latency: a shopper watches a spinner for the full generation. A comment in the Istio `VirtualService` leaves room for streaming later, but no streaming code path exists today.
+
+## Timeouts, retries and overload
+
+The time budgets nest, and each outer layer is longer than the one inside it. That means the inner layer gives up first and produces a meaningful error, instead of an outer proxy cutting the connection.
+
+| Layer | Budget | Where |
+| --- | --- | --- |
+| NGINX to Moks widget | 30 s read | `routes.conf` |
+| Widget to gateway | 26 s | `widget.py` |
+| Gateway request deadline | 23 s | `asgi_app.py` |
+| Gateway to Moks engine | 18 s | `server.py` |
+| Moks retrieval and inference | 16 s | `moks/server.py` |
+| One provider attempt | 12 s, or 6 s with failover on | `routing.py` |
+
+**Retries are narrow on purpose.** `_retry_read` in `lib/runtime.py` retries once, only for `GET` or `HEAD`, only on transient failures, and inside the original budget. The chat `POST` to Moks is never retried, because a retry could mean paying for a second generation. A comment in `routing.py` sets the same rule for providers: exactly one fallback, and errors propagate.
+
+**Concurrency is bounded at three levels.** The gateway runs eight blocking handlers (`slots`), and a ninth request gets 503 `Gateway busy`. Chat gets two slots of its own (`chat_slots`). A code comment gives the reason: the agent calls back into the gateway for its revision check during a chat, so some HTTP workers must stay free. Moks adds two provider slots per process.
+
+**Admission and failure are distinct.** A full chat queue returns 429 `assistant-busy` with `Retry-After: 5`. An unavailable provider returns 503 `feature-unavailable`. Clients and dashboards can tell "try again in a moment" from "something is broken".
+
+### A rate-limit problem worth knowing about
+
+`Gateway.limit` keeps an in-memory counter per client address: 300 requests a minute generally, 10 for chat. The address comes from `client_address`:
+
+```python
+# services/ai-gateway/client_address.py
+if os.getenv("TRUST_PROXY") == "true" and any(
+    address in net for net in trusted
+):
+    return str(ipaddress.ip_address(req.headers.get("x-real-ip", "")))
+return str(address)
+```
+
+Reading this against the manifests turned up a gap. `TRUST_PROXY` is `true`, but `TRUSTED_PROXY_CIDRS` is not set anywhere in the repository or the deployment configuration, so `trusted` is empty and the function always returns the direct peer. For chat, that peer is the Moks pod. As written, the 10-per-minute chat limit is therefore shared by all shoppers on a Moks replica, not applied per shopper, and the 300-per-minute limit is shared by everyone behind `web`.
+
+The counters are also per process, and a sidecar may change the peer address the application sees. I reached this by reading the code, so test it on a running cluster before relying on it. The widget's own limit of 30 attempts a minute is global per replica by design: its comment explains that it avoids spoofable forwarded headers and an unbounded per-IP map.
+
+## Logging, tracing and cost
+
+`log_event` writes JSON and keeps only allowlisted fields, so message text cannot reach logs by accident. `request_completed` records route, status and duration. `dependency_call_completed` records each downstream call. When `TELEMETRY_ID_KEY` is set, user identifiers are written as HMAC hashes.
+
+Tracing follows W3C Trace Context through every hop, and each response carries `X-Request-ID` equal to the trace ID. On EKS, `OTEL_SDK_DISABLED=true` currently turns export off, so the ID is useful for log search rather than a trace view.
+
+Token usage and cost controls are thin at this layer, and it is better to be direct about what exists.
+
+| Control | Status |
+| --- | --- |
+| Tokens recorded per generation | Yes, in Moks spans, when the provider reports them |
+| Tokens recorded by the gateway | No |
+| Output cap | Yes, 600 tokens, in Moks |
+| Prompt cap | Yes, character budgets, in Moks |
+| Rate limits | Yes, with the caveat above |
+| Per-user or daily token budget | Not implemented |
+| Spend alerting | Not implemented |
+| Response caching | Not implemented |
+
+## Debugging with real signals
+
+Each example below uses a real route or log event. The output in the first one was captured on 1 November 2026.
+
+### The widget returns 502 but the store is fine
+
+```text
+$ curl -s -o /dev/null -w "%{http_code}\n" https://eks.jithendar.com/roboshop/moks/available
+502
+$ curl -s https://eks.jithendar.com/roboshop/api/status
+{"assistantMode": "ai", "checkoutMode": "razorpay"}
+$ curl -s https://eks.jithendar.com/roboshop/ready
+{"status": "ready", "dependencies": {"mongodb": "ready", "catalogue": "ready", "users": "ready", "ledger": "ready", "cart": "ready"}}
+```
+
+The 502 comes from NGINX, not from the application. The confusing line is `assistantMode: ai`, which only means an LLM configuration is saved in MongoDB. `/api/status` reads that record and does not contact Moks, and `/ready` deliberately ignores AI. Check the workload itself:
+
+```bash
+kubectl --context roboshop-demo -n roboshop-ai get deploy moks
+```
+
+That command is read-only. A `NotFound` result means the workload is not deployed, which was the actual cause here.
+
+### The assistant says it is busy
+
+Two different 429s reach the widget, and the JSON tells them apart.
+
+| Body | Cause | First step |
+| --- | --- | --- |
+| `code: assistant-busy` | Both `chat_slots` are in use | Look for slow provider calls |
+| `Too many requests. Please wait a minute.` | Address limit, or the widget's 30-a-minute limit | Remember the limit may be shared by all users |
+
+### Chat fails with 503 `feature-unavailable`
+
+The gateway hides the reason from the customer, so read the Moks logs:
+
+```bash
+kubectl -n roboshop-ai logs deploy/moks | grep -E 'llm_attempt_failed|llm_failover_selected'
+```
+
+`errorCode` will be one of the values in `ProviderError`: `access-denied` usually means a missing IAM permission, `invalid-model` a wrong or incompatible model ID, `throttled` a provider limit or the two-call cap. `unavailable` with no attempt logged usually means the revision guard refused the call, which happens if settings changed or Moks could not reach `/internal/llm/config`.
+
+### Every answer says "Please connect an LLM to get results."
+
+That is `unconfigured()`, returned with HTTP 200 when the active provider is `none`. It is a normal state, not an error, and the fix is in the admin console. The widget turns it into a 503 with `code: ai-not-configured`, so browser dev tools and the gateway logs will appear to disagree.
+
+## Limitations
+
+- **The ledger forces one replica.** The default JSON store allows a single writer.
+- **Rate limits are per process.** Replicas would not share counters, and the address problem above still applies.
+- **A failed history save loses the answer.** `ChatHistory.save` runs after generation. If MongoDB fails at that moment the customer gets a 503 for a reply that was already paid for.
+- **The name is misleading.** Anyone expecting a model proxy should read `llm.py` first.
+
+## Frequently asked questions
+
+### Should every AI application have a gateway like this?
+
+Not necessarily. If your application already has an authenticated API layer, the useful idea is to put admission, identity and provider policy there. You rarely need a new service to do it.
+
+### Why not put the model call in the gateway?
+
+The code keeps provider credentials, retries and slow calls out of the process that owns payments. The next article in this series covers [how external clients reach the same gateway through MCP](/blog/roboshop-ai-mcp-server).
