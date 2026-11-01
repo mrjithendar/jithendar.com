@@ -1,5 +1,13 @@
 # Progress log — jithendar.com
 
+## Draft article: FastAPI and FastMCP (2026-11-01, owner request)
+
+`content/blog/fastapi-and-fastmcp-ai-projects.mdx`, `status: review`, four figures, written against `roboshop-ai` c81e85a and `moks` ab99cf7. Nothing published or committed. No application code changed.
+
+- **Files:** the article, `docs/knowledge-sharing/fastapi-fastmcp/` (README, evidence map, editorial checklist, `verify_article.py`, `diagrams/`), `public/images/fastapi-fastmcp/`.
+- **Commands:** `npm test` 401 passed; lint clean; `verify_article.py` passes. `typecheck` and `build` not run, because no TypeScript changed.
+- **Open:** SVG and PNG files are rendered by `build_diagrams.py`, not exported by draw.io. Published-page discrepancies are listed in `editorial-checklist.md`.
+
 ## Draft project page: MOKS (2026-11-01, owner request)
 
 `content/projects/moks.mdx`, `status: review`, checked against moks ab99cf7 and the EKS cluster. Not published or committed. Open items are in the page's `<Todo>`, including `usernamePassword.sh` tracked in the public moks repository and the missing LICENSE. The RoboShop series now uses the `:::figure` directive for captions.

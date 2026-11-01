@@ -1,0 +1,98 @@
+<mxfile host="app.diagrams.net" agent="build_diagrams.py" version="24.7.17" type="device">
+  <diagram id="fastapi-request-sequence-0" name="FastAPI request">
+    <mxGraphModel dx="800" dy="800" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="620" pageHeight="690" background="#ffffff" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="b" value="Browser&#10;React UI" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f8fafc;strokeColor=#334155;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="16" width="130" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="a" value="moks-api&#10;FastAPI" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e3a8a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="173" y="16" width="130" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="d" value="PostgreSQL" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#fffbeb;strokeColor=#b45309;fontColor=#451a03;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="317" y="16" width="130" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="w" value="moks worker&#10;no HTTP" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#94a3b8;fontColor=#475569;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="460" y="16" width="130" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="b-life" value="" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#cbd5e1;strokeColor=#cbd5e1;fontColor=#475569;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="94.5" y="66" width="1" height="608" as="geometry" />
+        </mxCell>
+        <mxCell id="a-life" value="" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#cbd5e1;strokeColor=#cbd5e1;fontColor=#475569;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="237.5" y="66" width="1" height="608" as="geometry" />
+        </mxCell>
+        <mxCell id="d-life" value="" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#cbd5e1;strokeColor=#cbd5e1;fontColor=#475569;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="381.5" y="66" width="1" height="608" as="geometry" />
+        </mxCell>
+        <mxCell id="w-life" value="" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#cbd5e1;strokeColor=#cbd5e1;fontColor=#475569;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="524.5" y="66" width="1" height="608" as="geometry" />
+        </mxCell>
+        <mxCell id="note8" value="Dependencies&#10;get_auth: 401, CSRF 403&#10;CreateIn: 422 if invalid" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e3a8a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="140" y="124" width="196" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="note9" value="Policy&#10;require(), effective_scope()&#10;403 and an audit record" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e3a8a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="140" y="186" width="196" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="note10" value="Runs the graph&#10;ToolExecutor to live systems" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#94a3b8;fontColor=#475569;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="422" y="434" width="190" height="46" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" value="1. POST /investigations&#10;cookie, x-csrf-token" style="edgeStyle=none;rounded=0;html=0;strokeColor=#b45309;strokeWidth=2.2;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.07894736842105263;exitDx=0;exitDy=0;entryX=0;entryY=0.07894736842105263;entryDx=0;entryDy=0;" edge="1" parent="1" source="b-life" target="a-life">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="0" y="-21" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e1" value="2. INSERT queued row,&#10;event 0 and audit" style="edgeStyle=none;rounded=0;html=0;strokeColor=#b45309;strokeWidth=2.2;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.35526315789473684;exitDx=0;exitDy=0;entryX=0;entryY=0.35526315789473684;entryDx=0;entryDy=0;" edge="1" parent="1" source="a-life" target="d-life">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="0" y="-21" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e2" value="3. commit, before the response" style="edgeStyle=none;rounded=0;html=0;strokeColor=#64748b;strokeWidth=1.4;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0;exitY=0.40789473684210525;exitDx=0;exitDy=0;entryX=1;entryY=0.40789473684210525;entryDx=0;entryDy=0;dashed=1;dashPattern=6 4;" edge="1" parent="1" source="d-life" target="a-life">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="0" y="-13" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e3" value="4. 201 with the investigation id" style="edgeStyle=none;rounded=0;html=0;strokeColor=#64748b;strokeWidth=1.4;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0;exitY=0.4605263157894737;exitDx=0;exitDy=0;entryX=1;entryY=0.4605263157894737;entryDx=0;entryDy=0;dashed=1;dashPattern=6 4;" edge="1" parent="1" source="a-life" target="b-life">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="0" y="-13" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e4" value="5. GET /investigations/{id}/events" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5197368421052632;exitDx=0;exitDy=0;entryX=0;entryY=0.5197368421052632;entryDx=0;entryDy=0;" edge="1" parent="1" source="b-life" target="a-life">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="0" y="-13" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e5" value="6. claim: SKIP LOCKED" style="edgeStyle=none;rounded=0;html=0;strokeColor=#b45309;strokeWidth=2.2;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0;exitY=0.5855263157894737;exitDx=0;exitDy=0;entryX=1;entryY=0.5855263157894737;entryDx=0;entryDy=0;" edge="1" parent="1" source="w-life" target="d-life">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="0" y="-13" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e6" value="7. INSERT events" style="edgeStyle=none;rounded=0;html=0;strokeColor=#b45309;strokeWidth=2.2;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0;exitY=0.7236842105263158;exitDx=0;exitDy=0;entryX=1;entryY=0.7236842105263158;entryDx=0;entryDy=0;" edge="1" parent="1" source="w-life" target="d-life">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="0" y="-13" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e7" value="8. poll new events, every 0.5 s" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.7894736842105263;exitDx=0;exitDy=0;entryX=0;entryY=0.7894736842105263;entryDx=0;entryDy=0;" edge="1" parent="1" source="a-life" target="d-life">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="0" y="-13" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e8" value="9. rows after the cursor" style="edgeStyle=none;rounded=0;html=0;strokeColor=#64748b;strokeWidth=1.4;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0;exitY=0.8552631578947368;exitDx=0;exitDy=0;entryX=1;entryY=0.8552631578947368;entryDx=0;entryDy=0;dashed=1;dashPattern=6 4;" edge="1" parent="1" source="d-life" target="a-life">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="0" y="-13" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e9" value="10. SSE events, then event: end" style="edgeStyle=none;rounded=0;html=0;strokeColor=#64748b;strokeWidth=1.4;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0;exitY=0.9210526315789473;exitDx=0;exitDy=0;entryX=1;entryY=0.9210526315789473;entryDx=0;entryDy=0;dashed=1;dashPattern=6 4;" edge="1" parent="1" source="a-life" target="b-life">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="0" y="-13" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e10" value="reconnect with Last-Event-ID" style="edgeStyle=none;rounded=0;html=0;strokeColor=#64748b;strokeWidth=1.4;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.9769736842105263;exitDx=0;exitDy=0;entryX=0;entryY=0.9769736842105263;entryDx=0;entryDy=0;dashed=1;dashPattern=6 4;" edge="1" parent="1" source="b-life" target="a-life">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="0" y="-13" as="offset" />
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
