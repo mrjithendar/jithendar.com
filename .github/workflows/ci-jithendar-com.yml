@@ -102,8 +102,9 @@ jobs:
       - run: npm run build
         env:
           APP_ENV: production
-      - name: Diagnostics (only when a step above failed)
-        if: failure()
+      # cancelled() too: a step ended by "The operation was canceled" does not count as failure().
+      - name: Diagnostics (only when a step above failed or was canceled)
+        if: failure() || cancelled()
         run: |
           free -m || true
           sudo dmesg --ctime 2>/dev/null | grep -iE "oom|killed process|out of memory" | tail -20 || true
