@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Generate the SVGs for content/blog/moks-rag-and-skills-design.mdx (standard library only).
+"""Generate the SVGs of the 2026-10-31 version of content/blog/moks-rag-and-skills-design.mdx (standard library only).
+The live post still uses them. The 2026-11-01 update uses the .mmd sources in this folder instead.
 
     python3 docs/diagrams/moks-rag-skills/build_diagrams.py   (from www/)
 

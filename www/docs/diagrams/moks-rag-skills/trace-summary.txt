@@ -1,0 +1,85 @@
+===== rules: status completed generated_by rules tool_calls 10
+nodes ['triage', 'logs', 'skills', 'rules', 'correlate', 'report']
+  E1 k8s_triage {"namespace": "moks-lab"} ok=True :: 1 pods (1 need attention in the window), 1 workloads, 0 services, 1 warning events in the window; 3 findings
+  E2 k8s_list_pods {"namespace": "moks-lab", "unhealthy_only": false} ok=True :: 1 pods in moks-lab; 1 restarted since 08:07 UTC
+  E3 k8s_describe_pod {"namespace": "moks-lab", "pod": "payments-5c4-z9"} ok=True :: pod payments-5c4-z9: phase Running, ready 0/1, restarts 9, 2 problems
+  E4 k8s_pod_logs {"namespace": "moks-lab", "pod": "payments-5c4-z9", "previous": true, "tail_lines": 150} ok=True :: 1 log lines from payments-5c4-z9 (previous container); 1 look like errors
+  E5 k8s_pod_logs {"namespace": "moks-lab", "pod": "payments-5c4-z9", "previous": false, "tail_lines": 150} ok=True :: 1 log lines from payments-5c4-z9; 1 look like errors
+  E6 k8s_rollout_history {"deployment": "payments", "namespace": "moks-lab"} ok=True :: deployment payments: 1 revisions; current revision 1 created 2026-10-30T07:07:21Z
+  E7 kb_search {"k": 6, "query": "payments crash startup configuration runbook"} ok=True :: 5 knowledge passages (keyword) for 'payments crash startup configuration runbook'. Documented knowledge only: current state needs live evidence.
+  E8 k8s_events {"namespace": "moks-lab", "warnings_only": true} ok=True :: 1 warning events in moks-lab
+  E9 kb_search {"k": 6, "query": "deployment rollout failure"} ok=True :: 1 knowledge passages (keyword) for 'deployment rollout failure'. Documented knowledge only: current state needs live evidence. The passages share few of the question's te
+  E10 k8s_pod_logs {"namespace": "moks-lab", "pod": "payments-5c4-z9", "previous": true, "tail_lines": 120} ok=True :: 1 log lines from payments-5c4-z9 (previous container); 1 look like errors
+rejected []
+notes ['No active chat LLM is configured; the report is rule-based.']
+summary 4 problem(s) detected from 10 successful evidence queries. Most severe: payments-5c4-z9 is in CrashLoopBackOff (9 restarts).
+facts [('payments-5c4-z9 is in CrashLoopBackOff (9 restarts). Container keeps exiting (last reason Error, exit code 78).', ['E1']), ('Deployment payments has 0/1 ready replicas. Images: example/app:1.', ['E1']), ('1× BackOff warning events. Latest: Pod/payments-5c4-z9: Back-off restarting failed container', ['E1']), ('payments-5c4-z9/app exited with code 78 after logging: {"level":"fatal","event":"config_invalid","message":"invalid PAYM', ['E4']), ('k8s_triage (namespace=moks-lab): 1 pods (1 need attention in the window), 1 workloads, 0 services, 1 warning events in t', ['E1']), ('k8s_list_pods (namespace=moks-lab): 1 pods in moks-lab; 1 restarted since 08:07 UTC', ['E2']), ('k8s_describe_pod (namespace=moks-lab, pod=payments-5c4-z9): pod payments-5c4-z9: phase Running, ready 0/1, restarts 9, 2', ['E3']), ('k8s_pod_logs (namespace=moks-lab, pod=payments-5c4-z9): 1 log lines from payments-5c4-z9 (previous container); 1 look li', ['E4']), ('k8s_pod_logs (namespace=moks-lab, pod=payments-5c4-z9): 1 log lines from payments-5c4-z9; 1 look like errors', ['E5']), ('k8s_rollout_history (namespace=moks-lab, deployment=payments): deployment payments: 1 revisions; current revision 1 crea', ['E6']), ("kb_search (cluster): 5 knowledge passages (keyword) for 'payments crash startup configuration runbook'. Documented knowl", ['E7']), ('k8s_events (namespace=moks-lab): 1 warning events in moks-lab', ['E8']), ("kb_search (cluster): 1 knowledge passages (keyword) for 'deployment rollout failure'. Documented knowledge only: current", ['E9']), ('k8s_pod_logs (namespace=moks-lab, pod=payments-5c4-z9): 1 log lines from payments-5c4-z9 (previous container); 1 look li', ['E10'])]
+causes [('payments-5c4-z9 is in CrashLoopBackOff (9 restarts): The process exits at start-up; common causes are invalid configurat', 'medium', ['E1'], False)]
+verified [('payments-5c4-z9/app exited with code 78 after logging: {"level":"fatal","event":"config_invalid","message":"invalid PAYMENT_MODE=lve (expect', 'deterministic detector: crash_log_reason', ['E4'])]
+missing []
+next ["Read the previous container's logs (k8s_pod_logs previous=true)", 'Describe the pod for env/config references (k8s_describe_pod)', 'Check the rollout history for a recent change (k8s_rollout_history)']
+validation {}
+skills [('crashloop-triage', '3', ['findings: crashloop', 'question: crashloopbackoff']), ('rollout-failures', '1', ['findings: workload_unavailable', 'resource: Deployment'])]
+skill_runs [[('k8s_pod_logs', 'executed', 'already collected in this run'), ('k8s_describe_pod', 'executed', 'already collected in this run'), ('k8s_rollout_history', 'executed', None), ('kb_search', 'executed', None)], [('k8s_rollout_history', 'executed', 'already collected in this run'), ('k8s_events', 'executed', None), ('k8s_triage', 'executed', 'already collected in this run'), ('kb_search', 'executed', None)]]
+checks [[('output of the crashed container', 'passed'), ("the pod's configuration and last exit code", 'passed'), ('the crash loop was observed directly', 'passed')], [('rollout history', 'guidance_only'), ('state of pods in the new ReplicaSet', 'guidance_only'), ('warning events', 'guidance_only'), ('New ReplicaSet pods show the failing reason directly.', 'guidance_only'), ('updated = available = desired', 'guidance_only'), ('no pod of the new revision failing', 'guidance_only')]]
+gaps [[], []]
+skill_actions [('crashloop-triage', 'rollback_deployment', 'payments'), ('crashloop-triage', 'open_pull_request', None)]
+coverage {'sources': {'kb': {'ok': 2, 'failed': 0}, 'k8s': {'ok': 8, 'failed': 0}}, 'tool_calls': 10, 'tool_budget': 16, 'unavailable': {}, 'failed_tools': [], 'budget_reached': False}
+
+===== rules-no-knowledge: status completed generated_by rules tool_calls 10
+nodes ['triage', 'logs', 'skills', 'rules', 'correlate', 'report']
+  E1 k8s_triage {"namespace": "moks-lab"} ok=True :: 1 pods (1 need attention in the window), 1 workloads, 0 services, 1 warning events in the window; 3 findings
+  E2 k8s_list_pods {"namespace": "moks-lab", "unhealthy_only": false} ok=True :: 1 pods in moks-lab; 1 restarted since 08:07 UTC
+  E3 k8s_describe_pod {"namespace": "moks-lab", "pod": "payments-5c4-z9"} ok=True :: pod payments-5c4-z9: phase Running, ready 0/1, restarts 9, 2 problems
+  E4 k8s_pod_logs {"namespace": "moks-lab", "pod": "payments-5c4-z9", "previous": true, "tail_lines": 150} ok=True :: 1 log lines from payments-5c4-z9 (previous container); 1 look like errors
+  E5 k8s_pod_logs {"namespace": "moks-lab", "pod": "payments-5c4-z9", "previous": false, "tail_lines": 150} ok=True :: 1 log lines from payments-5c4-z9; 1 look like errors
+  E6 k8s_rollout_history {"deployment": "payments", "namespace": "moks-lab"} ok=True :: deployment payments: 1 revisions; current revision 1 created 2026-10-30T07:07:21Z
+  E7 kb_search {"k": 6, "query": "payments crash startup configuration runbook"} ok=True :: 0 knowledge passages (keyword) for 'payments crash startup configuration runbook'. Documented knowledge only: current state needs live evidence. No readable document matc
+  E8 k8s_events {"namespace": "moks-lab", "warnings_only": true} ok=True :: 1 warning events in moks-lab
+  E9 kb_search {"k": 6, "query": "deployment rollout failure"} ok=True :: 0 knowledge passages (keyword) for 'deployment rollout failure'. Documented knowledge only: current state needs live evidence. No readable document matched. Nothing here 
+  E10 k8s_pod_logs {"namespace": "moks-lab", "pod": "payments-5c4-z9", "previous": true, "tail_lines": 120} ok=True :: 1 log lines from payments-5c4-z9 (previous container); 1 look like errors
+rejected []
+notes ['No active chat LLM is configured; the report is rule-based.']
+summary 4 problem(s) detected from 10 successful evidence queries. Most severe: payments-5c4-z9 is in CrashLoopBackOff (9 restarts).
+facts [('payments-5c4-z9 is in CrashLoopBackOff (9 restarts). Container keeps exiting (last reason Error, exit code 78).', ['E1']), ('Deployment payments has 0/1 ready replicas. Images: example/app:1.', ['E1']), ('1× BackOff warning events. Latest: Pod/payments-5c4-z9: Back-off restarting failed container', ['E1']), ('payments-5c4-z9/app exited with code 78 after logging: {"level":"fatal","event":"config_invalid","message":"invalid PAYM', ['E4']), ('k8s_triage (namespace=moks-lab): 1 pods (1 need attention in the window), 1 workloads, 0 services, 1 warning events in t', ['E1']), ('k8s_list_pods (namespace=moks-lab): 1 pods in moks-lab; 1 restarted since 08:07 UTC', ['E2']), ('k8s_describe_pod (namespace=moks-lab, pod=payments-5c4-z9): pod payments-5c4-z9: phase Running, ready 0/1, restarts 9, 2', ['E3']), ('k8s_pod_logs (namespace=moks-lab, pod=payments-5c4-z9): 1 log lines from payments-5c4-z9 (previous container); 1 look li', ['E4']), ('k8s_pod_logs (namespace=moks-lab, pod=payments-5c4-z9): 1 log lines from payments-5c4-z9; 1 look like errors', ['E5']), ('k8s_rollout_history (namespace=moks-lab, deployment=payments): deployment payments: 1 revisions; current revision 1 crea', ['E6']), ("kb_search (cluster): 0 knowledge passages (keyword) for 'payments crash startup configuration runbook'. Documented knowl", ['E7']), ('k8s_events (namespace=moks-lab): 1 warning events in moks-lab', ['E8']), ("kb_search (cluster): 0 knowledge passages (keyword) for 'deployment rollout failure'. Documented knowledge only: current", ['E9']), ('k8s_pod_logs (namespace=moks-lab, pod=payments-5c4-z9): 1 log lines from payments-5c4-z9 (previous container); 1 look li', ['E10'])]
+causes [('payments-5c4-z9 is in CrashLoopBackOff (9 restarts): The process exits at start-up; common causes are invalid configurat', 'medium', ['E1'], False)]
+verified [('payments-5c4-z9/app exited with code 78 after logging: {"level":"fatal","event":"config_invalid","message":"invalid PAYMENT_MODE=lve (expect', 'deterministic detector: crash_log_reason', ['E4'])]
+missing []
+next ["Read the previous container's logs (k8s_pod_logs previous=true)", 'Describe the pod for env/config references (k8s_describe_pod)', 'Check the rollout history for a recent change (k8s_rollout_history)']
+validation {}
+skills [('crashloop-triage', '3', ['findings: crashloop', 'question: crashloopbackoff']), ('rollout-failures', '1', ['findings: workload_unavailable', 'resource: Deployment'])]
+skill_runs [[('k8s_pod_logs', 'executed', 'already collected in this run'), ('k8s_describe_pod', 'executed', 'already collected in this run'), ('k8s_rollout_history', 'executed', None), ('kb_search', 'executed', None)], [('k8s_rollout_history', 'executed', 'already collected in this run'), ('k8s_events', 'executed', None), ('k8s_triage', 'executed', 'already collected in this run'), ('kb_search', 'executed', None)]]
+checks [[('output of the crashed container', 'passed'), ("the pod's configuration and last exit code", 'passed'), ('the crash loop was observed directly', 'passed')], [('rollout history', 'guidance_only'), ('state of pods in the new ReplicaSet', 'guidance_only'), ('warning events', 'guidance_only'), ('New ReplicaSet pods show the failing reason directly.', 'guidance_only'), ('updated = available = desired', 'guidance_only'), ('no pod of the new revision failing', 'guidance_only')]]
+gaps [[], []]
+skill_actions [('crashloop-triage', 'rollback_deployment', 'payments'), ('crashloop-triage', 'open_pull_request', None)]
+coverage {'sources': {'kb': {'ok': 2, 'failed': 0}, 'k8s': {'ok': 8, 'failed': 0}}, 'tool_calls': 10, 'tool_budget': 16, 'unavailable': {}, 'failed_tools': [], 'budget_reached': False}
+
+===== scripted-model: status completed generated_by llm tool_calls 13
+nodes ['triage', 'logs', 'skills', 'plan', 'act', 'plan', 'correlate', 'report']
+  E1 k8s_triage {"namespace": "moks-lab"} ok=True :: 1 pods (1 need attention in the window), 1 workloads, 0 services, 1 warning events in the window; 3 findings
+  E2 k8s_list_pods {"namespace": "moks-lab", "unhealthy_only": false} ok=True :: 1 pods in moks-lab; 1 restarted since 08:07 UTC
+  E3 k8s_describe_pod {"namespace": "moks-lab", "pod": "payments-5c4-z9"} ok=True :: pod payments-5c4-z9: phase Running, ready 0/1, restarts 9, 2 problems
+  E4 k8s_pod_logs {"namespace": "moks-lab", "pod": "payments-5c4-z9", "previous": true, "tail_lines": 150} ok=True :: 1 log lines from payments-5c4-z9 (previous container); 1 look like errors
+  E5 k8s_pod_logs {"namespace": "moks-lab", "pod": "payments-5c4-z9", "previous": false, "tail_lines": 150} ok=True :: 1 log lines from payments-5c4-z9; 1 look like errors
+  E6 k8s_rollout_history {"deployment": "payments", "namespace": "moks-lab"} ok=True :: deployment payments: 1 revisions; current revision 1 created 2026-10-30T07:07:22Z
+  E7 kb_search {"k": 6, "query": "payments crash startup configuration runbook"} ok=True :: 5 knowledge passages (keyword) for 'payments crash startup configuration runbook'. Documented knowledge only: current state needs live evidence.
+  E8 k8s_events {"namespace": "moks-lab", "warnings_only": true} ok=True :: 1 warning events in moks-lab
+  E9 kb_search {"k": 6, "query": "deployment rollout failure"} ok=True :: 1 knowledge passages (keyword) for 'deployment rollout failure'. Documented knowledge only: current state needs live evidence. The passages share few of the question's te
+  E10 kb_search {"k": 6, "query": "PAYMENT_MODE exit code 78"} ok=True :: 1 knowledge passages (keyword) for 'PAYMENT_MODE exit code 78'. Documented knowledge only: current state needs live evidence.
+  E11 k8s_events {"namespace": "kube-system", "warnings_only": true} ok=False :: kubernetes error: namespace kube-system not found
+rejected [{'tool': 'kb_search', 'args': {'query': 'PAYMENT_MODE exit code 78', 'namespace': 'other-team'}, 'reason': 'namespace: Extra inputs are not permitted', 'kind': 'invalid_args'}, {'tool': 'k8s_delete_pod', 'args': {'namespace': 'moks-lab', 'pod': 'payments-5c4-z9'}, 'reason': "unknown tool 'k8s_delete_pod'", 'kind': 'unknown_tool'}]
+notes []
+summary payments is crash looping because PAYMENT_MODE is invalid. The root cause is confirmed. (Unverified: no change has been made or validated.)
+facts [('Container exited with code 78', ['E4']), ('The ConfigMap payments-config currently sets PAYMENT_MODE to live', ['E7']), ('A claim citing a failed call', ['E11'])]
+causes [('Invalid PAYMENT_MODE', 'high', ['E4'], False), ('Registry outage', 'low', [], False)]
+verified [('payments-5c4-z9/app exited with code 78 after logging: {"level":"fatal","event":"config_invalid","message":"invalid PAYMENT_MODE=lve (expect', 'deterministic detector: crash_log_reason', ['E4'])]
+missing ['The ConfigMap value now']
+next ['Check payments-config in Git']
+validation {'valid_refs': ['E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E7', 'E8', 'E9', 'E10', 'E11'], 'causes_downgraded': 1, 'uncited_facts_dropped': 1}
+skills [('crashloop-triage', '3', ['findings: crashloop', 'question: crashloopbackoff']), ('rollout-failures', '1', ['findings: workload_unavailable', 'resource: Deployment'])]
+skill_runs [[('k8s_pod_logs', 'executed', 'already collected in this run'), ('k8s_describe_pod', 'executed', 'already collected in this run'), ('k8s_rollout_history', 'executed', None), ('kb_search', 'executed', None)], [('k8s_rollout_history', 'executed', 'already collected in this run'), ('k8s_events', 'executed', None), ('k8s_triage', 'executed', 'already collected in this run'), ('kb_search', 'executed', None)]]
+checks [[('output of the crashed container', 'passed'), ("the pod's configuration and last exit code", 'passed'), ('the crash loop was observed directly', 'passed')], [('rollout history', 'guidance_only'), ('state of pods in the new ReplicaSet', 'guidance_only'), ('warning events', 'guidance_only'), ('New ReplicaSet pods show the failing reason directly.', 'guidance_only'), ('updated = available = desired', 'guidance_only'), ('no pod of the new revision failing', 'guidance_only')]]
+gaps [[], []]
+skill_actions [('crashloop-triage', 'rollback_deployment', 'payments'), ('crashloop-triage', 'open_pull_request', None)]
+coverage {'sources': {'kb': {'ok': 3, 'failed': 0}, 'k8s': {'ok': 7, 'failed': 1}}, 'tool_calls': 13, 'tool_budget': 16, 'unavailable': {}, 'failed_tools': ['k8s_events'], 'budget_reached': False}
+
