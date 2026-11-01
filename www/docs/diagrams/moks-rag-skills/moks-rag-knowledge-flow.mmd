@@ -1,0 +1,50 @@
+---
+config:
+  htmlLabels: false
+  flowchart: {htmlLabels: false, curve: basis, nodeSpacing: 24, rankSpacing: 40, wrappingWidth: 240}
+  themeVariables: {fontSize: 15px, fontFamily: "Inter, Segoe UI, system-ui, Helvetica, Arial, sans-serif"}
+---
+flowchart TD
+  accTitle: MOKS knowledge ingestion and retrieval
+  accDescr: GitHub repositories, uploads and approved postmortems pass through secret exclusion, redaction and heading-aware chunking. Documents and chunks are committed to PostgreSQL, which is the authority. With an external index, an outbox event in the same transaction later writes OpenSearch or Pinecone, and embedding failure leaves the document keyword searchable. A kb_search or portal query becomes grants from the caller's role bindings. Keyword, exact identifier and optional vector rankers feed reciprocal rank fusion. Every candidate is rechecked against PostgreSQL, the pool widens up to 400 if too few survive, small signals rerank, duplicates collapse, and results carry citations, freshness and an evidence state of supported, weak or none.
+
+  subgraph ING["Ingestion: untrusted content enters here"]
+    S1["GitHub source<br/>500 files a pass, one pinned commit"] --> F
+    S2["Upload<br/>UTF-8 text, 2 MB"] --> F
+    S3["Approved postmortem"] --> F
+    F{"Secret path, private key,<br/>Secret manifest, binary, or<br/>over 20 redactions?"}
+    F -->|"yes"| X["Record path and reason,<br/>store no text"]
+    F -->|"no"| C["Redact, then chunk<br/>350 est. tokens, 30 overlap"]
+  end
+
+  C --> PG[("PostgreSQL: the authority<br/>documents, chunks, tsvector,<br/>access scope, revisions")]
+  PG -->|"backend=postgres, pgvector installed"| V1["Embed in the same transaction<br/>on failure: keyword only, backfilled later"]
+  PG -->|"backend=opensearch or pinecone:<br/>outbox row in the same transaction"| O["drain_outbox after commit: lock, embed, write<br/>on failure: keyword only, backfilled later"]
+  O --> IX[("Derived index<br/>rebuildable from PostgreSQL")]
+
+  subgraph RET["Retrieval: every caller is a principal"]
+    Q["kb_search tool, or portal search"] --> G["Grants from one role binding each:<br/>environment and namespace together"]
+    G --> R["Rankers: keyword, exact identifier x2,<br/>vector if the index and model allow"]
+    R --> RRF["Reciprocal rank fusion"]
+    RRF --> A{"Active, readable, in scope,<br/>not excluded as stale?<br/>Checked in PostgreSQL"}
+    A -->|"too few survive"| W["Widen the pool, up to 400"]
+    W --> R
+    A -->|"enough"| RR["Signals, per-document cap of 3,<br/>duplicates collapsed"]
+    RR --> OUT["Passages with citation, freshness,<br/>possible_conflict, evidence state"]
+  end
+
+  IX -->|"BM25 or vectors"| R
+  V1 -->|"vectors"| R
+  PG -->|"keyword, identifiers,<br/>authoritative check"| RET
+
+  classDef gate fill:#dcfce7,stroke:#15803d,color:#052e16
+  classDef own fill:#f1f5f9,stroke:#475569,color:#0f172a
+  classDef ext fill:#fff7ed,stroke:#c2410c,color:#431407
+  classDef warn fill:#fee2e2,stroke:#b91c1c,color:#450a0a
+  style ING fill:#fafafa,stroke:#94a3b8,color:#0f172a
+  style RET fill:#fafafa,stroke:#94a3b8,color:#0f172a
+  class F,A,G gate
+  class C,V1,O,Q,R,RRF,W,RR,OUT own
+  class S1,S2,S3,IX ext
+  class PG ext
+  class X warn

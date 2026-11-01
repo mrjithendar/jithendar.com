@@ -1,13 +1,21 @@
-import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { articleMetadata, ArticlePage } from "@/lib/pages/article";
+import { NOW } from "./helpers";
 
 vi.mock("server-only", () => ({}));
 
 const params = (slug: string) => ({ params: Promise.resolve({ slug }) });
 const NOT_FOUND = { digest: expect.stringContaining("404") };
 
-// CONTENT_DIR points at the fixtures; the real clock is after every fixture date except future-post.
+// CONTENT_DIR points at the fixtures. The pages read the system clock, so hold it at NOW, before future-post's date.
 describe("article routes", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it.each([
     ["blog", "draft-post"],
     ["blog", "future-post"],

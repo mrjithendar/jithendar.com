@@ -1,0 +1,43 @@
+---
+config:
+  htmlLabels: false
+  flowchart: {htmlLabels: false, curve: basis, nodeSpacing: 26, rankSpacing: 38, wrappingWidth: 240}
+  themeVariables: {fontSize: 15px, fontFamily: "Inter, Segoe UI, system-ui, Helvetica, Arial, sans-serif"}
+---
+flowchart TD
+  accTitle: MOKS runtime investigation flow
+  accDescr: A person asks a question and the worker re-checks their access. Triage and log reading run first, then skills are selected by rules and their read-only steps run, which can include kb_search. With a model, a bounded plan and act loop requests more tools, and skill bodies join the prompts as trusted text. Without a model, or after a model failure, rule-based follow-ups run. Every tool call passes the ToolExecutor, and results come back as evidence that is fenced as untrusted data in prompts. Correlation follows, then a model report or rule-based report. Code then validates citations and marks only deterministic detector findings as verified. Proposed actions are suggestions, and only the separate executor can change anything, after plan review.
+
+  U["Engineer's question, environment,<br/>namespace, time window"] --> T
+
+  subgraph RUN["Bounded investigation: LangGraph nodes"]
+    T["triage: k8s_triage, detectors, prom_alerts"] --> L["logs: describe pod, previous and current logs"]
+    L --> SK["skills: rules pick up to 3, read-only steps run"]
+    SK -->|"model configured"| P["plan: model requests tools as JSON"]
+    SK -->|"no model"| RF["rules: detector follow-ups"]
+    P -->|"tool calls"| ACT["act: up to 4 calls"]
+    ACT -->|"more to do"| P
+    P -->|"LLM or budget failure"| RF
+    P -->|"done, or budget spent"| CO["correlate: rollout timing"]
+    ACT -->|"done"| CO
+    RF --> CO
+    CO --> REP["report: model JSON, or rule-based report"]
+  end
+
+  SF["Trusted: SKILL.md, reviewed in Git,<br/>published as a generation"] -->|"steps to skills;<br/>body to plan and report,<br/>model mode only"| RUN
+  RUN <-->|"every tool call;<br/>results become<br/>E1, E2, ... evidence"| X["ToolExecutor: the only path to live systems<br/>allowlist, read-only, schema, RBAC, scope,<br/>timeout, redaction, audit"]
+  X <--> DATA["Untrusted, fenced as data in every prompt<br/>kb_search: documented guidance<br/>Kubernetes, Prometheus, Loki: observed state"]
+
+  REP --> VAL["Validate in code: refs must exist, model causes<br/>stay suspected, only detectors can verify"]
+  VAL --> OUT["Report: facts, verified and suspected causes,<br/>missing evidence, next steps, skill checks"]
+  OUT -.->|"a person starts a plan"| AP["Action plan: review, approval policy,<br/>separate executor process"]
+
+  classDef gate fill:#dcfce7,stroke:#15803d,color:#052e16
+  classDef own fill:#f1f5f9,stroke:#475569,color:#0f172a
+  classDef ext fill:#fff7ed,stroke:#c2410c,color:#431407
+  classDef trusted fill:#ede9fe,stroke:#6d28d9,color:#2e1065
+  style RUN fill:#fafafa,stroke:#94a3b8,color:#0f172a
+  class X,VAL gate
+  class U,T,L,SK,P,RF,ACT,CO,REP,OUT,AP own
+  class DATA ext
+  class SF trusted
