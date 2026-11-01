@@ -75,9 +75,9 @@ Exceptions do the branching that edges would otherwise do. A `Clarification` rai
 
 Figure 1 shows every path, including the failures.
 
+:::figure{caption="Figure 1. There is no loop in this 'decision loop'. Branches are made by code, and the only thing the model produces is text."}
 ![Moks decision flow. ai-gateway checks whether a provider is configured; if not, it returns a setup message with no model call. The fixed LangGraph path runs search_catalogue, which may produce an introduction with no evidence or a clarification with no model call; then ground_evidence, where nothing matching still calls the model with empty evidence; then generate_answer. The router checks the configuration revision before each attempt, and refuses if it changed. The primary provider gets one attempt. An eligible failure with failover on gets one Bedrock attempt; other failures end as an unsaved 503. Answer text goes to select_cards, which keeps only evidence SKUs, then ai-gateway reapplies live stock, saves the turn and returns JSON.](/images/roboshop-ai-series/shopping-agent-flow.svg)
-
-*Figure 1. There is no loop in this "decision loop". Branches are made by code, and the only thing the model produces is text.*
+:::
 
 ## Prompt, model and state
 

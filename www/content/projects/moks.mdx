@@ -1,0 +1,91 @@
+---
+title: "MOKS: an AI-assisted SRE investigation portal"
+slug: moks
+description: "MOKS investigates production problems with live Kubernetes, Prometheus and Loki evidence, keeping observed facts apart from suspected causes."
+seoTitle: "MOKS: An AI-Assisted SRE Investigation Portal on Kubernetes"
+seoDescription: "MOKS investigates production problems with live Kubernetes, Prometheus and Loki evidence, keeping observed facts apart from suspected causes."
+author: jithendar-dharmapuri
+category: ai-agents
+tags: [SRE, AI Agents, LangGraph, RAG, Kubernetes, FastAPI]
+contentType: project
+status: review
+related:
+  - blog/moks-rag-and-skills-design
+  - blog/langchain-vs-langgraph-sre-agent-moks
+  - projects/roboshop-ai
+---
+<Todo>Draft for review, checked against moks commit ab99cf7 and the EKS cluster on 2026-11-01. Excerpt: "MOKS is an SRE investigation portal that gathers live evidence before it says anything, and tells you which parts it observed and which parts it suspects." Primary keyword: AI SRE agent. Secondary: SRE investigation portal, Kubernetes troubleshooting AI, LangGraph SRE agent. Before publishing: (1) usernamePassword.sh is tracked in the public moks repository: review it and rotate anything real, because this page sends readers there; (2) the repository has no LICENSE file, so decide its terms, as the RoboShop page states its own; (3) re-check the status table, especially whether a chat model has answered a live request; (4) the LangChain vs LangGraph article is still a draft, so publish it first or remove it from related; (5) add a cover image and your own words on why you built this.</Todo>
+
+MOKS is an AI-assisted investigation portal for production operations. You ask a question such as "Why is checkout returning 502 errors?" or "Show pods restarting in the last 30 minutes." MOKS collects live evidence from Kubernetes, Prometheus and Loki through typed, read-only tools, then reports what it found.
+
+The report keeps five things apart: observed facts with citations, suspected causes with confidence, missing evidence, next steps and proposed remediation. It is designed never to claim a root cause or a recovery it has not verified.
+
+MOKS is a personal project with no customers, so I have no accuracy, latency or incident-resolution figures to share. The [code is on GitHub](https://github.com/mrjithendar/moks), and the [portal](https://eks.jithendar.com/moks/) needs an account, with no public sign-up.
+
+It is unrelated to the shopping assistant in [RoboShop AI](/projects/roboshop-ai), which happens to share the name.
+
+## How an investigation runs
+
+Deterministic code does the first part of the work. Triage, log reading, skill selection and skill steps all run before any model sees the question. A model can then add evidence and write the report. If there is no model, or it fails, rule-based detectors still finish the investigation, and the run says which mode produced its report.
+
+:::figure{caption="Runtime flow of an investigation. The figure comes from the RAG and skills article and reflects moks commit 9c150e9."}
+![MOKS runtime investigation flow. An engineer's question enters a bounded LangGraph investigation of triage, logs and skills. With a model configured, a plan and act loop follows. With no model, or on a model or budget failure, rule-based follow-ups run. Correlation and a report follow. Every tool call goes through the ToolExecutor, the only path to live systems. The report is validated in code, then a person may start an action plan, which goes through review, approval policy and a separate executor.](/images/moks/moks-rag-skills-runtime.svg)
+:::
+
+Three sources feed an investigation, and MOKS treats them differently:
+
+| Source | Supplies | Trust |
+| --- | --- | --- |
+| Tools | What is true now, from live systems | Results are untrusted data |
+| Skills | How to investigate, in 51 built-in `SKILL.md` procedures | Reviewed like code |
+| RAG | What the team wrote down, with citations | Untrusted data |
+
+[How we implemented RAG and skills in MOKS](/blog/moks-rag-and-skills-design) goes through this in detail, including a traced crash-loop investigation and the gaps that trace exposed.
+
+## What it includes
+
+- **Investigations** as conversations, with progress streamed as structured events.
+- **Knowledge and skills:** Git sync, keyword and hybrid retrieval, and skills that declare read-only tool steps.
+- **Remediation:** allowlisted actions for Deployments, Services and HPAs, run by a separate executor after review, with pre-checks, post-checks and recovery.
+- **Alerts:** investigations triggered by webhooks or a poller, with deduplication and cooldowns.
+- **Incident records:** reports and postmortems.
+- **FinOps:** AWS cost, budgets, Kubernetes allocation and LLM spend.
+- **Web terminal:** a separate gateway with isolated pods. This one is built but has not yet run on a cluster.
+
+## Built with
+
+| Layer | Technology |
+| --- | --- |
+| Backend | Python 3.12, FastAPI, SQLAlchemy, Alembic, LangGraph, `langchain-core` |
+| Frontend | React 19, TypeScript, Vite |
+| Data | PostgreSQL, with pgvector, OpenSearch or Pinecone as optional vector backends |
+| Models | OpenAI-compatible APIs, Gemini, Amazon Bedrock, Ollama, and a rule-based fallback |
+| Delivery | One image, a Helm chart and Argo CD |
+| Observability | Prometheus metrics, JSON logs, OpenTelemetry traces, a Grafana dashboard |
+
+## Security model
+
+Access runs through five roles: viewer, investigator, operator, approver and admin. Authentication is OIDC or local accounts, and audit records are hash-chained. Every tool call goes through one executor that applies policy, and writes run in a process of their own.
+
+Some limits matter. All users of a Kubernetes connector share one ServiceAccount, so isolation between them depends on MOKS's own permission checks. Redaction works from patterns and cannot recognise every secret. Audit records are tamper-evident, not tamper-proof, against a database superuser.
+
+## Current status
+
+The repository keeps a blunt [status document](https://github.com/mrjithendar/moks/blob/ab99cf7b17acef3f7af4ca4e11b64267563133fb/docs/LIMITATIONS.md), and this table summarises it as of 1 November 2026. Much of it is built and tested, while much less has been proven against real systems.
+
+| Area | State |
+| --- | --- |
+| Deployment | Running on Amazon EKS: API, worker and executor |
+| Portal, Kubernetes, Prometheus and Loki investigations | Verified live, on the earlier Minikube cluster |
+| Git sync and keyword retrieval | Verified live |
+| Hybrid and vector retrieval | Not verified end to end |
+| Chat model answering a live request | Not yet, per the status document |
+| Remediation execution | Tested with fakes. No plan has run against a real API server |
+| Alert-triggered investigations | Tested with fakes |
+| Web terminal | Image never built, and never run on a cluster |
+| Database backups | Not yet run on a cluster |
+
+## Read more
+
+- [How we implemented RAG and skills in MOKS](/blog/moks-rag-and-skills-design)
+- [LangChain vs LangGraph for an SRE agent](/blog/langchain-vs-langgraph-sre-agent-moks)

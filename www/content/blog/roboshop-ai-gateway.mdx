@@ -93,9 +93,9 @@ The gateway is a FastAPI application with very few declared routes. `asgi_app.py
 
 Figure 1 shows `POST /api/chat`, with the response each step gives when it refuses.
 
+:::figure{caption="Figure 1. Every refusal happens before money is spent on a model call."}
 ![AI gateway request flow for POST /api/chat. Step 1, the Moks widget adapter checks Origin, a 30 per minute limit, the session, an 8 KiB body and four slots. Inside ai-gateway: step 2, transport limits of 64 KiB, a 10 second body read, 8 workers and a 23 second deadline; step 3, a 300 per minute limit and Origin check; step 4, session lookup, which fails closed; step 5, service token then role; step 6, a 10 per minute limit and the ChatRequest schema; step 7, history and LLM snapshot, returning not-configured if there is no provider; step 8, catalogue and stock; step 9, two admission slots, returning assistant-busy when full; step 10, the call to moks with an 18 second timeout and no retry; step 11, reapply stock, save the turn, validate and return JSON.](/images/roboshop-ai-series/ai-gateway-request-flow.svg)
-
-*Figure 1. Every refusal happens before money is spent on a model call.*
+:::
 
 The order matters. Cheap checks come first, and the model call is the last thing that can go wrong. Here is the core of step 5 to step 9:
 

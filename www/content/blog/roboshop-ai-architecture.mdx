@@ -41,9 +41,9 @@ The later articles go deeper into the [AI gateway](/blog/roboshop-ai-gateway), t
 
 The system is easier to follow if you ask what each service is the only owner of, instead of what it does. Figure 1 shows the logical view.
 
+:::figure{caption="Figure 1. Logical architecture. Solid arrows are request paths, dashed arrows are reads or private paths, and red arrows are asynchronous events."}
 ![RoboShop AI logical architecture. A browser uses web, which proxies API calls to ai-gateway and assistant calls to moks. moks and ai-gateway call each other on private routes, moks reads catalogue-service directly and calls a model provider. An MCP client outside the cluster reaches the private mcp-server, which forwards the caller's session to ai-gateway. ai-gateway calls six domain services and writes an order ledger, whose outbox publishes to RabbitMQ for shipping-service and kafka-bridge, then Kafka.](/images/roboshop-ai-series/roboshop-ai-architecture-logical.svg)
-
-*Figure 1. Logical architecture. Solid arrows are request paths, dashed arrows are reads or private paths, and red arrows are asynchronous events.*
+:::
 
 | Service | Stack | Sole owner of |
 | --- | --- | --- |
@@ -92,9 +92,9 @@ Service-to-service calls are HTTP inside the cluster, and most private links use
 
 A normal request involves no model and no probability. Figure 2 follows browsing and adding to the cart.
 
+:::figure{caption="Figure 2. Browse and add to cart. Amber arrows change state."}
 ![Sequence for a traditional shopping request. The browser requests products through web. ai-gateway reads catalogue-service, overlays live stock from its ledger and responds. Adding to the cart posts a SKU and quantity; ai-gateway checks the session, stock and pending payments, writes through cart-service to Redis and returns a cart with totals it computed itself.](/images/roboshop-ai-series/roboshop-sequence-browse-cart.svg)
-
-*Figure 2. Browse and add to cart. Amber arrows change state.*
+:::
 
 The cart API takes a SKU and an absolute quantity, never a price. Inside `Store.update` the gateway validates the SKU, confirms the item can be bought, compares the quantity with available stock and refuses the change while a payment is pending. `cart-service` then applies a Lua script that checks the revision, so a stale write fails instead of overwriting a newer cart. Totals always come from the server.
 
@@ -108,9 +108,9 @@ Login goes through the gateway to `user-service`, which sets an `rs_auth` cookie
 
 This is the path the architecture is protecting, so it has the most machinery. Figure 3 shows it.
 
+:::figure{caption="Figure 3. Checkout, payment and order events. The browser's word is never enough to mark an order paid."}
 ![Checkout sequence. The signed-in browser posts an order with an idempotency key. ai-gateway reserves stock and saves the order as creating, then asks payment-service to create a Razorpay order, and returns public checkout options in the payment_pending state. After hosted Razorpay checkout the browser posts to verify; ai-gateway has payment-service verify the signature and fetch the capture, with a signed webhook as an alternative route. mark_paid commits the order and an outbox event, which reaches RabbitMQ, then shipping-service and kafka-bridge.](/images/roboshop-ai-series/roboshop-sequence-checkout.svg)
-
-*Figure 3. Checkout, payment and order events. The browser's word is never enough to mark an order paid.*
+:::
 
 The important decisions are about what happens when an answer is ambiguous:
 
@@ -125,9 +125,9 @@ The important decisions are about what happens when an answer is ambiguous:
 
 Compare that with Figure 4. The route is longer, and it is also structured so that nothing in it can change an order.
 
+:::figure{caption="Figure 4. The AI-assisted path. The call goes moks, gateway, moks on purpose."}
 ![Sequence for an AI-assisted request. The widget posts a message to moks, which checks the session and calls ai-gateway /api/chat with a service token and the user's session. ai-gateway applies a role check and 10 per minute limit, loads history and the LLM snapshot, reads the catalogue, finds unavailable SKUs, and calls moks /internal/chat. moks reads products, retrieves evidence, confirms the configuration revision, calls Converse or Ollama and returns an answer. ai-gateway reapplies stock, saves the turn and returns JSON without streaming.](/images/roboshop-ai-series/roboshop-sequence-assistant.svg)
-
-*Figure 4. The AI-assisted path. The call goes moks, gateway, moks on purpose.*
+:::
 
 The odd-looking loop is deliberate. The browser talks to the widget half of `moks`, which calls the gateway so that identity, history, provider configuration and stock stay in one place. The gateway then calls the engine half of `moks`, which never sees a user ID.
 
@@ -145,9 +145,9 @@ There is a second AI path that does not appear in this figure. MCP clients go th
 
 Figure 5 separates where things run from how they relate logically.
 
+:::figure{caption="Figure 5. Deployment on EKS, checked read-only on 1 November 2026. Dashed boxes mark things that are absent."}
 ![RoboShop AI on Amazon EKS. Argo CD on the mk4 cluster syncs applications to the roboshop-demo EKS cluster from GitHub and ECR. A browser reaches a Network Load Balancer, then the Istio ingress gateway, which ends TLS and strips /roboshop, then web. In namespace roboshop-ai every pod has an Envoy sidecar. web and ai-gateway run one replica; moks has no Deployment; mcp-server runs with no public route. Mesh policy is PERMISSIVE with authorization policies in dry-run. Metrics use prometheus-agent and Kiali. Traces are disabled.](/images/roboshop-ai-series/roboshop-ai-architecture-deployment.svg)
-
-*Figure 5. Deployment on EKS, checked read-only on 1 November 2026. Dashed boxes mark things that are absent.*
+:::
 
 Argo CD runs on a separate cluster and manages `roboshop-demo` remotely, using manual sync with prune turned off. Images come from ECR and manifests from `services/*` and `argocd-eks/`. The Istio `VirtualService` is the only place `/roboshop` is stripped, and `mcp-server` has no route at all.
 

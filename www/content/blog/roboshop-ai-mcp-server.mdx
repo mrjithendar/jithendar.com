@@ -53,9 +53,9 @@ The important part is what the description is for. A language model reads it and
 
 MCP defines three roles, and it is worth being exact about them here.
 
+:::figure{caption="Figure 1. Hosts and clients live outside the application. The authorization boundary sits below the MCP server."}
 ![MCP roles in RoboShop AI. The MCP host, such as an AI client, IDE or script, picks tools with its model and keeps the session token. Its MCP client discovers and calls tools. It reaches mcp-server over stdio or POST /mcp with a bearer session. mcp-server handles protocol, discovery, schemas, Host and Origin guards, rate limits and admin confirmation, and holds no business data. It calls ai-gateway over HTTP with the caller's rs_auth cookie, and ai-gateway enforces session, role, Origin, ownership, stock and revisions before calling domain services. Separately, the Moks widget calls moks, which calls ai-gateway and has no MCP client.](/images/roboshop-ai-series/mcp-host-client-server.svg)
-
-*Figure 1. Hosts and clients live outside the application. The authorization boundary sits below the MCP server.*
+:::
 
 | Role | In this project |
 | --- | --- |
@@ -146,9 +146,9 @@ Output is validated as well. `spec.shape` projects the gateway response into a s
 
 Figure 2 traces `update_cart`.
 
+:::figure{caption="Figure 2. The session is checked at the MCP server and again at the gateway, on every request."}
 ![MCP tool invocation sequence for update_cart. The client sends tools/call with a bearer token. mcp-server applies Host, Origin and 256 KiB checks, then verifies the session with GET /api/auth/me with no cache, and receives the user id and role. It applies role, schema and admission checks, then posts to /api/cart with the caller's rs_auth cookie and origin header. ai-gateway checks session, Origin, ownership, stock and pending payment, and calls cart-service to replace the cart with a revision. The cart JSON returns, mcp-server shapes it and validates the output schema, and returns a structured result or isError. A write is never retried; a read may be retried once inside the 10 second tool deadline.](/images/roboshop-ai-series/mcp-tool-invocation-sequence.svg)
-
-*Figure 2. The session is checked at the MCP server and again at the gateway, on every request.*
+:::
 
 The HTTP layer checks the session with no cache, so an expired or revoked session fails on its next call:
 

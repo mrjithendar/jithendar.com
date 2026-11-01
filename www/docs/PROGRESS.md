@@ -1,5 +1,9 @@
 # Progress log — jithendar.com
 
+## Draft project page: MOKS (2026-11-01, owner request)
+
+`content/projects/moks.mdx`, `status: review`, checked against moks ab99cf7 and the EKS cluster. Not published or committed. Open items are in the page's `<Todo>`, including `usernamePassword.sh` tracked in the public moks repository and the missing LICENSE. The RoboShop series now uses the `:::figure` directive for captions.
+
 ## Draft series: RoboShop AI knowledge sharing (2026-11-01, owner request)
 
 Four review drafts, nine figures and five editable draw.io files, written against `roboshop-ai` c81e85a. Nothing published or committed.
