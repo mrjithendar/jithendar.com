@@ -1,0 +1,1113 @@
+# Medium (part 2): cloud SDKs against fakes, search and graphs, validation, generators and concurrency.
+- slug: model-registry-latest
+  title: Latest model version per stage
+  difficulty: easy
+  roles: [mlops-engineer, machine-learning-engineer, ai-engineer]
+  topics: [dictionaries, model-evaluation]
+  minutes: 10
+  entrypoint: latest_by_stage
+  description: |
+    A model registry lists versions as `{"model": str, "version": int, "stage": str}` with stages such as
+    "staging", "production" or "archived". For each model, return the highest version in each stage except
+    "archived": `{"model": {"stage": version}}`.
+  io: { input: "versions: list[dict]", output: "dict[str, dict[str, int]]" }
+  starter: |
+    def latest_by_stage(versions: list[dict]) -> dict:
+        return {}
+  hints:
+    - "Nested dictionaries: model → stage → best version."
+    - "setdefault the inner dict, then keep the max version."
+    - |
+      for v in versions: if v["stage"] == "archived": continue
+          stages = out.setdefault(v["model"], {}); stages[v["stage"]] = max(stages.get(v["stage"], 0), v["version"])
+  solution:
+    code: |
+      def latest_by_stage(versions: list[dict]) -> dict:
+          out: dict[str, dict[str, int]] = {}
+          for v in versions:
+              if v["stage"] == "archived":
+                  continue
+              stages = out.setdefault(v["model"], {})
+              stages[v["stage"]] = max(stages.get(v["stage"], v["version"]), v["version"])
+          return out
+    explanation: Two-level grouping with setdefault keeps one pass; max() keeps the newest version per stage.
+    time: O(n)
+    space: O(models × stages)
+    alternatives: ["Sort by version and let later entries overwrite earlier ones"]
+    edge_cases: ["Models with only archived versions don't appear", "Several versions in production — take the highest"]
+    production: ["MLflow's registry now prefers aliases (champion/challenger) over fixed stages", "Pin deployments to a version, never to 'latest'"]
+  examples:
+    - args: [[{ model: "ranker", version: 3, stage: "staging" }, { model: "ranker", version: 2, stage: "production" }, { model: "ranker", version: 1, stage: "production" }, { model: "old", version: 9, stage: "archived" }]]
+      expected: { ranker: { staging: 3, production: 2 } }
+  hidden:
+    - { args: [[]] }
+    - { args: [[{ model: "a", version: 1, stage: "production" }, { model: "a", version: 5, stage: "production" }, { model: "b", version: 2, stage: "staging" }]] }
+
+- slug: ec2-idle-instances
+  title: Find idle EC2 instances
+  difficulty: medium
+  roles: [aws-engineer, cloud-engineer, site-reliability-engineer]
+  topics: [aws, pagination]
+  minutes: 20
+  entrypoint: idle_instances
+  description: |
+    Using Boto3-style clients (fakes provided by the harness), find running instances whose average CPU over
+    the period is below `threshold` percent.
+
+    - `ec2.describe_instances(NextToken=...)` returns `{"Reservations": [{"Instances": [...]}], "NextToken": ...}`
+      (NextToken absent on the last page). Each instance has `InstanceId`, `State: {"Name": ...}` and
+      optional `Tags: [{"Key", "Value"}]`.
+    - `cloudwatch.get_average_cpu(instance_id)` returns a float, or `None` when there is no data.
+
+    Skip instances that aren't `running`, that have the tag `keep-alive = true`, or that have no CPU data.
+    Return the sorted list of idle instance ids. The harness counts your calls: don't fetch metrics for
+    instances you will skip.
+  io: { input: "ec2, cloudwatch (fake clients), threshold: float", output: "list[str]" }
+  prelude: |
+    class FakeEC2:
+        def __init__(self, pages):
+            self.pages, self.calls = pages, 0
+
+        def describe_instances(self, NextToken=None):
+            self.calls += 1
+            i = 0 if NextToken is None else int(NextToken)
+            page = {"Reservations": self.pages[i]}
+            if i + 1 < len(self.pages):
+                page["NextToken"] = str(i + 1)
+            return page
+
+    class FakeCloudWatch:
+        def __init__(self, cpu):
+            self.cpu, self.calls = cpu, []
+
+        def get_average_cpu(self, instance_id):
+            self.calls.append(instance_id)
+            return self.cpu.get(instance_id)
+
+    def __harness__(fn, pages, cpu, threshold):
+        ec2, cw = FakeEC2(pages), FakeCloudWatch(cpu)
+        return {"idle": fn(ec2, cw, threshold), "describe_calls": ec2.calls, "metric_calls": sorted(cw.calls)}
+  starter: |
+    def idle_instances(ec2, cloudwatch, threshold: float) -> list[str]:
+        page = ec2.describe_instances()
+        return []
+  hints:
+    - "Two steps: list every instance across pages, then filter."
+    - "Follow NextToken in a loop; check state and tags before calling CloudWatch."
+    - |
+      token = None
+      while True: page = ec2.describe_instances(NextToken=token) if token else ec2.describe_instances()
+          for r in page["Reservations"]: for i in r["Instances"]: ...
+          token = page.get("NextToken"); if not token: break
+  solution:
+    code: |
+      def tags_of(instance: dict) -> dict[str, str]:
+          return {t["Key"]: t["Value"] for t in instance.get("Tags", [])}
+
+      def all_instances(ec2):
+          token = None
+          while True:
+              page = ec2.describe_instances(NextToken=token) if token else ec2.describe_instances()
+              for reservation in page.get("Reservations", []):
+                  yield from reservation.get("Instances", [])
+              token = page.get("NextToken")
+              if not token:
+                  return
+
+      def idle_instances(ec2, cloudwatch, threshold: float) -> list[str]:
+          idle = []
+          for instance in all_instances(ec2):
+              if instance.get("State", {}).get("Name") != "running":
+                  continue
+              if tags_of(instance).get("keep-alive", "").lower() == "true":
+                  continue
+              cpu = cloudwatch.get_average_cpu(instance["InstanceId"])
+              if cpu is not None and cpu < threshold:
+                  idle.append(instance["InstanceId"])
+          return sorted(idle)
+    explanation: |
+      A generator hides pagination from the filtering logic. Checking cheap local conditions before the
+      metric call avoids paying for (and being throttled on) CloudWatch requests you don't need.
+    time: O(instances) API work
+    space: O(idle)
+    alternatives: ["boto3's get_paginator('describe_instances')", "Server-side filters: Filters=[{'Name': 'instance-state-name', 'Values': ['running']}]"]
+    edge_cases: ["Instances without tags", "No CPU data", "Empty reservations", "Tag value 'TRUE'"]
+    production: ["Use GetMetricData to batch up to 500 metrics per call", "Report, don't stop instances automatically — idle can be intentional (standby)"]
+  examples:
+    - args:
+        - - [{ Instances: [{ InstanceId: "i-1", State: { Name: "running" } }, { InstanceId: "i-2", State: { Name: "stopped" } }] }]
+          - [{ Instances: [{ InstanceId: "i-3", State: { Name: "running" }, Tags: [{ Key: "keep-alive", Value: "true" }] }, { InstanceId: "i-4", State: { Name: "running" } }] }]
+        - { i-1: 1.5, i-3: 0.1, i-4: 40.0 }
+        - 5
+      expected: { idle: ["i-1"], describe_calls: 2, metric_calls: ["i-1", "i-4"] }
+  hidden:
+    - { args: [[[]], {}, 5] }
+    - { args: [[[{ Instances: [{ InstanceId: "i-9", State: { Name: "running" } }, { InstanceId: "i-8", State: { Name: "running" }, Tags: [{ Key: "keep-alive", Value: "TRUE" }] }, { InstanceId: "i-7", State: { Name: "running" } }] }]], { i-9: 2.0, i-7: 4.99 }, 5] }
+
+- slug: s3-cleanup-batches
+  title: Plan an S3 cleanup in batches
+  difficulty: medium
+  roles: [aws-engineer, automation-engineer, cloud-engineer]
+  topics: [aws, pagination, lists]
+  minutes: 20
+  entrypoint: cleanup
+  description: |
+    Delete old objects from a bucket using a fake S3 client:
+
+    - `s3.list_objects_v2(Bucket=..., ContinuationToken=...)` returns `{"Contents": [{"Key", "AgeDays"}],
+      "IsTruncated": bool, "NextContinuationToken": str}`.
+    - `s3.delete_objects(Bucket=..., Delete={"Objects": [{"Key": k}, ...]})` deletes up to `batch_size`
+      keys per call (S3's real limit is 1000).
+
+    Delete every object older than `max_age_days` whose key does not start with any prefix in `keep`.
+    Return the total number deleted. The harness checks your batches.
+  io: { input: "s3 (fake), bucket: str, max_age_days: int, keep: list[str], batch_size: int", output: "int" }
+  prelude: |
+    class FakeS3:
+        def __init__(self, pages, batch_limit):
+            self.pages, self.batch_limit, self.deleted, self.batches = pages, batch_limit, [], []
+
+        def list_objects_v2(self, Bucket, ContinuationToken=None):
+            i = 0 if ContinuationToken is None else int(ContinuationToken)
+            page = {"Contents": self.pages[i], "IsTruncated": i + 1 < len(self.pages)}
+            if page["IsTruncated"]:
+                page["NextContinuationToken"] = str(i + 1)
+            return page
+
+        def delete_objects(self, Bucket, Delete):
+            objs = Delete["Objects"]
+            if not objs or len(objs) > self.batch_limit:
+                raise ValueError(f"MalformedXML: {len(objs)} objects in one request")
+            self.batches.append(len(objs))
+            self.deleted += [o["Key"] for o in objs]
+            return {"Deleted": objs}
+
+    def __harness__(fn, pages, max_age, keep, batch):
+        s3 = FakeS3(pages, batch)
+        n = fn(s3, "logs", max_age, keep, batch)
+        return {"returned": n, "deleted": sorted(s3.deleted), "batches": s3.batches}
+  starter: |
+    def cleanup(s3, bucket: str, max_age_days: int, keep: list[str], batch_size: int) -> int:
+        return 0
+  hints:
+    - "Separate 'collect keys to delete' from 'delete them in batches'."
+    - "str.startswith accepts a tuple of prefixes. Send a batch whenever you have batch_size keys, and a final partial batch."
+    - |
+      pending = []
+      for obj in listing: if obj["AgeDays"] > max_age and not obj["Key"].startswith(tuple(keep)): pending.append(...)
+          if len(pending) == batch_size: s3.delete_objects(...); pending = []
+      if pending: s3.delete_objects(...)
+  solution:
+    code: |
+      def list_all(s3, bucket):
+          token = None
+          while True:
+              page = s3.list_objects_v2(Bucket=bucket, ContinuationToken=token) if token else s3.list_objects_v2(Bucket=bucket)
+              yield from page.get("Contents", [])
+              if not page.get("IsTruncated"):
+                  return
+              token = page["NextContinuationToken"]
+
+      def cleanup(s3, bucket: str, max_age_days: int, keep: list[str], batch_size: int) -> int:
+          keep_prefixes = tuple(keep)
+          pending: list[dict] = []
+          deleted = 0
+
+          def flush():
+              nonlocal deleted, pending
+              if pending:
+                  s3.delete_objects(Bucket=bucket, Delete={"Objects": pending})
+                  deleted += len(pending)
+                  pending = []
+
+          for obj in list_all(s3, bucket):
+              if obj["AgeDays"] > max_age_days and not (keep_prefixes and obj["Key"].startswith(keep_prefixes)):
+                  pending.append({"Key": obj["Key"]})
+                  if len(pending) == batch_size:
+                      flush()
+          flush()
+          return deleted
+    explanation: |
+      Streaming the listing and flushing full batches keeps memory bounded for buckets with millions of
+      objects. `startswith` with an empty tuple is False, so an empty keep list keeps nothing.
+    time: O(objects)
+    space: O(batch_size)
+    alternatives: ["S3 Lifecycle rules do this server-side for free — prefer them for age-based expiry"]
+    edge_cases: ["Nothing to delete makes no delete call", "Exactly batch_size keys", "Empty keep list"]
+    production: ["Check the Errors list in each delete_objects response", "Versioned buckets need delete markers and version ids", "Dry-run mode first"]
+  examples:
+    - args:
+        - - [{ Key: "tmp/a", AgeDays: 40 }, { Key: "keep/b", AgeDays: 99 }, { Key: "tmp/c", AgeDays: 5 }]
+          - [{ Key: "tmp/d", AgeDays: 31 }, { Key: "tmp/e", AgeDays: 60 }]
+        - 30
+        - ["keep/"]
+        - 2
+      expected: { returned: 3, deleted: ["tmp/a", "tmp/d", "tmp/e"], batches: [2, 1] }
+  hidden:
+    - { args: [[[]], 1, [], 1000] }
+    - { args: [[[{ Key: "a", AgeDays: 2 }, { Key: "b", AgeDays: 2 }]], 1, [], 2] }
+    - { args: [[[{ Key: "x/1", AgeDays: 9 }], [{ Key: "y/1", AgeDays: 9 }]], 1, ["x/", "z/"], 1] }
+
+- slug: error-rate-alert-windows
+  title: Alert on error-rate windows
+  difficulty: medium
+  roles: [site-reliability-engineer, mlops-engineer, platform-engineer]
+  topics: [monitoring, intervals, simulation]
+  minutes: 25
+  entrypoint: alert_periods
+  description: |
+    You get per-minute counts `[minute, requests, errors]` (minutes ascending, possibly with gaps — a missing
+    minute has zero requests). An alert **fires** at minute m when the error rate over the window
+    `[m - window + 1, m]` (sum of errors / sum of requests) is **≥ threshold** and the window had at least
+    `min_requests` requests. It **resolves** at the first later minute where the condition is false.
+
+    Evaluate every minute from the first to the last given minute. Return `[[fired_at, resolved_at], ...]`;
+    use `None` for resolved_at if the alert is still firing at the last minute.
+  io: { input: "counts: list[[int, int, int]], window: int, threshold: float, min_requests: int", output: "list[list]" }
+  starter: |
+    def alert_periods(counts, window, threshold, min_requests):
+        return []
+  hints:
+    - "Fill gaps first so every minute has a value, then slide a window."
+    - "Keep running sums of requests and errors; add the new minute and subtract the one leaving the window."
+    - |
+      for m in range(first, last + 1): add data[m]; if m - window in data: subtract
+          firing_now = req >= min_requests and err / req >= threshold
+          state changes: start a period / close it
+  solution:
+    code: |
+      def alert_periods(counts, window, threshold, min_requests):
+          if not counts:
+              return []
+          data = {m: (r, e) for m, r, e in counts}
+          first, last = counts[0][0], counts[-1][0]
+          req = err = 0
+          periods, open_at = [], None
+          for m in range(first, last + 1):
+              r, e = data.get(m, (0, 0))
+              req, err = req + r, err + e
+              old = data.get(m - window)
+              if old:
+                  req, err = req - old[0], err - old[1]
+              firing = req >= min_requests and req > 0 and err / req >= threshold
+              if firing and open_at is None:
+                  open_at = m
+              elif not firing and open_at is not None:
+                  periods.append([open_at, m])
+                  open_at = None
+          if open_at is not None:
+              periods.append([open_at, None])
+          return periods
+    explanation: |
+      Running sums make each minute O(1). The minimum-request guard prevents one failed request at 3 a.m.
+      from paging someone — the same idea as Prometheus alerts that combine a rate and a volume condition.
+    time: O(last - first)
+    space: O(n)
+    alternatives: ["collections.deque of the last `window` minutes", "Multi-window, multi-burn-rate SLO alerts (Google SRE workbook)"]
+    edge_cases: ["Gaps in the data", "Still firing at the end", "Windows with zero requests never fire"]
+    production: ["Add a 'for' duration before paging to absorb blips", "Alert on SLO burn rate rather than raw error rate"]
+  examples:
+    - args: [[[0, 100, 0], [1, 100, 30], [2, 100, 30], [3, 100, 0], [4, 100, 0], [5, 100, 0]], 2, 0.1, 50]
+      expected: [[1, 4]]
+      explanation: "Minute 3 still includes minute 2's errors (30/200 = 15%); minute 4's window has none."
+  hidden:
+    - { args: [[], 5, 0.1, 1] }
+    - { args: [[[10, 5, 5], [11, 5, 5], [20, 100, 50]], 3, 0.5, 6] }
+    - { args: [[[0, 10, 1], [1, 10, 1]], 1, 0.1, 1] }
+
+- slug: trie-autocomplete
+  title: Autocomplete with a trie
+  difficulty: medium
+  roles: [full-stack-engineer, software-development-engineer, backend-engineer]
+  topics: [tries, sorting]
+  minutes: 20
+  entrypoint: autocomplete
+  description: |
+    Build a prefix index over `words`, each with a popularity score, then answer `queries`: for each prefix,
+    return up to `k` words starting with it, by score descending then alphabetically. Matching is
+    case-insensitive; return words lowercased. A word listed twice keeps its highest score.
+  io: { input: "words: list[[str, int]], queries: list[str], k: int", output: "list[list[str]]" }
+  starter: |
+    def autocomplete(words: list[list], queries: list[str], k: int) -> list[list[str]]:
+        return [[] for _ in queries]
+  hints:
+    - "A trie node maps characters to child nodes; each node can also store the best completions below it."
+    - "Insert every word; at each node along the path, keep a small sorted list of (−score, word) capped at k."
+    - |
+      for word, score in best_scores: node = root; for ch in word: node = node.children.setdefault(ch, Node()); node.top = sorted(node.top + [(-score, word)])[:k]
+      query: walk the prefix; missing child → []; else [w for _, w in node.top]
+  solution:
+    code: |
+      class Node:
+          __slots__ = ("children", "top")
+
+          def __init__(self):
+              self.children: dict[str, "Node"] = {}
+              self.top: list[tuple[int, str]] = []
+
+      def autocomplete(words: list[list], queries: list[str], k: int) -> list[list[str]]:
+          best: dict[str, int] = {}
+          for word, score in words:
+              w = word.lower()
+              best[w] = max(score, best.get(w, score))
+          root = Node()
+          for word, score in best.items():
+              node = root
+              for ch in word:
+                  node = node.children.setdefault(ch, Node())
+                  node.top = sorted(node.top + [(-score, word)])[:k]
+          results = []
+          for q in queries:
+              node = root
+              for ch in q.lower():
+                  node = node.children.get(ch)
+                  if node is None:
+                      break
+              if q == "":
+                  results.append([w for _, w in sorted((-s, w) for w, s in best.items())[:k]])
+              else:
+                  results.append([w for _, w in node.top] if node else [])
+          return results
+    explanation: |
+      Storing the top k at every node moves the work to indexing time, so a query costs only the length of
+      the prefix. Sorting (−score, word) gives "score descending, then alphabetical" in one comparison.
+    time: O(total chars × k log k) to build, O(len(prefix)) per query
+    space: O(total chars × k)
+    alternatives: ["A sorted list of words and bisect to find the prefix range, then sort that range by score"]
+    edge_cases: ["Empty prefix returns the global top k", "Unknown prefix", "Duplicate words with different scores"]
+    production: ["Rebuild the index offline and swap it atomically", "Search engines (OpenSearch completion suggester) do this for you"]
+  examples:
+    - args: [[["kubectl", 90], ["kubernetes", 100], ["kustomize", 50], ["kafka", 70]], ["ku", "kub", "x"], 2]
+      expected: [["kubernetes", "kubectl"], ["kubernetes", "kubectl"], []]
+  hidden:
+    - { args: [[["a", 1], ["A", 5], ["ab", 5]], ["a", ""], 3] }
+    - { args: [[], ["q"], 1] }
+    - { args: [[["same", 1], ["sama", 1], ["samb", 1]], ["sam"], 2] }
+
+- slug: lowest-latency-route
+  title: Lowest-latency route between services
+  difficulty: medium
+  roles: [software-development-engineer, platform-engineer, solutions-architect]
+  topics: [graphs, heaps]
+  minutes: 25
+  entrypoint: fastest_path
+  description: |
+    Service-to-service links have one-way latencies: `[from, to, ms]`. Find the path from `source` to
+    `target` with the lowest total latency. Return `{"ms": total, "path": [...]}`, or `None` if `target` is
+    unreachable. If several paths tie, return the lexicographically smallest path (compare the lists).
+  io: { input: "links: list[[str, str, int]], source: str, target: str", output: "dict | None" }
+  starter: |
+    def fastest_path(links, source, target):
+        return None
+  hints:
+    - "Non-negative weights → Dijkstra's algorithm."
+    - "Push (distance, path) tuples on a heap; tuples compare by distance first, then path — which gives the tie-break."
+    - |
+      heap = [(0, [source])]; done = set()
+      while heap: d, path = heappop(heap); node = path[-1]; if node == target: return; if node in done: continue; done.add(node)
+          for nxt, w in graph[node]: if nxt not in done: heappush(heap, (d + w, path + [nxt]))
+  solution:
+    code: |
+      import heapq
+      from collections import defaultdict
+
+      def fastest_path(links, source, target):
+          graph: dict[str, list[tuple[str, int]]] = defaultdict(list)
+          for a, b, ms in links:
+              graph[a].append((b, ms))
+          heap: list[tuple[int, list[str]]] = [(0, [source])]
+          done: set[str] = set()
+          while heap:
+              dist, path = heapq.heappop(heap)
+              node = path[-1]
+              if node == target:
+                  return {"ms": dist, "path": path}
+              if node in done:
+                  continue
+              done.add(node)
+              for nxt, ms in graph[node]:
+                  if nxt not in done:
+                      heapq.heappush(heap, (dist + ms, path + [nxt]))
+          return None
+    explanation: |
+      Dijkstra settles nodes in order of distance. Carrying the whole path in the heap entry costs memory but
+      makes the tie-break exact: among equal distances, the smallest path list is popped first.
+    time: O(E log E) (plus path copying)
+    space: O(E × path length)
+    alternatives: ["Store predecessors instead of paths for large graphs", "Bellman-Ford if weights could be negative"]
+    edge_cases: ["source == target → 0 ms", "Unreachable target", "Parallel links with different latencies"]
+    production: ["Latencies change — recompute from live metrics (e.g. service mesh telemetry)", "Prefer paths with fewer hops when latencies are close"]
+  examples:
+    - args: [[["web", "api", 5], ["api", "db", 10], ["web", "cache", 2], ["cache", "db", 12], ["web", "db", 20]], "web", "db"]
+      expected: { ms: 14, path: ["web", "cache", "db"] }
+  hidden:
+    - { args: [[], "a", "a"] }
+    - { args: [[["a", "b", 1]], "b", "a"] }
+    - { args: [[["s", "b", 1], ["s", "a", 1], ["a", "t", 1], ["b", "t", 1], ["s", "t", 3]], "s", "t"] }
+
+- slug: top-k-frequent-stream
+  title: Most frequent errors in a stream
+  difficulty: medium
+  roles: [data-engineer, software-development-engineer, site-reliability-engineer]
+  topics: [heaps, hashing, generators]
+  minutes: 15
+  entrypoint: top_errors
+  description: |
+    Error codes arrive as an iterator (the harness passes a generator, so you can only read it once). Return
+    the `k` most frequent codes as `[code, count]`, most frequent first, ties broken by code ascending.
+  io: { input: "stream: iterator of str, k: int", output: "list[[str, int]]" }
+  prelude: |
+    def __harness__(fn, codes, k):
+        return fn((c for c in codes), k)
+  starter: |
+    def top_errors(stream, k: int) -> list[list]:
+        codes = list(stream)
+        return [[c, 1] for c in codes[:k]]
+  hints:
+    - "Count first, then select the top k."
+    - "collections.Counter consumes an iterator in one pass; heapq.nsmallest with key (−count, code) selects."
+    - "counts = Counter(stream); return [[c, n] for c, n in heapq.nsmallest(k, counts.items(), key=lambda x: (-x[1], x[0]))]"
+  solution:
+    code: |
+      import heapq
+      from collections import Counter
+
+      def top_errors(stream, k: int) -> list[list]:
+          counts = Counter(stream)
+          best = heapq.nsmallest(k, counts.items(), key=lambda item: (-item[1], item[0]))
+          return [[code, n] for code, n in best]
+    explanation: Counter makes one pass over the stream; nsmallest with a negated count is a top-k by count with a deterministic tie-break, in O(u log k).
+    time: O(n + u log k) for u distinct codes
+    space: O(u)
+    alternatives: ["Counter.most_common(k) (ties keep first-seen order, not alphabetical)", "Count-Min Sketch + heap for unbounded cardinality"]
+    edge_cases: ["k larger than the number of distinct codes", "Empty stream", "All counts tied"]
+    production: ["Window the counts (last 5 minutes) instead of counting forever"]
+  examples:
+    - { args: [["E500", "E404", "E500", "E401", "E404", "E500"], 2], expected: [["E500", 3], ["E404", 2]] }
+  hidden:
+    - { args: [[], 3] }
+    - { args: [["b", "a", "c"], 2] }
+    - { args: [["x", "x"], 10] }
+
+- slug: first-bad-build
+  title: Find the first bad build
+  difficulty: medium
+  roles: [software-development-engineer, devops-engineer, automation-engineer]
+  topics: [binary-search, complexity]
+  minutes: 15
+  entrypoint: first_bad
+  description: |
+    Builds are numbered 1..n. Once a build is bad, every later build is bad too. You have
+    `is_bad(build) -> bool`, but each call runs a 20-minute test suite. Return the first bad build (or `None`
+    if all are good) using at most ⌈log2(n)⌉ + 1 calls. The harness counts your calls.
+  io: { input: "n: int, is_bad: callable", output: "int | None" }
+  prelude: |
+    import math
+
+    def __harness__(fn, n, first_bad):
+        calls = {"n": 0}
+
+        def is_bad(build):
+            if not 1 <= build <= n:
+                raise ValueError(f"build {build} does not exist")
+            calls["n"] += 1
+            return first_bad is not None and build >= first_bad
+
+        answer = fn(n, is_bad)
+        return {"answer": answer, "within_budget": calls["n"] <= math.ceil(math.log2(max(n, 1))) + 1}
+  starter: |
+    def first_bad(n: int, is_bad):
+        for build in range(1, n + 1):
+            if is_bad(build):
+                return build
+        return None
+  hints:
+    - "The good/bad sequence is sorted (all good, then all bad) — binary search applies."
+    - "Keep lo..hi as the range that may contain the first bad build; check the middle."
+    - |
+      lo, hi = 1, n
+      while lo < hi: mid = (lo + hi) // 2; if is_bad(mid): hi = mid else: lo = mid + 1
+      return lo if n and is_bad(lo) else None
+  solution:
+    code: |
+      def first_bad(n: int, is_bad):
+          lo, hi = 1, n
+          while lo < hi:
+              mid = (lo + hi) // 2
+              if is_bad(mid):
+                  hi = mid
+              else:
+                  lo = mid + 1
+          return lo if n >= 1 and is_bad(lo) else None
+    explanation: Each call halves the candidate range; the final call confirms that the remaining build really is bad (all could be good).
+    time: O(log n) calls
+    space: O(1)
+    alternatives: ["bisect.bisect_left(range(1, n + 1), True, key=is_bad) (Python 3.10+)", "git bisect run automates exactly this"]
+    edge_cases: ["n = 0", "All builds good", "The first build is bad", "Only the last build is bad"]
+    production: ["Flaky tests break bisection — retry a failing build before trusting it"]
+    alternative_code:
+      - |
+        import bisect
+
+        def first_bad(n: int, is_bad):
+            i = bisect.bisect_left(range(1, n + 1), True, key=is_bad)
+            return i + 1 if i < n else None
+  examples:
+    - { args: [10, 7], expected: { answer: 7, within_budget: true } }
+    - { args: [5, null], expected: { answer: null, within_budget: true } }
+  hidden:
+    - { args: [1, 1] }
+    - { args: [0, null] }
+    - { args: [1000000, 999999] }
+    - { args: [64, 1] }
+
+- slug: validate-against-schema
+  title: Validate a request against a schema
+  difficulty: medium
+  roles: [backend-engineer, forward-deployed-engineer, ai-engineer]
+  topics: [validation, json]
+  minutes: 25
+  entrypoint: validate
+  description: |
+    Implement a tiny schema validator (like a subset of JSON Schema or Pydantic). A schema is:
+
+    - `{"type": "string" | "integer" | "number" | "boolean"}` — `integer` excludes booleans; `number`
+      accepts ints and floats (not booleans)
+    - `{"type": "array", "items": <schema>}`
+    - `{"type": "object", "properties": {name: <schema>}, "required": [names]}` — extra properties are allowed
+
+    Return the sorted list of error paths with messages, as strings like `"$.user.age: expected integer"` or
+    `"$.tags[1]: expected string"` or `"$.user.name: required"`. Report a type error at the node and don't
+    descend further into it.
+  io: { input: "data: any, schema: dict", output: "list[str]" }
+  starter: |
+    def validate(data, schema: dict) -> list[str]:
+        return []
+  hints:
+    - "Recursion again: validate(value, schema, path) returns errors for that subtree."
+    - "Write one type-check function; for objects check required keys, then recurse into present properties."
+    - |
+      def check(value, schema, path):
+          if not type_ok(value, schema["type"]): return [f"{path}: expected {schema['type']}"]
+          if array: recurse with f"{path}[{i}]"; if object: required → f"{path}.{name}: required"; recurse f"{path}.{name}"
+  solution:
+    code: |
+      def type_ok(value, kind: str) -> bool:
+          if kind == "string":
+              return isinstance(value, str)
+          if kind == "boolean":
+              return isinstance(value, bool)
+          if kind == "integer":
+              return isinstance(value, int) and not isinstance(value, bool)
+          if kind == "number":
+              return isinstance(value, (int, float)) and not isinstance(value, bool)
+          if kind == "array":
+              return isinstance(value, list)
+          if kind == "object":
+              return isinstance(value, dict)
+          raise ValueError(f"unknown type {kind}")
+
+      def check(value, schema: dict, path: str) -> list[str]:
+          kind = schema["type"]
+          if not type_ok(value, kind):
+              return [f"{path}: expected {kind}"]
+          errors: list[str] = []
+          if kind == "array" and "items" in schema:
+              for i, item in enumerate(value):
+                  errors += check(item, schema["items"], f"{path}[{i}]")
+          if kind == "object":
+              props = schema.get("properties", {})
+              for name in schema.get("required", []):
+                  if name not in value:
+                      errors.append(f"{path}.{name}: required")
+              for name, sub in props.items():
+                  if name in value:
+                      errors += check(value[name], sub, f"{path}.{name}")
+          return errors
+
+      def validate(data, schema: dict) -> list[str]:
+          return sorted(check(data, schema, "$"))
+    explanation: The validator mirrors the schema's shape. Stopping at a type mismatch avoids a cascade of meaningless errors below a wrong node.
+    time: O(size of data)
+    space: O(depth) recursion plus errors
+    alternatives: ["Pydantic models (fast, typed, great error messages)", "jsonschema library for the full standard"]
+    edge_cases: ["true is not an integer", "Missing required keys", "Nested arrays of objects"]
+    production: ["Return all errors at once — users hate fixing one field per request", "Never echo raw input back in errors (XSS, log injection)"]
+  examples:
+    - args:
+        - { user: { name: "ana", age: "41" }, tags: ["a", 2] }
+        - { type: "object", required: ["user", "id"], properties: { user: { type: "object", required: ["name", "email"], properties: { name: { type: "string" }, age: { type: "integer" } } }, tags: { type: "array", items: { type: "string" } } } }
+      expected: ["$.id: required", "$.tags[1]: expected string", "$.user.age: expected integer", "$.user.email: required"]
+  hidden:
+    - { args: [true, { type: "integer" }] }
+    - { args: [[1, 2.5, true], { type: "array", items: { type: "number" } }] }
+    - { args: [{ a: [[1], ["x"]] }, { type: "object", properties: { a: { type: "array", items: { type: "array", items: { type: "integer" } } } } }] }
+    - { args: [{}, { type: "object" }] }
+
+- slug: repair-llm-json
+  title: Repair structured output from an LLM
+  difficulty: medium
+  roles: [genai-engineer, ai-engineer, forward-deployed-engineer]
+  topics: [llm-integration, json, parsing]
+  minutes: 20
+  entrypoint: extract_json
+  description: |
+    Models asked for JSON often wrap it in prose or code fences, or add trailing commas. Extract the first
+    JSON **object** from the text:
+
+    1. If the text contains a fenced block (```json … ``` or ``` … ```), use the content of the first one.
+    2. Otherwise use the substring from the first `{` to the matching closing `}` (track nesting and ignore
+       braces inside strings).
+    3. Remove trailing commas before `}` or `]` (outside strings) and parse.
+
+    Return the parsed dictionary, or `None` if no valid object can be extracted.
+  io: { input: "text: str", output: "dict | None" }
+  starter: |
+    import json
+
+    def extract_json(text: str):
+        try:
+            return json.loads(text)
+        except ValueError:
+            return None
+  hints:
+    - "Solve it in three small functions: find the candidate, clean it, parse it."
+    - "To find the matching brace, scan characters, tracking depth and whether you are inside a string (handle backslash escapes)."
+    - |
+      depth, in_str, esc = 0, False, False
+      for i, ch in enumerate(s[start:], start): if in_str: handle esc / closing quote; elif ch == '"': in_str = True
+          elif ch == "{": depth += 1; elif ch == "}": depth -= 1; if depth == 0: return s[start:i + 1]
+  solution:
+    code: |
+      import json
+      import re
+
+      FENCE = re.compile(r"```(?:json)?\s*\n?(.*?)```", re.DOTALL)
+
+      def balanced_object(s: str):
+          start = s.find("{")
+          if start < 0:
+              return None
+          depth, in_str, esc = 0, False, False
+          for i in range(start, len(s)):
+              ch = s[i]
+              if in_str:
+                  if esc:
+                      esc = False
+                  elif ch == "\\":
+                      esc = True
+                  elif ch == '"':
+                      in_str = False
+              elif ch == '"':
+                  in_str = True
+              elif ch == "{":
+                  depth += 1
+              elif ch == "}":
+                  depth -= 1
+                  if depth == 0:
+                      return s[start : i + 1]
+          return None
+
+      def strip_trailing_commas(s: str) -> str:
+          out: list[str] = []
+          in_str = esc = False
+          for ch in s:
+              if in_str:
+                  if esc:
+                      esc = False
+                  elif ch == "\\":
+                      esc = True
+                  elif ch == '"':
+                      in_str = False
+              elif ch == '"':
+                  in_str = True
+              elif ch in "}]":
+                  j = len(out) - 1
+                  while j >= 0 and out[j].isspace():
+                      j -= 1
+                  if j >= 0 and out[j] == ",":
+                      del out[j]
+              out.append(ch)
+          return "".join(out)
+
+      def extract_json(text: str):
+          fence = FENCE.search(text)
+          candidate = balanced_object(fence.group(1) if fence else text)
+          if candidate is None:
+              return None
+          try:
+              value = json.loads(strip_trailing_commas(candidate))
+          except ValueError:
+              return None
+          return value if isinstance(value, dict) else None
+    explanation: |
+      Scanning with an "inside a string" flag is what makes braces and commas inside values safe. Doing the
+      repairs on the extracted candidate (not the whole response) keeps prose from confusing the parser.
+    time: O(n)
+    space: O(n)
+    alternatives: ["Ask the provider for structured output / JSON mode / tool calling, so repair is rarely needed", "json_repair libraries for more aggressive fixes"]
+    edge_cases: ["Braces inside string values", "Trailing commas in nested arrays", "No object at all", "Fenced block without a language tag"]
+    production: ["Validate the parsed object against a schema (Pydantic) and retry with the validation error in the prompt", "Count how often repair is needed per model version"]
+  examples:
+    - args: ["Sure! Here it is:\n```json\n{\"name\": \"web\", \"ports\": [80, 443,],}\n```\nAnything else?"]
+      expected: { name: "web", ports: [80, 443] }
+    - args: ["The answer is {\"msg\": \"use {braces}, carefully\", \"ok\": true} as requested."]
+      expected: { msg: "use {braces}, carefully", ok: true }
+  hidden:
+    - { args: ["no json here"] }
+    - { args: ["```\n{\"a\": {\"b\": [1, {\"c\": 2,},],},}\n```"] }
+    - { args: ["{\"unterminated\": 1"] }
+    - { args: ["[1, 2, 3]"] }
+    - { args: ["prefix {\"q\": \"say \\\"hi\\\", ok\", \"n\": 1,} suffix"] }
+
+- slug: invoice-dataclasses
+  title: Compute an invoice with dataclasses
+  difficulty: medium
+  roles: [python-developer, backend-engineer, full-stack-engineer]
+  topics: [dataclasses, classes, formatting]
+  minutes: 20
+  entrypoint: build_invoice
+  description: |
+    Model invoice lines with `@dataclass` and compute totals with `decimal.Decimal` (never floats for money):
+
+    - Each line is `{"sku", "qty", "unit_price"}` where `unit_price` is a string like `"19.99"`.
+    - Line total = qty × unit_price, rounded to cents with ROUND_HALF_UP.
+    - Subtotal = sum of line totals. Discount: `discount_pct` percent of the subtotal, rounded half-up.
+    - Tax = `tax_pct` percent of (subtotal − discount), rounded half-up. Total = subtotal − discount + tax.
+
+    Return a dictionary of strings with two decimals: `{"lines": [...line totals], "subtotal", "discount",
+    "tax", "total"}`.
+  io: { input: "lines: list[dict], discount_pct: str, tax_pct: str", output: "dict" }
+  starter: |
+    from dataclasses import dataclass
+    from decimal import Decimal
+
+    @dataclass
+    class Line:
+        sku: str
+        qty: int
+        unit_price: Decimal
+
+    def build_invoice(lines: list[dict], discount_pct: str, tax_pct: str) -> dict:
+        total = sum(l["qty"] * float(l["unit_price"]) for l in lines)
+        return {"lines": [], "subtotal": str(total), "discount": "0.00", "tax": "0.00", "total": str(total)}
+  hints:
+    - "Floats can't represent 0.1 exactly; Decimal('0.1') can. Build Decimals from strings."
+    - "quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) rounds to cents; a @property on the dataclass can compute the line total."
+    - |
+      CENT = Decimal("0.01"); r = lambda d: d.quantize(CENT, ROUND_HALF_UP)
+      subtotal = sum(line totals, Decimal("0")); discount = r(subtotal * Decimal(discount_pct) / 100)
+      tax = r((subtotal - discount) * Decimal(tax_pct) / 100); total = subtotal - discount + tax
+  solution:
+    code: |
+      from dataclasses import dataclass
+      from decimal import ROUND_HALF_UP, Decimal
+
+      CENT = Decimal("0.01")
+
+      def cents(value: Decimal) -> Decimal:
+          return value.quantize(CENT, rounding=ROUND_HALF_UP)
+
+      @dataclass(frozen=True)
+      class Line:
+          sku: str
+          qty: int
+          unit_price: Decimal
+
+          @property
+          def total(self) -> Decimal:
+              return cents(self.unit_price * self.qty)
+
+      def build_invoice(lines: list[dict], discount_pct: str, tax_pct: str) -> dict:
+          items = [Line(l["sku"], int(l["qty"]), Decimal(l["unit_price"])) for l in lines]
+          subtotal = sum((i.total for i in items), Decimal("0"))
+          discount = cents(subtotal * Decimal(discount_pct) / 100)
+          tax = cents((subtotal - discount) * Decimal(tax_pct) / 100)
+          total = subtotal - discount + tax
+          return {"lines": [str(i.total) for i in items], "subtotal": str(cents(subtotal)), "discount": str(discount), "tax": str(tax), "total": str(cents(total))}
+    explanation: Decimal arithmetic is exact for decimal fractions, and rounding at each documented step reproduces what accounting systems print.
+    time: O(n)
+    space: O(n)
+    alternatives: ["Integer cents everywhere and format only at the end"]
+    edge_cases: ["Half-cent rounding (0.125 → 0.13)", "Zero discount and tax", "No lines → all zeros"]
+    production: ["Rounding rules differ by jurisdiction (per line vs per invoice) — make them explicit", "Store currency with every amount"]
+  examples:
+    - args: [[{ sku: "a", qty: 3, unit_price: "19.99" }, { sku: "b", qty: 1, unit_price: "0.125" }], "10", "8.25"]
+      expected: { lines: ["59.97", "0.13"], subtotal: "60.10", discount: "6.01", tax: "4.46", total: "58.55" }
+  hidden:
+    - { args: [[], "0", "0"] }
+    - { args: [[{ sku: "x", qty: 10, unit_price: "0.1" }], "0", "0"] }
+    - { args: [[{ sku: "x", qty: 7, unit_price: "3.333" }, { sku: "y", qty: 2, unit_price: "1000" }], "12.5", "20"] }
+
+- slug: lazy-generator-pipeline
+  title: Build a lazy generator pipeline
+  difficulty: medium
+  roles: [python-developer, data-engineer, machine-learning-engineer]
+  topics: [generators, complexity]
+  minutes: 20
+  entrypoint: pipeline
+  description: |
+    Write `pipeline(source, n)` returning a **generator** that, from an iterator of log records
+    (`{"level": str, "ms": int}`):
+
+    1. keeps records with level `"ERROR"`,
+    2. maps each to its `ms` value,
+    3. yields lists (batches) of up to 3 values,
+    4. stops after yielding `n` batches.
+
+    It must be lazy: it should pull from `source` only as many records as needed. The harness counts how
+    many records you consumed.
+  io: { input: "source: iterator of dict, n: int", output: "generator of list[int]" }
+  prelude: |
+    def __harness__(fn, records, n):
+        pulled = {"count": 0}
+
+        def source():
+            for r in records:
+                pulled["count"] += 1
+                yield r
+
+        gen = fn(source(), n)
+        is_generator = hasattr(gen, "__next__")
+        batches = list(gen)
+        return {"batches": batches, "pulled": pulled["count"], "lazy": is_generator}
+  starter: |
+    def pipeline(source, n):
+        values = [r["ms"] for r in source if r["level"] == "ERROR"]
+        return [values[i:i + 3] for i in range(0, len(values), 3)][:n]
+  hints:
+    - "Generator expressions and functions with yield are lazy; list comprehensions are not."
+    - "Chain generator expressions for filter and map, then write a small batching generator; itertools.islice limits the count."
+    - |
+      errors = (r["ms"] for r in source if r["level"] == "ERROR")
+      def batches(it): batch = []; for x in it: batch.append(x); if len(batch) == 3: yield batch; batch = [] ; if batch: yield batch
+      return islice(batches(errors), n)
+  solution:
+    code: |
+      from itertools import islice
+
+      def batched(iterable, size: int):
+          batch: list = []
+          for item in iterable:
+              batch.append(item)
+              if len(batch) == size:
+                  yield batch
+                  batch = []
+          if batch:
+              yield batch
+
+      def pipeline(source, n):
+          errors = (record["ms"] for record in source if record["level"] == "ERROR")
+          return islice(batched(errors, 3), n)
+    explanation: |
+      Each stage pulls one item at a time from the previous one, so when islice has produced n batches, no
+      further records are read. That is what makes generators suitable for huge files and streams.
+    time: O(records consumed)
+    space: O(batch size)
+    alternatives: ["itertools.batched (3.12+, yields tuples)", "filter() and map() builtins (also lazy)"]
+    edge_cases: ["Fewer than n batches available", "n = 0 consumes nothing", "Last batch shorter than 3"]
+    production: ["Lazy pipelines make errors surface late — wrap the consumer in try/except with context", "Close file handles with context managers even when the consumer stops early"]
+  examples:
+    - args: [[{ level: "ERROR", ms: 1 }, { level: "INFO", ms: 2 }, { level: "ERROR", ms: 3 }, { level: "ERROR", ms: 4 }, { level: "ERROR", ms: 5 }, { level: "ERROR", ms: 6 }], 1]
+      expected: { batches: [[1, 3, 4]], pulled: 4, lazy: true }
+      explanation: "The first batch is complete after the fourth record, so the last two are never read."
+  hidden:
+    - { args: [[], 3] }
+    - { args: [[{ level: "ERROR", ms: 9 }, { level: "ERROR", ms: 8 }], 0] }
+    - { args: [[{ level: "ERROR", ms: 1 }, { level: "ERROR", ms: 2 }, { level: "ERROR", ms: 3 }, { level: "ERROR", ms: 4 }, { level: "WARN", ms: 0 }], 5] }
+
+- slug: parallel-health-checks
+  title: Run health checks in parallel threads
+  difficulty: medium
+  roles: [devops-engineer, python-developer, automation-engineer]
+  topics: [concurrency, exceptions]
+  minutes: 20
+  entrypoint: check_all
+  description: |
+    `check(host)` (provided) takes about 20 ms of blocking I/O and either returns a latency in ms or raises
+    an exception. Check all hosts using a thread pool of `workers` threads and return
+    `{host: {"ok": True, "ms": ...}}` or `{host: {"ok": False, "error": "<ExceptionType>"}}` for every host.
+    The harness checks that the work actually ran in parallel.
+  io: { input: "hosts: list[str], workers: int", output: "dict" }
+  prelude: |
+    import threading
+    import time
+
+    _lock = threading.Lock()
+    _state = {"active": 0, "peak": 0}
+
+    def check(host):
+        with _lock:
+            _state["active"] += 1
+            _state["peak"] = max(_state["peak"], _state["active"])
+        try:
+            time.sleep(0.02)
+            if host.startswith("bad"):
+                raise ConnectionError(host)
+            if host.startswith("slow"):
+                raise TimeoutError(host)
+            return len(host)
+        finally:
+            with _lock:
+                _state["active"] -= 1
+
+    def __harness__(fn, hosts, workers):
+        _state.update(active=0, peak=0)
+        result = fn(hosts, workers)
+        return {"result": result, "parallel": _state["peak"] > 1 or workers == 1 or len(hosts) < 2, "within_limit": _state["peak"] <= workers}
+  starter: |
+    def check_all(hosts: list[str], workers: int) -> dict:
+        return {h: {"ok": True, "ms": check(h)} for h in hosts}
+  hints:
+    - "Threads help with blocking I/O even with the GIL, because sleeping/waiting releases it."
+    - "concurrent.futures.ThreadPoolExecutor(max_workers=workers); submit one future per host and read future.result() in try/except."
+    - |
+      with ThreadPoolExecutor(max_workers=workers) as pool: futures = {pool.submit(check, h): h for h in hosts}
+          for f in as_completed(futures): h = futures[f]; try: out[h] = {"ok": True, "ms": f.result()} except Exception as e: out[h] = {"ok": False, "error": type(e).__name__}
+  solution:
+    code: |
+      from concurrent.futures import ThreadPoolExecutor, as_completed
+
+      def check_all(hosts: list[str], workers: int) -> dict:
+          results: dict = {}
+          with ThreadPoolExecutor(max_workers=workers) as pool:
+              futures = {pool.submit(check, host): host for host in hosts}
+              for future in as_completed(futures):
+                  host = futures[future]
+                  try:
+                      results[host] = {"ok": True, "ms": future.result()}
+                  except Exception as exc:
+                      results[host] = {"ok": False, "error": type(exc).__name__}
+          return results
+    explanation: future.result() re-raises the worker's exception in the caller, where it is turned into data — one bad host never hides the others' results.
+    time: ≈ ceil(n / workers) × 20 ms wall time
+    space: O(n)
+    alternatives: ["pool.map with a wrapper that catches exceptions", "asyncio with an async HTTP client for thousands of hosts"]
+    edge_cases: ["Every host fails", "No hosts", "workers = 1"]
+    production: ["Set a timeout per check (future.result(timeout=…))", "Bound the pool — hundreds of threads waste memory"]
+  examples:
+    - args: [["web", "bad-db", "cache", "slow-api"], 4]
+      expected: { result: { web: { ok: true, ms: 3 }, bad-db: { ok: false, error: "ConnectionError" }, cache: { ok: true, ms: 5 }, slow-api: { ok: false, error: "TimeoutError" } }, parallel: true, within_limit: true }
+  hidden:
+    - { args: [[], 3] }
+    - { args: [["a", "b", "c", "d", "e", "f"], 2] }
+    - { args: [["bad1", "bad2"], 1] }
+
+- slug: canary-analysis
+  title: Decide whether to promote a canary
+  difficulty: medium
+  roles: [site-reliability-engineer, platform-engineer, mlops-engineer]
+  topics: [monitoring, statistics]
+  minutes: 20
+  entrypoint: canary_decision
+  description: |
+    Compare a canary with the baseline. Each has `{"requests": int, "errors": int, "p95_ms": float}`.
+    Rules, checked in order (collect every failed rule):
+
+    1. `"insufficient-traffic"` if the canary has fewer than `min_requests` requests — then return
+       `{"decision": "wait", "reasons": [...]}` immediately.
+    2. `"error-rate"` if canary error rate > baseline error rate + `max_error_delta` (absolute, e.g. 0.01).
+    3. `"latency"` if canary p95 > baseline p95 × (1 + `max_latency_ratio`).
+
+    Return `{"decision": "promote", "reasons": []}` if no rule failed, else `"rollback"` with the reasons.
+    Treat an error rate with zero requests as 0.
+  io: { input: "baseline: dict, canary: dict, min_requests: int, max_error_delta: float, max_latency_ratio: float", output: "dict" }
+  starter: |
+    def canary_decision(baseline, canary, min_requests, max_error_delta, max_latency_ratio):
+        return {"decision": "promote", "reasons": []}
+  hints:
+    - "Compute both error rates with a zero-division guard first."
+    - "Check traffic first and return early; then append reasons for each failed comparison."
+    - |
+      rate = lambda m: m["errors"] / m["requests"] if m["requests"] else 0.0
+      if canary["requests"] < min_requests: return wait
+      reasons = []; if rate(c) > rate(b) + delta: reasons.append("error-rate"); if c p95 > b p95 * (1 + ratio): reasons.append("latency")
+  solution:
+    code: |
+      def error_rate(m: dict) -> float:
+          return m["errors"] / m["requests"] if m["requests"] else 0.0
+
+      def canary_decision(baseline, canary, min_requests, max_error_delta, max_latency_ratio):
+          if canary["requests"] < min_requests:
+              return {"decision": "wait", "reasons": ["insufficient-traffic"]}
+          reasons = []
+          if error_rate(canary) > error_rate(baseline) + max_error_delta:
+              reasons.append("error-rate")
+          if canary["p95_ms"] > baseline["p95_ms"] * (1 + max_latency_ratio):
+              reasons.append("latency")
+          return {"decision": "rollback" if reasons else "promote", "reasons": reasons}
+    explanation: Without enough traffic, differences are noise, so the analysis waits instead of guessing. Comparing to a concurrent baseline cancels out time-of-day effects.
+    time: O(1)
+    space: O(1)
+    alternatives: ["Statistical tests (Mann-Whitney U for latency, two-proportion z-test for errors) as in Kayenta"]
+    edge_cases: ["Baseline with zero requests", "Exactly at a threshold promotes", "Both rules fail"]
+    production: ["Run several analysis intervals and require consistent passes", "Argo Rollouts and Flagger automate this with Prometheus queries"]
+  examples:
+    - args: [{ requests: 10000, errors: 50, p95_ms: 200 }, { requests: 1000, errors: 30, p95_ms: 230 }, 500, 0.01, 0.1]
+      expected: { decision: "rollback", reasons: ["error-rate", "latency"] }
+  hidden:
+    - { args: [{ requests: 1, errors: 0, p95_ms: 1 }, { requests: 10, errors: 10, p95_ms: 999 }, 100, 0, 0] }
+    - { args: [{ requests: 0, errors: 0, p95_ms: 100 }, { requests: 500, errors: 5, p95_ms: 110 }, 500, 0.01, 0.1] }
+    - { args: [{ requests: 1000, errors: 10, p95_ms: 100 }, { requests: 1000, errors: 12, p95_ms: 100 }, 1, 0.01, 0] }
+
+- slug: feature-scaling
+  title: Scale features for a model
+  difficulty: medium
+  roles: [machine-learning-engineer, data-engineer, mlops-engineer]
+  topics: [statistics, vectors, lists]
+  minutes: 15
+  entrypoint: scale
+  comparator: float
+  description: |
+    Given a table (list of rows, all the same length) and a method, scale each **column**:
+
+    - `"minmax"`: (x − min) / (max − min); a constant column becomes all 0.0
+    - `"zscore"`: (x − mean) / population standard deviation; a constant column becomes all 0.0
+
+    Round results to 4 decimals and return the scaled table in row form. Also return the parameters needed
+    to scale new data later: `{"rows": [...], "params": [[a, b], ...]}` where `[a, b]` is `[min, max]` or
+    `[mean, std]` per column (rounded to 4 decimals).
+  io: { input: "rows: list[list[float]], method: str", output: "dict" }
+  starter: |
+    def scale(rows: list[list[float]], method: str) -> dict:
+        return {"rows": rows, "params": []}
+  hints:
+    - "Work column by column: zip(*rows) transposes."
+    - "statistics.fmean and statistics.pstdev compute mean and population std; guard zero ranges."
+    - |
+      cols = list(zip(*rows)); for col in cols: a, b = (min, max) or (mean, pstdev); denom = (b - a) or std
+          scaled_col = [0.0 if denom == 0 else round((x - a) / denom, 4) for x in col]
+      rows_out = [list(r) for r in zip(*scaled_cols)]
+  solution:
+    code: |
+      import statistics
+
+      def scale(rows: list[list[float]], method: str) -> dict:
+          if not rows:
+              return {"rows": [], "params": []}
+          scaled_cols, params = [], []
+          for col in zip(*rows):
+              if method == "minmax":
+                  a, b = min(col), max(col)
+                  denom = b - a
+              elif method == "zscore":
+                  a, b = statistics.fmean(col), statistics.pstdev(col)
+                  denom = b
+              else:
+                  raise ValueError(method)
+              scaled_cols.append([0.0 if denom == 0 else round((x - a) / denom, 4) for x in col])
+              params.append([round(a, 4), round(b, 4)])
+          return {"rows": [list(r) for r in zip(*scaled_cols)], "params": params}
+    explanation: Returning the fitted parameters matters as much as the scaled data — new data must be scaled with the training statistics, never refitted.
+    time: O(rows × columns)
+    space: O(rows × columns)
+    alternatives: ["sklearn.preprocessing.MinMaxScaler / StandardScaler", "NumPy: (X - X.mean(0)) / X.std(0)"]
+    edge_cases: ["Constant columns", "A single row", "Empty table"]
+    production: ["Fit on the training split only to avoid data leakage", "Persist the parameters with the model artifact"]
+  examples:
+    - args: [[[1, 10], [2, 10], [3, 10]], "minmax"]
+      expected: { rows: [[0.0, 0.0], [0.5, 0.0], [1.0, 0.0]], params: [[1, 3], [10, 10]] }
+  hidden:
+    - { args: [[], "zscore"] }
+    - { args: [[[2, 4], [4, 8], [6, 0]], "zscore"] }
+    - { args: [[[5]], "minmax"] }

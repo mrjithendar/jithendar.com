@@ -29,6 +29,10 @@ export async function register() {
   const applied = await migrateDb(await getDb());
   log.info("database ready", { migrationsApplied: applied, ms: Date.now() - started });
 
+  // Python practice catalog (content/python-practice/catalog.generated.json): new and changed problems.
+  const { ensurePracticeSeeded } = await import("./lib/practice/seed");
+  await ensurePracticeSeeded().catch((err) => log.warn("practice catalog seed failed", { err }));
+
   const { startBackupScheduler } = await import("./lib/backups");
   startBackupScheduler();
 

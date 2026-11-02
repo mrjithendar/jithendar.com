@@ -1,0 +1,18 @@
+# Python practice executor on mk4. NOT part of ../kustomization.yaml on purpose: apply it by hand, only after
+# gVisor is installed and verified (scripts/install-gvisor-mk4.sh, scripts/verify-practice-sandbox.sh):
+#   kubectl --context mk4 apply -k k8s/practice-executor
+# After that first apply, CI (ci-practice-executor.yml, job "deploy") pins the image digests on every release, once
+# repository variable PRACTICE_EXECUTOR_DEPLOY is "true". A later manual apply resets the images to :latest and the
+# sandbox runtime to its placeholder: re-run the workflow afterwards to pin them again.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - 00-namespaces.yaml
+  - 05-runtimeclass.yaml
+  - 10-rbac.yaml
+  - 15-admission.yaml
+  - 20-quota.yaml
+  - 30-redis.yaml
+  - 40-executor.yaml
+  - 50-networkpolicies.yaml
+  - 90-ci-deployer.yaml

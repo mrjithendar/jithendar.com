@@ -1,5 +1,37 @@
 # Progress log — jithendar.com
 
+## Python practice platform (2026-11-02, owner request)
+
+`/python-practice`: role-based Python practice and interview preparation, plus a sandboxed code runner. Uncommitted. **Code execution is built but off**: mk4 has no gVisor runtime yet. Docs: `PYTHON_PRACTICE.md`, `PYTHON_PRACTICE_EXECUTOR.md`.
+
+- **Owner decisions:** Postgres instead of the prompt's MongoDB; build the executor for gVisor and ship it switched off; treat prompt sections 1–14 as the full spec (the prompt was cut off in §14); deliver everything in one run.
+- **Web (`www/`):** migration `0010_python_practice.sql` and schema; `lib/practice/*` (catalog, seeder, evaluator, submissions, sessions, progress, adaptive, daily, achievements, dashboard, profile/export, admin, settings, AI tutor); `/api/practice/*`; pages under `app/python-practice/`; admin under `app/admin/practice/`; components in `components/practice/`. Small edits: login `?mode=signup`, admin nav, audit severities, cache-bus kind, scheduler sweep, start-up seeding, `next.config.ts` no-store for `/api/practice`.
+- **Content:** 20 roles, 57 topics, 100 original problems (`content/python-practice/`). Expected outputs come from running every reference solution through the real runner (`executor/tools/build_problems.py`), which also checked the hand-written expectations: 4 of mine were wrong and are fixed.
+- **Executor (`executor/`):** FastAPI API, Redis queue, dispatcher (one gVisor pod per job), sandbox runner, Dockerfiles. Manifests in `k8s/practice-executor/` (separate from `deploy.sh`), NetworkPolicy egress added to `k8s/30-jithendar-com.yaml`, scripts `install-gvisor-mk4.sh`, `verify-practice-sandbox.sh`, `create-practice-executor-secrets.sh`, workflow `ci-practice-executor.yml`.
+- **New dependencies:** `codemirror`, `@codemirror/{lang-python,state,view,commands,language}` (Monaco has no mobile support) and `@aws-sdk/client-bedrock-runtime` (Bedrock tutor; same SDK family as S3/SES).
+
+**Commands run → result**
+| Command | Result |
+|---|---|
+| `npm run lint` | pass (clean) |
+| `npm run typecheck` | pass |
+| `npm test` | pass: 42 files, 423 tests (21 new in `tests/practice.test.ts`) |
+| `APP_ENV=production npm run build` | pass |
+| `pytest` (executor, scratch venv, Python 3.11) | pass: 17 tests |
+| `executor/tools/build_problems.py` | pass: 100 problems, 423 test cases |
+| `next dev` smoke test as a guest | pages 200; `/dashboard` → 307 to `/login`; guest API calls → 401 `auth_required`; no solution code in problem HTML |
+| `kubectl apply -k k8s/practice-executor --dry-run=server` | RuntimeClass and ValidatingAdmissionPolicy accepted. Namespaced objects not checked: their namespaces don't exist yet |
+| Docker image builds (executor, sandbox) | **Not run.** The Docker daemon isn't running on this Mac; CI builds them |
+| `install-gvisor-mk4.sh`, `verify-practice-sandbox.sh` | **Not run.** They change cluster nodes, which the owner runs |
+
+**Open issues**
+- Hidden tests and solutions of the seed problems are in this public repository: hidden in the product, not secret. Add private hidden tests in the admin where that matters.
+- `catalog.generated.json` was generated with Python 3.11; CI regenerates it with 3.13 and fails if anything differs.
+- The "practice time" metric is an estimate from activity gaps (definition shown on the dashboard).
+- The header menu is admin-configured: add a "Python practice" link in Admin → Appearance.
+
+**Manual configuration required (owner):** the six steps in `PYTHON_PRACTICE_EXECUTOR.md` → "Turning it on" (gVisor on every node, ECR repositories and CI push rights, apply manifests and secrets, verify, site secret, admin switch). The AI tutor needs a provider, model and key in Admin → Python practice → Settings.
+
 ## Draft article: FastAPI and FastMCP (2026-11-01, owner request)
 
 `content/blog/fastapi-and-fastmcp-ai-projects.mdx`, `status: review`, four figures, written against `roboshop-ai` c81e85a and `moks` ab99cf7. Nothing published or committed. No application code changed.

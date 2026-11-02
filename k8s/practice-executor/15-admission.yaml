@@ -1,0 +1,44 @@
+# Defence in depth: even a compromised dispatcher cannot create a weaker pod in practice-sandbox. Every pod
+# there must use the gVisor no-network runtime, mount no token, use no host namespaces, run non-root without
+# privileges, and mount nothing but emptyDir volumes. (ValidatingAdmissionPolicy is GA since Kubernetes 1.30.)
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: practice-sandbox-pods
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: practice-sandbox
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  validations:
+    - expression: "object.spec.runtimeClassName == 'gvisor-nonet'"
+      message: "sandbox pods must use RuntimeClass gvisor-nonet"
+    - expression: "has(object.spec.automountServiceAccountToken) && object.spec.automountServiceAccountToken == false"
+      message: "sandbox pods must not mount a service-account token"
+    - expression: "object.spec.serviceAccountName == 'practice-sandbox'"
+      message: "sandbox pods must run as service account practice-sandbox"
+    - expression: "!(has(object.spec.hostNetwork) && object.spec.hostNetwork) && !(has(object.spec.hostPID) && object.spec.hostPID) && !(has(object.spec.hostIPC) && object.spec.hostIPC)"
+      message: "no host namespaces"
+    - expression: "!has(object.spec.volumes) || object.spec.volumes.all(v, has(v.emptyDir))"
+      message: "only emptyDir volumes"
+    - expression: "object.spec.containers.all(c, has(c.securityContext) && c.securityContext.allowPrivilegeEscalation == false && (!has(c.securityContext.privileged) || c.securityContext.privileged == false) && c.securityContext.readOnlyRootFilesystem == true)"
+      message: "containers must be unprivileged with a read-only root filesystem"
+    - expression: "object.spec.containers.all(c, has(c.resources.limits) && 'cpu' in c.resources.limits && 'memory' in c.resources.limits)"
+      message: "containers must set CPU and memory limits"
+    - expression: "has(object.spec.activeDeadlineSeconds) && object.spec.activeDeadlineSeconds <= 300"
+      message: "sandbox pods need a deadline of at most 300 s"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: practice-sandbox-pods
+spec:
+  policyName: practice-sandbox-pods
+  validationActions: ["Deny"]

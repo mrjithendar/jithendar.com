@@ -1,7 +1,7 @@
 import { getRedis, getRedisSubscriber } from "./redis";
 
 /** Per-process caches register here; invalidation clears locally and tells the other replicas via Redis. */
-type Kind = "content" | "categories" | "settings" | "integrations";
+type Kind = "content" | "categories" | "settings" | "integrations" | "practice";
 const CHANNEL = "jithendar:invalidate";
 // On globalThis: instrumentation.ts (which runs the Redis listener) and the app routes are separate bundles,
 // each with its own copy of this module. Per-module state would leave the listener clearing an empty map.

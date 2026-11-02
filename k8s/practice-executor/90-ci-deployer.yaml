@@ -1,0 +1,60 @@
+# GitHub Actions (.github/workflows/ci-practice-executor.yml, job "deploy") rolls new images out to the executor.
+# This ServiceAccount may only do that: point the two executor Deployments and the sandbox runtime map at new image
+# digests, and watch the rollout. It cannot create pods, read Secrets, touch RBAC, the RuntimeClass, the admission
+# policy or anything in practice-sandbox, so a leaked token cannot weaken the sandbox.
+# scripts/setup-practice-ci-deployer.sh applies this file and stores the token as repository secret PRACTICE_CI_TOKEN.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: practice-ci-deployer
+  namespace: practice-exec
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: practice-ci-deployer
+  namespace: practice-exec
+rules:
+# kubectl rollout status
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+# new image digests + release annotation (kubectl patch)
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  resourceNames: ["practice-executor-api", "practice-dispatcher"]
+  verbs: ["patch"]
+# EXECUTOR_RUNTIMES → sandbox image digest
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["practice-executor-config"]
+  verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: practice-ci-deployer
+  namespace: practice-exec
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: practice-ci-deployer
+subjects:
+- kind: ServiceAccount
+  name: practice-ci-deployer
+  namespace: practice-exec
+---
+# Long-lived token for the CI kubeconfig; the token controller fills in data.token. Delete this Secret to revoke it
+# (ROTATE=1 scripts/setup-practice-ci-deployer.sh does that and issues a new one).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: practice-ci-deployer-token
+  namespace: practice-exec
+  annotations:
+    kubernetes.io/service-account.name: practice-ci-deployer
+type: kubernetes.io/service-account-token

@@ -77,6 +77,7 @@ const nextConfig: NextConfig = {
       { source: "/admin/:path*", headers: [{ key: "Cache-Control", value: "private, no-store" }] },
       { source: "/api/admin/:path*", headers: [{ key: "Cache-Control", value: "private, no-store" }] },
       { source: "/api/comments/:path*", headers: [{ key: "Cache-Control", value: "private, no-store" }] },
+      { source: "/api/practice/:path*", headers: [{ key: "Cache-Control", value: "private, no-store" }] },
       { source: "/login", headers: [{ key: "Cache-Control", value: "private, no-store" }] },
     ];
   },

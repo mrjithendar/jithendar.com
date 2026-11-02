@@ -1,0 +1,1395 @@
+# Hard: concurrency, resilience, performance and production-style engineering problems.
+- slug: circuit-breaker
+  title: Implement a circuit breaker
+  difficulty: hard
+  roles: [site-reliability-engineer, backend-engineer, genai-engineer, solutions-architect]
+  topics: [resilience, simulation, classes]
+  minutes: 30
+  entrypoint: CircuitBreaker
+  description: |
+    Implement `CircuitBreaker(failure_threshold, reset_timeout, clock)` with a method `call(fn)` and a
+    `state` attribute (`"closed"`, `"open"` or `"half_open"`):
+
+    - **closed**: run `fn()`. A success resets the consecutive-failure count; a failure (any exception)
+      increments it and re-raises. Reaching `failure_threshold` consecutive failures opens the circuit.
+    - **open**: if fewer than `reset_timeout` seconds have passed since it opened (by `clock()`), raise
+      `CircuitOpenError` (provided) **without calling fn**. Otherwise switch to half_open and treat this call
+      as a trial.
+    - **half_open**: run `fn()` once. Success → closed (count reset). Failure → open again (timer restarts)
+      and re-raise.
+
+    The harness replays timed calls and records `[outcome, state]` after each one.
+  io: { input: "failure_threshold: int, reset_timeout: float, clock: () -> float", output: "a class" }
+  prelude: |
+    class CircuitOpenError(Exception):
+        pass
+
+    def __harness__(cls, threshold, timeout, events):
+        now = {"t": 0.0}
+        breaker = cls(threshold, timeout, lambda: now["t"])
+        out = []
+        for t, result in events:
+            now["t"] = t
+
+            def op():
+                if result == "fail":
+                    raise ConnectionError("downstream failed")
+                return "ok"
+
+            try:
+                outcome = breaker.call(op)
+            except CircuitOpenError:
+                outcome = "rejected"
+            except ConnectionError:
+                outcome = "fail"
+            out.append([outcome, breaker.state])
+        return out
+  starter: |
+    class CircuitBreaker:
+        def __init__(self, failure_threshold: int, reset_timeout: float, clock):
+            self.state = "closed"
+
+        def call(self, fn):
+            return fn()
+  hints:
+    - "Write down the three states and what moves you between them before writing code."
+    - "Store failures and opened_at. At the top of call(), handle the open state (reject or move to half_open), then run fn in try/except."
+    - |
+      if state == "open": if clock() - opened_at < timeout: raise CircuitOpenError; state = "half_open"
+      try: result = fn() except Exception: if state == "half_open" or (failures := failures + 1) >= threshold: open(); raise
+      failures = 0; state = "closed"; return result
+  solution:
+    code: |
+      class CircuitBreaker:
+          def __init__(self, failure_threshold: int, reset_timeout: float, clock):
+              self.failure_threshold = failure_threshold
+              self.reset_timeout = reset_timeout
+              self.clock = clock
+              self.state = "closed"
+              self.failures = 0
+              self.opened_at = 0.0
+
+          def _open(self) -> None:
+              self.state = "open"
+              self.opened_at = self.clock()
+
+          def call(self, fn):
+              if self.state == "open":
+                  if self.clock() - self.opened_at < self.reset_timeout:
+                      raise CircuitOpenError("circuit is open")
+                  self.state = "half_open"
+              try:
+                  result = fn()
+              except Exception:
+                  if self.state == "half_open":
+                      self._open()
+                  else:
+                      self.failures += 1
+                      if self.failures >= self.failure_threshold:
+                          self._open()
+                  raise
+              self.failures = 0
+              self.state = "closed"
+              return result
+    explanation: |
+      Failing fast while open protects a struggling dependency and frees the caller's threads. Half-open
+      lets exactly one trial through, so recovery is detected without a thundering herd.
+    time: O(1) per call
+    space: O(1)
+    alternatives: ["Count failures in a time window instead of consecutively", "pybreaker or a service mesh (Envoy outlier detection)"]
+    edge_cases: ["threshold 1", "A call exactly at reset_timeout is allowed as a trial", "A failed trial restarts the timer"]
+    production: ["Concurrent callers need a lock around state changes, and only one trial in half_open", "Export state as a metric and alert on open circuits"]
+  examples:
+    - args: [2, 10, [[0, "fail"], [1, "fail"], [2, "ok"], [12, "ok"], [13, "fail"]]]
+      expected: [["fail", "closed"], ["fail", "open"], ["rejected", "open"], ["ok", "closed"], ["fail", "closed"]]
+  hidden:
+    - { args: [1, 5, [[0, "fail"], [4.9, "ok"], [5, "fail"], [9, "ok"], [10, "ok"], [11, "ok"]]] }
+    - { args: [3, 1, [[0, "fail"], [0, "ok"], [0, "fail"], [0, "fail"], [0, "fail"], [0.5, "ok"], [1.5, "ok"]]] }
+    - { args: [2, 0, [[0, "fail"], [0, "fail"], [0, "fail"], [0, "ok"]]] }
+
+- slug: consistent-hash-ring
+  title: Partition keys with a consistent hash ring
+  difficulty: hard
+  roles: [platform-engineer, backend-engineer, solutions-architect]
+  topics: [hashing, binary-search]
+  minutes: 30
+  entrypoint: hash_ring
+  description: |
+    Build a consistent hash ring:
+
+    - `h(s)` = `int(hashlib.md5(s.encode()).hexdigest()[:8], 16)`.
+    - Each node has `vnodes` points at `h(f"{node}#{i}")` for i in 0..vnodes-1.
+    - A key belongs to the node owning the first point **≥ h(key)**, wrapping to the smallest point.
+      (Point collisions are broken by node name.)
+
+    Assign every key, then remove the node `remove` and assign again. Return
+    `{"assignment": {key: node}, "counts": {node: n}, "moved": n}` where assignment/counts describe the
+    ring **before** removal, and `moved` is how many keys changed node.
+  io: { input: "nodes: list[str], vnodes: int, keys: list[str], remove: str", output: "dict" }
+  starter: |
+    import hashlib
+
+    def hash_ring(nodes, vnodes, keys, remove):
+        assignment = {k: nodes[hash(k) % len(nodes)] for k in keys}
+        return {"assignment": assignment, "counts": {}, "moved": 0}
+  hints:
+    - "Keep the ring as a sorted list of (point, node) so you can binary search it."
+    - "bisect_left(points, h(key)) gives the first point ≥ the key's hash; index len(points) wraps to 0."
+    - |
+      ring = sorted((h(f"{n}#{i}"), n) for n in nodes for i in range(vnodes)); points = [p for p, _ in ring]
+      i = bisect_left(points, h(key)) % len(ring); owner = ring[i][1]
+  solution:
+    code: |
+      import hashlib
+      from bisect import bisect_left
+      from collections import Counter
+
+      def h(s: str) -> int:
+          return int(hashlib.md5(s.encode()).hexdigest()[:8], 16)
+
+      def build(nodes, vnodes):
+          ring = sorted((h(f"{n}#{i}"), n) for n in nodes for i in range(vnodes))
+          return [p for p, _ in ring], ring
+
+      def owner(points, ring, key: str) -> str:
+          return ring[bisect_left(points, h(key)) % len(ring)][1]
+
+      def hash_ring(nodes, vnodes, keys, remove):
+          points, ring = build(nodes, vnodes)
+          before = {k: owner(points, ring, k) for k in keys}
+          points2, ring2 = build([n for n in nodes if n != remove], vnodes)
+          moved = sum(1 for k in keys if owner(points2, ring2, k) != before[k])
+          return {"assignment": before, "counts": dict(Counter(before.values())), "moved": moved}
+    explanation: |
+      With consistent hashing only the keys owned by the removed node move — every other key still finds the
+      same next point. Virtual nodes spread each server around the ring so load stays even.
+    time: O(N·V log(N·V) + K log(N·V))
+    space: O(N·V + K)
+    alternatives: ["Rendezvous (highest random weight) hashing — no ring, O(N) per key", "Jump consistent hash for numbered buckets"]
+    edge_cases: ["A key hashing beyond the largest point wraps around", "Removing a node that owns no keys moves nothing"]
+    production: ["md5 is fine for distribution, not for security", "Weight nodes by capacity with more vnodes"]
+  examples:
+    - args: [["a", "b", "c"], 50, ["user:1", "user:2", "user:3", "user:4", "user:5", "user:6"], "b"]
+      label: "Removing b only moves b's keys"
+  hidden:
+    - { args: [["n1", "n2"], 1, ["k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8"], "n1"] }
+    - { args: [["x", "y", "z", "w"], 100, ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"], "q"] }
+
+- slug: async-worker-pipeline
+  title: Async worker pool with retries
+  difficulty: hard
+  roles: [ai-engineer, backend-engineer, data-engineer]
+  topics: [asyncio, retries, concurrency]
+  minutes: 30
+  entrypoint: run_pipeline
+  description: |
+    Process `items` with exactly `workers` concurrent asyncio worker tasks reading from an `asyncio.Queue`.
+    For each item call the provided `await process(item)`:
+
+    - On `TransientError` retry the item (up to `max_attempts` attempts in total).
+    - On any other exception, or when attempts run out, record the error type name.
+
+    Return `{"results": [...], "errors": {...}}` where `results[i]` is the result for `items[i]` (or `None`
+    if it failed) and `errors` maps the string index to the exception type name. Shut the workers down
+    cleanly (no pending tasks). The harness checks the concurrency you achieved.
+  io: { input: "items: list[str], workers: int, max_attempts: int", output: "dict" }
+  prelude: |
+    import asyncio
+
+    class TransientError(Exception):
+        pass
+
+    _state = {"active": 0, "peak": 0, "attempts": {}}
+
+    async def process(item):
+        _state["active"] += 1
+        _state["peak"] = max(_state["peak"], _state["active"])
+        try:
+            n = _state["attempts"][item] = _state["attempts"].get(item, 0) + 1
+            await asyncio.sleep(0.002)
+            kind, _, rest = item.partition(":")
+            if kind == "flaky" and n < int(rest.split(":")[0]):
+                raise TransientError(item)
+            if kind == "bad":
+                raise ValueError(item)
+            return item.upper()
+        finally:
+            _state["active"] -= 1
+
+    async def __harness__(fn, items, workers, max_attempts):
+        _state.update(active=0, peak=0, attempts={})
+        out = await fn(items, workers, max_attempts)
+        leftover = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
+        return {**out, "peak_ok": _state["peak"] == min(workers, len(set(items))) or not items, "clean": not leftover}
+  starter: |
+    import asyncio
+
+    async def run_pipeline(items: list[str], workers: int, max_attempts: int) -> dict:
+        results = [await process(i) for i in items]
+        return {"results": results, "errors": {}}
+  hints:
+    - "Put (index, item) pairs in a queue so results can be written back by position."
+    - "Each worker loops: get a job, try up to max_attempts times, record result or error, task_done(). Cancel workers after queue.join()."
+    - |
+      for _ in range(workers): tasks.append(asyncio.create_task(worker()))
+      await queue.join(); for t in tasks: t.cancel(); await asyncio.gather(*tasks, return_exceptions=True)
+  solution:
+    code: |
+      import asyncio
+
+      async def run_pipeline(items: list[str], workers: int, max_attempts: int) -> dict:
+          queue: asyncio.Queue = asyncio.Queue()
+          for job in enumerate(items):
+              queue.put_nowait(job)
+          results: list = [None] * len(items)
+          errors: dict[str, str] = {}
+
+          async def worker() -> None:
+              while True:
+                  index, item = await queue.get()
+                  try:
+                      for attempt in range(1, max_attempts + 1):
+                          try:
+                              results[index] = await process(item)
+                              break
+                          except TransientError as exc:
+                              if attempt == max_attempts:
+                                  errors[str(index)] = type(exc).__name__
+                          except Exception as exc:
+                              errors[str(index)] = type(exc).__name__
+                              break
+                  finally:
+                      queue.task_done()
+
+          tasks = [asyncio.create_task(worker()) for _ in range(workers)]
+          await queue.join()
+          for task in tasks:
+              task.cancel()
+          await asyncio.gather(*tasks, return_exceptions=True)
+          return {"results": results, "errors": errors}
+    explanation: |
+      A fixed set of workers bounds concurrency without a semaphore. `task_done()` in `finally` guarantees
+      `queue.join()` returns even when an item fails. Cancelling and gathering the workers leaves no tasks
+      behind.
+    time: O(n × attempts) work
+    space: O(n)
+    alternatives: ["asyncio.TaskGroup with a semaphore per item", "Sentinel values (None) on the queue instead of cancellation"]
+    edge_cases: ["Empty input", "An item that succeeds on its last allowed attempt", "Non-transient errors are not retried"]
+    production: ["Add backoff between retries", "Put permanently failed items on a dead-letter queue", "Bound the queue (maxsize) so producers apply backpressure"]
+  examples:
+    - args: [["a", "flaky:3", "bad:1", "flaky:5"], 2, 3]
+      expected: { results: ["A", "FLAKY:3", null, null], errors: { "2": "ValueError", "3": "TransientError" }, peak_ok: true, clean: true }
+      explanation: "flaky:3 fails twice and succeeds on attempt 3; flaky:5 runs out of attempts."
+  hidden:
+    - { args: [[], 3, 2] }
+    - { args: [["x", "y", "z", "w", "v"], 3, 1] }
+    - { args: [["flaky:2", "flaky:2b", "ok"], 5, 2] }
+
+- slug: latency-anomaly-detection
+  title: Detect latency anomalies with z-scores
+  difficulty: hard
+  roles: [site-reliability-engineer, mlops-engineer, machine-learning-engineer]
+  topics: [statistics, monitoring, complexity]
+  minutes: 25
+  entrypoint: anomalies
+  description: |
+    Flag anomalies in a latency series using a rolling baseline of the previous `window` values (not
+    including the current one): value i is an anomaly when the baseline is full, its population standard
+    deviation is > 0, and `abs(x - mean) / std > threshold`.
+
+    Anomalies are **not** added to the baseline (so one spike doesn't hide the next); the baseline is the
+    last `window` non-anomalous values. Return the anomalous indices. Must run in O(n) for large series.
+  io: { input: "values: list[float], window: int, threshold: float", output: "list[int]" }
+  starter: |
+    import statistics
+
+    def anomalies(values: list[float], window: int, threshold: float) -> list[int]:
+        out = []
+        for i in range(window, len(values)):
+            base = values[i - window:i]
+            if abs(values[i] - statistics.mean(base)) > threshold * statistics.pstdev(base):
+                out.append(i)
+        return out
+  hints:
+    - "Keep the baseline in a deque and maintain running sums so each step is O(1)."
+    - "Track sum and sum of squares: mean = s/n, variance = s2/n − mean². Add a value only if it is not an anomaly."
+    - |
+      base = deque(); s = s2 = 0
+      for i, x in enumerate(values): if len(base) == window: mean, var = ...; if std > 0 and abs(x - mean) / std > threshold: out.append(i); continue
+          base.append(x); s += x; s2 += x*x; if len(base) > window: old = base.popleft(); s -= old; s2 -= old*old
+  solution:
+    code: |
+      import math
+      from collections import deque
+
+      def anomalies(values: list[float], window: int, threshold: float) -> list[int]:
+          base: deque = deque()
+          total = total_sq = 0.0
+          flagged = []
+          for i, x in enumerate(values):
+              if len(base) == window:
+                  mean = total / window
+                  variance = max(total_sq / window - mean * mean, 0.0)
+                  std = math.sqrt(variance)
+                  if std > 1e-12 and abs(x - mean) / std > threshold:
+                      flagged.append(i)
+                      continue
+              base.append(x)
+              total += x
+              total_sq += x * x
+              if len(base) > window:
+                  old = base.popleft()
+                  total -= old
+                  total_sq -= old * old
+          return flagged
+    explanation: |
+      Running sums make every step O(1) instead of O(window). Excluding anomalies from the baseline keeps the
+      detector sensitive during an incident; clamping the variance at 0 guards against floating-point drift.
+    time: O(n)
+    space: O(window)
+    alternatives: ["Welford's online algorithm for better numerical stability", "Median and MAD — robust to outliers"]
+    edge_cases: ["Constant baseline (std 0) never flags", "Series shorter than the window", "Consecutive spikes"]
+    production: ["Latency is skewed; z-scores on log(latency) behave better", "Seasonality (daily traffic) needs a seasonal baseline"]
+  examples:
+    - { args: [[10, 11, 10, 11, 10, 50, 11, 10, 60, 10], 4, 3], expected: [5, 8] }
+  hidden:
+    - { args: [[], 3, 2] }
+    - { args: [[5, 5, 5, 5, 100], 4, 1] }
+    - { args: [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 100, 11, 12, -50, 13], 5, 2.5] }
+
+- slug: rolling-update-simulator
+  title: Simulate a Kubernetes rolling update
+  difficulty: hard
+  roles: [kubernetes-engineer, platform-engineer, site-reliability-engineer]
+  topics: [kubernetes, simulation]
+  minutes: 30
+  entrypoint: rollout
+  description: |
+    Simulate a Deployment rolling update from `replicas` old pods to `replicas` new pods with integer
+    `max_surge` and `max_unavailable`. Each step:
+
+    1. Pods created in the previous step become ready.
+    2. Scale down: delete as many old pods as possible while keeping `old + new_ready ≥ replicas −
+       max_unavailable`.
+    3. Scale up: create new (not yet ready) pods while `old + new_ready + new_starting ≤ replicas +
+       max_surge` and the new total stays ≤ `replicas`.
+
+    Record `[old, new_ready, new_starting]` after each step and stop when `new_ready == replicas` and
+    `old == 0`. If both `max_surge` and `max_unavailable` are 0, return `None` (Kubernetes rejects it).
+    Return `{"steps": [...], "count": n}`.
+  io: { input: "replicas: int, max_surge: int, max_unavailable: int", output: "dict | None" }
+  starter: |
+    def rollout(replicas: int, max_surge: int, max_unavailable: int):
+        return {"steps": [[0, replicas, 0]], "count": 1}
+  hints:
+    - "Keep three counters and apply the three phases in order on every step."
+    - "Scale-down amount = min(old, old + new_ready − (replicas − max_unavailable)) clamped at 0."
+    - |
+      while not done: new_ready += new_starting; new_starting = 0
+          down = max(0, min(old, old + new_ready - (replicas - max_unavailable))); old -= down
+          up = max(0, min(replicas + max_surge - (old + new_ready), replicas - new_ready)); new_starting = up
+  solution:
+    code: |
+      def rollout(replicas: int, max_surge: int, max_unavailable: int):
+          if max_surge == 0 and max_unavailable == 0:
+              return None
+          old, ready, starting = replicas, 0, 0
+          steps = []
+          while not (ready == replicas and old == 0):
+              ready += starting
+              starting = 0
+              old -= max(0, min(old, old + ready - (replicas - max_unavailable)))
+              starting = max(0, min(replicas + max_surge - (old + ready), replicas - ready))
+              steps.append([old, ready, starting])
+              if len(steps) > 10 * replicas + 10:
+                  raise RuntimeError("rollout does not converge")
+          return {"steps": steps, "count": len(steps)}
+    explanation: |
+      maxUnavailable bounds how far below the desired count availability may drop, maxSurge how far above it
+      the total may grow. A larger surge trades extra capacity for a faster rollout; a larger unavailable
+      budget trades availability.
+    time: O(steps)
+    space: O(steps)
+    alternatives: ["Percent values (25%) rounded the way Kubernetes does: surge up, unavailable down"]
+    edge_cases: ["max_surge 0 (delete first)", "max_unavailable 0 (create first)", "replicas 1"]
+    production: ["Readiness probes decide 'ready' — a bad probe stalls or speeds up rollouts", "minReadySeconds delays readiness further"]
+  examples:
+    - args: [4, 1, 1]
+      expected: { steps: [[3, 0, 2], [1, 2, 2], [0, 4, 0]], count: 3 }
+  hidden:
+    - { args: [3, 0, 0] }
+    - { args: [3, 0, 1] }
+    - { args: [5, 2, 0] }
+    - { args: [1, 1, 0] }
+    - { args: [10, 3, 2] }
+
+- slug: resolve-package-versions
+  title: Resolve package versions
+  difficulty: hard
+  roles: [python-developer, platform-engineer, devops-engineer]
+  topics: [graphs, parsing, sorting]
+  minutes: 40
+  entrypoint: resolve_versions
+  description: |
+    Write a tiny dependency resolver. Inputs:
+
+    - `available`: `{package: ["1.2.0", ...]}`
+    - `requires`: the root requirements `{package: constraint}`
+    - `deps`: `{"package==version": {dependency: constraint}}` (missing key = no dependencies)
+
+    A constraint is `*` or comma-separated clauses `>=X`, `<X`, `==X`, `^X` (same major version and ≥ X).
+    Versions are `MAJOR.MINOR.PATCH`.
+
+    Pick a version for every package reachable from the root such that **all** constraints on each package
+    hold. Resolve packages in alphabetical order and try versions from highest to lowest, backtracking when
+    stuck. Return `{package: version}` or `None` if impossible.
+  io: { input: "available: dict, requires: dict, deps: dict", output: "dict | None" }
+  starter: |
+    def resolve_versions(available, requires, deps):
+        return {p: max(v) for p, v in available.items() if p in requires}
+  hints:
+    - "Represent the problem as: current choices + accumulated constraints per package."
+    - "Recursive search: pick the alphabetically first package that has constraints but no choice yet; try each satisfying version (highest first); add its dependency constraints; check existing choices still satisfy them; recurse."
+    - |
+      def search(chosen, constraints):
+          todo = sorted(p for p in constraints if p not in chosen); if not todo: return chosen
+          p = todo[0]; for v in sorted(available[p], key=parse, reverse=True): if all(ok(v, c) for c in constraints[p]):
+              new = merge(constraints, deps.get(f"{p}=={v}", {})); if consistent(chosen, new): r = search({**chosen, p: v}, new); if r: return r
+          return None
+  solution:
+    code: |
+      def parse(v: str) -> tuple[int, ...]:
+          return tuple(int(x) for x in v.split("."))
+
+      def satisfies(version: str, constraint: str) -> bool:
+          v = parse(version)
+          for clause in constraint.split(","):
+              clause = clause.strip()
+              if clause in ("", "*"):
+                  continue
+              for op in (">=", "<", "==", "^"):
+                  if clause.startswith(op):
+                      target = parse(clause[len(op):])
+                      break
+              else:
+                  raise ValueError(f"bad constraint {clause!r}")
+              if op == ">=" and not v >= target:
+                  return False
+              if op == "<" and not v < target:
+                  return False
+              if op == "==" and v != target:
+                  return False
+              if op == "^" and not (v[0] == target[0] and v >= target):
+                  return False
+          return True
+
+      def resolve_versions(available, requires, deps):
+          def search(chosen: dict, constraints: dict):
+              pending = sorted(p for p in constraints if p not in chosen)
+              if not pending:
+                  return chosen
+              pkg = pending[0]
+              for version in sorted(available.get(pkg, []), key=parse, reverse=True):
+                  if not all(satisfies(version, c) for c in constraints[pkg]):
+                      continue
+                  merged = {p: list(cs) for p, cs in constraints.items()}
+                  for dep, c in deps.get(f"{pkg}=={version}", {}).items():
+                      merged.setdefault(dep, []).append(c)
+                  if all(all(satisfies(chosen[p], c) for c in merged[p]) for p in chosen):
+                      found = search({**chosen, pkg: version}, merged)
+                      if found:
+                          return found
+              return None
+
+          return search({}, {p: [c] for p, c in requires.items()})
+    explanation: |
+      This is backtracking search, the core of resolvers like pip's resolvelib. Picking the newest version
+      first gives the "latest compatible" answer; re-checking earlier choices against newly added constraints
+      is what forces backtracking when a later dependency conflicts.
+    time: Exponential in the worst case (version resolution is NP-hard); fast on realistic graphs
+    space: O(packages × constraints) per search level
+    alternatives: ["SAT/PubGrub solvers (Poetry, uv) give better conflict explanations", "Pre-filter versions by constraints before searching"]
+    edge_cases: ["Conflicting root constraints → None", "A dependency forcing an older version of an earlier package", "Packages with no available versions"]
+    production: ["Record why a resolution failed (the conflicting chain) — users need it", "Lock the result (lockfiles) so builds are reproducible"]
+  examples:
+    - args:
+        - { web: ["1.0.0", "2.0.0"], lib: ["1.0.0", "1.5.0", "2.0.0"] }
+        - { web: "*" }
+        - { "web==2.0.0": { lib: "^1.2.0" }, "web==1.0.0": { lib: ">=2.0.0" } }
+      expected: { web: "2.0.0", lib: "1.5.0" }
+  hidden:
+    - { args: [{ a: ["1.0.0"] }, { a: ">=2.0.0" }, {}] }
+    - args:
+        - { app: ["1.0.0"], a: ["1.0.0", "2.0.0"], b: ["1.0.0", "2.0.0"] }
+        - { app: "*" }
+        - { "app==1.0.0": { a: "*", b: "*" }, "a==2.0.0": { b: "<2.0.0" }, "b==1.0.0": { a: "==1.0.0" } }
+    - { args: [{ x: ["0.1.0", "0.2.0", "1.0.0"] }, { x: ">=0.1.0,<1.0.0" }, {}] }
+
+- slug: mmr-rerank
+  title: Diversify retrieval with MMR
+  difficulty: hard
+  roles: [genai-engineer, ai-engineer, machine-learning-engineer]
+  topics: [rag, vectors]
+  minutes: 30
+  entrypoint: mmr
+  description: |
+    Retrieval often returns near-duplicate chunks. Maximal Marginal Relevance picks results that are relevant
+    **and** different from what was already picked. Repeatedly select the unselected document d maximising
+
+    `lam × sim(q, d) − (1 − lam) × max(sim(d, s) for s already selected)` (the max term is 0 for the first pick)
+
+    where `sim` is cosine similarity. Break ties by id ascending. Return the ids of `k` documents in
+    selection order.
+  io: { input: "query: list[float], docs: dict[str, list[float]], k: int, lam: float", output: "list[str]" }
+  starter: |
+    def mmr(query, docs, k, lam):
+        return sorted(docs)[:k]
+  hints:
+    - "Precompute similarities: query→doc once, and doc→doc lazily or up front."
+    - "Each round, compute the MMR score for every remaining doc and pick the best; key (−score, id) handles ties."
+    - |
+      selected = []; while len(selected) < min(k, len(docs)):
+          best = min(remaining, key=lambda d: (-(lam * qs[d] - (1 - lam) * max((sim(d, s) for s in selected), default=0)), d))
+  solution:
+    code: |
+      import math
+
+      def cos(a, b) -> float:
+          na = math.sqrt(sum(x * x for x in a))
+          nb = math.sqrt(sum(x * x for x in b))
+          return 0.0 if na == 0 or nb == 0 else sum(x * y for x, y in zip(a, b)) / (na * nb)
+
+      def mmr(query, docs, k, lam):
+          rel = {d: cos(query, v) for d, v in docs.items()}
+          selected: list[str] = []
+          remaining = set(docs)
+          while remaining and len(selected) < k:
+              def score(d: str) -> float:
+                  redundancy = max((cos(docs[d], docs[s]) for s in selected), default=0.0)
+                  return lam * rel[d] - (1 - lam) * redundancy
+              best = min(remaining, key=lambda d: (-round(score(d), 12), d))
+              selected.append(best)
+              remaining.remove(best)
+          return selected
+    explanation: |
+      lam = 1 is plain relevance ranking; lower values penalise similarity to already-chosen results, which
+      spreads the context window over different facts. Rounding the score before comparing makes ties robust
+      to floating-point noise.
+    time: O(k × n × k × d) as written; cache doc-doc similarities to get O(k × n × d)
+    space: O(n)
+    alternatives: ["Cluster candidates and take the best per cluster", "LangChain's max_marginal_relevance_search"]
+    edge_cases: ["k larger than the number of docs", "Identical documents", "lam = 1 or 0"]
+    production: ["Run MMR over a larger first-stage candidate set (e.g. top 50) from the vector index", "Use normalised embeddings so cosine is a dot product"]
+  examples:
+    - args: [[1, 0], { a: [1, 0], b: [0.99, 0.01], c: [0.7, 0.7] }, 2, 0.3]
+      expected: ["a", "c"]
+      explanation: "b is almost identical to a, so the more different c wins the second slot."
+  hidden:
+    - { args: [[1, 1], {}, 3, 0.5] }
+    - { args: [[1, 0], { a: [1, 0], b: [0.99, 0.01], c: [0.7, 0.7] }, 3, 1.0] }
+    - { args: [[0.2, 0.9, 0.1], { d1: [0.1, 0.9, 0.0], d2: [0.1, 0.8, 0.1], d3: [0.9, 0.1, 0.1], d4: [0.0, 0.0, 1.0] }, 3, 0.7] }
+
+- slug: conversation-token-budget
+  title: Fit a conversation into a token budget
+  difficulty: hard
+  roles: [genai-engineer, ai-engineer, forward-deployed-engineer]
+  topics: [llm-integration, complexity]
+  minutes: 30
+  entrypoint: fit_messages
+  description: |
+    Before calling a model, trim the conversation to fit `budget` tokens. A message costs
+    `len(content.split()) + 4` tokens.
+
+    - Leading `system` messages are always kept, in order.
+    - Keep the **most recent** other messages that fit, in their original order. Never split a message, and
+      stop at the first (newest-to-oldest) message that doesn't fit — never keep an older message while
+      dropping a newer one.
+    - If any message was dropped, insert `{"role": "system", "content": "[N earlier messages omitted]"}`
+      after the leading system messages. Its tokens count towards the budget (it always costs 8).
+    - If the system messages alone (plus the note, if needed) exceed the budget, return `None`.
+  io: { input: "messages: list[dict], budget: int", output: "list[dict] | None" }
+  starter: |
+    def fit_messages(messages: list[dict], budget: int):
+        return messages[-3:]
+  hints:
+    - "Split the conversation into leading system messages and the rest first."
+    - "If everything fits, return it unchanged. Otherwise reserve 8 tokens for the note and add messages from the newest backwards."
+    - |
+      cost = lambda m: len(m["content"].split()) + 4
+      if total fits: return messages; left = budget - system_cost - 8; if left < 0: return None
+      kept = []; for m in reversed(rest): if cost(m) > left: break; kept.append(m); left -= cost(m)
+  solution:
+    code: |
+      def cost(message: dict) -> int:
+          return len(message["content"].split()) + 4
+
+      def fit_messages(messages: list[dict], budget: int):
+          n_system = 0
+          while n_system < len(messages) and messages[n_system]["role"] == "system":
+              n_system += 1
+          system, rest = messages[:n_system], messages[n_system:]
+          system_cost = sum(cost(m) for m in system)
+          if system_cost + sum(cost(m) for m in rest) <= budget:
+              return list(messages)
+          left = budget - system_cost - 8
+          if left < 0:
+              return None
+          kept: list[dict] = []
+          for message in reversed(rest):
+              if cost(message) > left:
+                  break
+              kept.append(message)
+              left -= cost(message)
+          kept.reverse()
+          note = {"role": "system", "content": f"[{len(rest) - len(kept)} earlier messages omitted]"}
+          return system + [note] + kept
+    explanation: |
+      Checking "does everything fit" first avoids adding a note when nothing is dropped. Walking backwards
+      and stopping at the first message that doesn't fit keeps the kept messages contiguous — a gap in the
+      middle of a conversation confuses models more than a truncated start.
+    time: O(total words)
+    space: O(n)
+    alternatives: ["Summarise dropped messages with a cheap model instead of omitting them", "Keep pinned messages (tool results) regardless of age"]
+    edge_cases: ["Everything fits → unchanged, no note", "The newest message alone is too large → only the note is added", "System prompt over budget → None"]
+    production: ["Count tokens with the model's tokenizer", "Leave room for the response (max_tokens) in the budget"]
+  examples:
+    - args:
+        - - { role: "system", content: "You are terse" }
+          - { role: "user", content: "one two three four five six" }
+          - { role: "assistant", content: "ok" }
+          - { role: "user", content: "and now" }
+        - 26
+      expected:
+        - { role: "system", content: "You are terse" }
+        - { role: "system", content: "[1 earlier messages omitted]" }
+        - { role: "assistant", content: "ok" }
+        - { role: "user", content: "and now" }
+  hidden:
+    - { args: [[{ role: "user", content: "hi" }], 100] }
+    - { args: [[{ role: "system", content: "a b c d e f g h i j" }, { role: "user", content: "x" }], 15] }
+    - { args: [[{ role: "user", content: "old message here" }, { role: "user", content: "this newest message is far too long to fit anywhere" }], 12] }
+
+- slug: classification-metrics
+  title: Precision, recall and F1
+  difficulty: hard
+  roles: [machine-learning-engineer, mlops-engineer, ai-engineer]
+  topics: [model-evaluation, statistics]
+  minutes: 25
+  entrypoint: report
+  comparator: float
+  description: |
+    Given true and predicted labels, compute a classification report:
+
+    - For each label that appears in either list: `precision`, `recall`, `f1` and `support` (number of true
+      occurrences). Undefined values (division by zero) are 0.0.
+    - `macro`: unweighted mean of precision, recall and f1 over labels.
+    - `accuracy`: fraction of exact matches.
+
+    Round every float to four decimals. Return `{"labels": {label: {...}}, "macro": {...}, "accuracy": x}`.
+  io: { input: "y_true: list[str], y_pred: list[str]", output: "dict" }
+  starter: |
+    def report(y_true, y_pred):
+        acc = sum(t == p for t, p in zip(y_true, y_pred)) / len(y_true)
+        return {"labels": {}, "macro": {}, "accuracy": acc}
+  hints:
+    - "Everything derives from three counts per label: true positives, false positives and false negatives."
+    - "Loop once over pairs: if t == p, tp[t] += 1; else fp[p] += 1 and fn[t] += 1."
+    - |
+      precision = tp / (tp + fp) if tp + fp else 0; recall = tp / (tp + fn) if tp + fn else 0
+      f1 = 2 * p * r / (p + r) if p + r else 0; support = tp + fn
+  solution:
+    code: |
+      from collections import Counter
+
+      def ratio(a: float, b: float) -> float:
+          return a / b if b else 0.0
+
+      def report(y_true, y_pred):
+          tp, fp, fn = Counter(), Counter(), Counter()
+          for t, p in zip(y_true, y_pred):
+              if t == p:
+                  tp[t] += 1
+              else:
+                  fp[p] += 1
+                  fn[t] += 1
+          labels = {}
+          for label in sorted(set(y_true) | set(y_pred)):
+              precision = ratio(tp[label], tp[label] + fp[label])
+              recall = ratio(tp[label], tp[label] + fn[label])
+              f1 = ratio(2 * precision * recall, precision + recall)
+              labels[label] = {"precision": round(precision, 4), "recall": round(recall, 4), "f1": round(f1, 4), "support": tp[label] + fn[label]}
+          n = len(labels)
+          macro = {m: round(ratio(sum(v[m] for v in labels.values()), n), 4) for m in ("precision", "recall", "f1")}
+          accuracy = round(ratio(sum(tp.values()), len(y_true)), 4)
+          return {"labels": labels, "macro": macro, "accuracy": accuracy}
+    explanation: |
+      Accuracy hides class imbalance: predicting the majority class can score 95% while recall on the rare
+      class is 0. Per-class metrics and their macro average expose that.
+    time: O(n + L log L)
+    space: O(L)
+    alternatives: ["sklearn.metrics.classification_report", "Micro averages (pool counts across classes)"]
+    edge_cases: ["A label only ever predicted (support 0)", "No predictions for a label (precision 0)", "Empty input"]
+    production: ["Report confidence intervals — small evaluation sets give noisy metrics", "Track metrics per data slice, not just overall"]
+  examples:
+    - args: [["cat", "cat", "dog", "dog", "bird"], ["cat", "dog", "dog", "dog", "cat"]]
+      expected:
+        labels:
+          bird: { precision: 0.0, recall: 0.0, f1: 0.0, support: 1 }
+          cat: { precision: 0.5, recall: 0.5, f1: 0.5, support: 2 }
+          dog: { precision: 0.6667, recall: 1.0, f1: 0.8, support: 2 }
+        macro: { precision: 0.3889, recall: 0.5, f1: 0.4333 }
+        accuracy: 0.6
+  hidden:
+    - { args: [[], []] }
+    - { args: [["a", "a", "a"], ["a", "a", "a"]] }
+    - { args: [["x", "y"], ["z", "z"]] }
+
+- slug: vulnerable-dependencies
+  title: Report vulnerable dependencies
+  difficulty: hard
+  roles: [security-engineer, devops-engineer, python-developer]
+  topics: [security, parsing, sorting]
+  minutes: 30
+  entrypoint: audit
+  description: |
+    Match a lockfile against security advisories.
+
+    - `lock`: `{package: version}`. Package names compare after PEP 503 normalisation: lowercase, and runs of
+      `-`, `_`, `.` become a single `-`.
+    - `advisories`: `[{"id", "package", "affected", "fixed", "severity"}]` where `affected` is comma-separated
+      clauses `>=X`, `>X`, `<=X`, `<X`, `==X` (all must hold) and severity is critical, high, medium or low.
+    - Versions are dot-separated integers of any length (`1.4` == `1.4.0`).
+
+    Return one finding per (package, advisory) that applies: `{"package": normalised name, "version",
+    "advisory", "severity", "fixed"}`, sorted by severity (critical first), then package, then advisory id.
+  io: { input: "lock: dict, advisories: list[dict]", output: "list[dict]" }
+  starter: |
+    def audit(lock: dict, advisories: list[dict]) -> list[dict]:
+        return [{"package": a["package"], "version": lock[a["package"]], "advisory": a["id"], "severity": a["severity"], "fixed": a["fixed"]}
+                for a in advisories if a["package"] in lock]
+  hints:
+    - "Two normalisations: package names, and versions of different lengths."
+    - "Pad version tuples with zeros to the same length before comparing; parse each clause's operator by checking two-character operators first."
+    - |
+      norm = lambda n: re.sub(r"[-_.]+", "-", n).lower()
+      def cmp(a, b): pad both to the same length; return (a > b) - (a < b)
+      clause ok: op in (">=", "<=", "==") first, then (">", "<")
+  solution:
+    code: |
+      import re
+
+      SEVERITY = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+      def normalize(name: str) -> str:
+          return re.sub(r"[-_.]+", "-", name).lower()
+
+      def compare(a: str, b: str) -> int:
+          x = [int(p) for p in a.split(".")]
+          y = [int(p) for p in b.split(".")]
+          n = max(len(x), len(y))
+          x += [0] * (n - len(x))
+          y += [0] * (n - len(y))
+          return (x > y) - (x < y)
+
+      def matches(version: str, affected: str) -> bool:
+          for clause in affected.split(","):
+              clause = clause.strip()
+              for op in (">=", "<=", "==", ">", "<"):
+                  if clause.startswith(op):
+                      c = compare(version, clause[len(op):].strip())
+                      ok = {">=": c >= 0, "<=": c <= 0, "==": c == 0, ">": c > 0, "<": c < 0}[op]
+                      if not ok:
+                          return False
+                      break
+              else:
+                  raise ValueError(f"bad clause {clause!r}")
+          return True
+
+      def audit(lock: dict, advisories: list[dict]) -> list[dict]:
+          installed = {normalize(name): version for name, version in lock.items()}
+          findings = []
+          for adv in advisories:
+              name = normalize(adv["package"])
+              version = installed.get(name)
+              if version is not None and matches(version, adv["affected"]):
+                  findings.append({"package": name, "version": version, "advisory": adv["id"], "severity": adv["severity"], "fixed": adv["fixed"]})
+          return sorted(findings, key=lambda f: (SEVERITY[f["severity"]], f["package"], f["advisory"]))
+    explanation: |
+      Checking two-character operators before one-character ones prevents ">=1.0" being read as ">" with
+      "=1.0". Zero-padding makes 1.4 and 1.4.0 equal, as packaging tools treat them.
+    time: O(advisories × clauses)
+    space: O(findings)
+    alternatives: ["pip-audit / OSV-Scanner with the OSV database", "packaging.specifiers.SpecifierSet for full PEP 440"]
+    edge_cases: ["Different name spellings (Django vs django, ruamel.yaml vs ruamel-yaml)", "Versions of different lengths", "Package not installed"]
+    production: ["Fail CI on critical/high, warn on the rest", "Track exceptions with an expiry date, never permanently"]
+  examples:
+    - args:
+        - { Django: "4.2.1", requests: "2.31.0", "ruamel.yaml": "0.17" }
+        - - { id: "ADV-2", package: "django", affected: ">=4.0,<4.2.5", fixed: "4.2.5", severity: "high" }
+          - { id: "ADV-1", package: "ruamel_yaml", affected: "<0.17.1", fixed: "0.17.1", severity: "critical" }
+          - { id: "ADV-3", package: "requests", affected: "<2.31", fixed: "2.31.0", severity: "medium" }
+      expected:
+        - { package: "ruamel-yaml", version: "0.17", advisory: "ADV-1", severity: "critical", fixed: "0.17.1" }
+        - { package: "django", version: "4.2.1", advisory: "ADV-2", severity: "high", fixed: "4.2.5" }
+  hidden:
+    - { args: [{}, [{ id: "A", package: "x", affected: "<1", fixed: "1", severity: "low" }]] }
+    - { args: [{ "My__Pkg": "1.0.0" }, [{ id: "B", package: "my.pkg", affected: "==1.0", fixed: "1.0.1", severity: "low" }, { id: "A", package: "MY-PKG", affected: ">0.9,<=1.0.0", fixed: "1.0.1", severity: "low" }]] }
+
+- slug: secrets-scanner
+  title: Scan code for leaked secrets
+  difficulty: hard
+  roles: [security-engineer, devops-engineer, automation-engineer]
+  topics: [security, regex, statistics]
+  minutes: 30
+  entrypoint: scan
+  description: |
+    Scan text (one source file) for likely secrets, line by line (lines are numbered from 1):
+
+    - `aws-access-key`: `AKIA` followed by 16 uppercase letters or digits (as a whole word)
+    - `private-key`: a line containing `-----BEGIN` then optionally `RSA `, `EC ` or `OPENSSH ` then `PRIVATE KEY-----`
+    - `github-token`: `ghp_` followed by 36 letters or digits
+    - `generic-secret`: an assignment `name = value` or `name: value` where name contains `secret`, `token`,
+      `password` or `api_key` (case-insensitive), and the value (optionally quoted, no spaces) is at least 12
+      characters long with Shannon entropy ≥ 3.5 bits per character
+    - Skip lines containing `nosecret` (an allowlist comment).
+
+    Return `[{"line": n, "kind": ...}]`, one per (line, kind), sorted by line then kind.
+  io: { input: "text: str", output: "list[dict]" }
+  starter: |
+    def scan(text: str) -> list[dict]:
+        return [{"line": i, "kind": "generic-secret"} for i, l in enumerate(text.splitlines(), 1) if "password" in l]
+  hints:
+    - "One compiled regex per kind; the generic rule also needs an entropy check on the captured value."
+    - "Shannon entropy = −Σ p·log2(p) over character frequencies in the value."
+    - |
+      for n, line in enumerate(text.splitlines(), 1): if "nosecret" in line: continue
+          for kind, rx in PATTERNS: if rx.search(line): add
+          m = GENERIC.search(line); if m and len(v) >= 12 and entropy(v) >= 3.5: add
+  solution:
+    code: |
+      import math
+      import re
+      from collections import Counter
+
+      PATTERNS = [
+          ("aws-access-key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+          ("github-token", re.compile(r"\bghp_[A-Za-z0-9]{36}\b")),
+          ("private-key", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")),
+      ]
+      GENERIC = re.compile(r"""(?i)\b[\w.-]*(?:secret|token|password|api_key)[\w.-]*\s*[:=]\s*["']?([^\s"']+)""")
+
+      def entropy(value: str) -> float:
+          counts = Counter(value)
+          n = len(value)
+          return -sum(c / n * math.log2(c / n) for c in counts.values())
+
+      def scan(text: str) -> list[dict]:
+          findings = set()
+          for n, line in enumerate(text.splitlines(), start=1):
+              if "nosecret" in line:
+                  continue
+              for kind, pattern in PATTERNS:
+                  if pattern.search(line):
+                      findings.add((n, kind))
+              for m in GENERIC.finditer(line):
+                  value = m.group(1)
+                  if len(value) >= 12 and entropy(value) >= 3.5:
+                      findings.add((n, "generic-secret"))
+          return [{"line": n, "kind": k} for n, k in sorted(findings)]
+    explanation: |
+      Known formats (AWS keys, GitHub tokens, PEM headers) are matched exactly. For arbitrary names the
+      entropy threshold separates random-looking credentials from placeholders like "changeme".
+    time: O(total characters)
+    space: O(findings)
+    alternatives: ["gitleaks, trufflehog or detect-secrets in pre-commit hooks and CI"]
+    edge_cases: ["Placeholders with low entropy", "Allowlisted lines", "Several kinds on one line"]
+    production: ["Rotate any secret that reached Git history — deleting the line isn't enough", "Scan the full history once, then every commit"]
+  examples:
+    - args: ["aws_key = AKIAABCDEFGHIJKLMNOP\npassword = 'changeme-please'\nAPI_TOKEN: \"x9F#2kLq!vB7zR4m\"\ntoken = 'Zq8$wE1!pL0xC3v' # nosecret\n-----BEGIN RSA PRIVATE KEY-----"]
+      expected: [{ line: 1, kind: "aws-access-key" }, { line: 3, kind: "generic-secret" }, { line: 5, kind: "private-key" }]
+  hidden:
+    - { args: [""] }
+    - { args: ["gh = ghp_abcdefghijklmnopqrstuvwxyz0123456789\nnot_a_key = AKIA123\nclient_secret=aB3$dE5^gH7&jK9*"] }
+    - { args: ["db_password: aaaaaaaaaaaaaaaa\n-----BEGIN OPENSSH PRIVATE KEY-----\nsecret_token = \"Qw3rTy!@#456ZxC\""] }
+
+- slug: rate-limited-sync
+  title: Sync through a rate-limited API
+  difficulty: hard
+  roles: [forward-deployed-engineer, backend-engineer, automation-engineer]
+  topics: [rate-limiting, retries, pagination]
+  minutes: 35
+  entrypoint: sync
+  description: |
+    Download every record from a customer's API. `client.get(cursor)` returns one of:
+
+    - `{"status": 200, "items": [...], "next": cursor_or_None}`
+    - `{"status": 429, "retry_after": seconds}` — wait exactly that long, then retry the same cursor
+      (doesn't count as a failure)
+    - `{"status": 503}` — transient: wait 1, 2, 4, 8, 8, … seconds (doubling, capped at 8) and retry the same
+      cursor. After 5 consecutive 503s for one cursor, raise `RuntimeError`.
+
+    Use the provided `sleep(seconds)` (a fake clock). The first cursor is `None`. Return all items in order.
+    The harness reports the items, total time slept and whether you gave up.
+  io: { input: "client (fake), sleep: callable", output: "list" }
+  prelude: |
+    class FakeAPI:
+        def __init__(self, script):
+            self.script, self.i, self.cursors = script, 0, []
+
+        def get(self, cursor):
+            self.cursors.append(cursor)
+            response = self.script[self.i]
+            self.i += 1
+            return dict(response)
+
+    def __harness__(fn, script):
+        clock = {"slept": 0.0}
+
+        def sleep(seconds):
+            clock["slept"] += seconds
+
+        api = FakeAPI(script)
+        try:
+            items = fn(api, sleep)
+            gave_up = False
+        except RuntimeError:
+            items, gave_up = None, True
+        return {"items": items, "slept": clock["slept"], "gave_up": gave_up, "cursors": api.cursors}
+  starter: |
+    def sync(client, sleep) -> list:
+        response = client.get(None)
+        return response.get("items", [])
+  hints:
+    - "Separate 'which cursor am I on' from 'how many times did this cursor fail'."
+    - "Loop: response = client.get(cursor); branch on status; reset the 503 counter on success."
+    - |
+      cursor, failures, items = None, 0, []
+      while True: r = client.get(cursor)
+          if 200: items += r["items"]; failures = 0; cursor = r["next"]; if cursor is None: return items
+          elif 429: sleep(r["retry_after"]) elif 503: failures += 1; if failures == 5: raise RuntimeError; sleep(min(8, 2 ** (failures - 1)))
+  solution:
+    code: |
+      def sync(client, sleep) -> list:
+          items: list = []
+          cursor = None
+          failures = 0
+          while True:
+              response = client.get(cursor)
+              status = response["status"]
+              if status == 200:
+                  items.extend(response["items"])
+                  failures = 0
+                  cursor = response.get("next")
+                  if cursor is None:
+                      return items
+              elif status == 429:
+                  sleep(response["retry_after"])
+              elif status == 503:
+                  failures += 1
+                  if failures >= 5:
+                      raise RuntimeError(f"giving up on cursor {cursor!r} after {failures} attempts")
+                  sleep(min(8, 2 ** (failures - 1)))
+              else:
+                  raise RuntimeError(f"unexpected status {status}")
+    explanation: |
+      429 is the server telling you exactly when to come back, so it shouldn't consume your failure budget;
+      503 is an unknown outage, so back off exponentially and give up eventually. Retrying the same cursor
+      keeps the sync exactly-once per page.
+    time: O(pages + retries)
+    space: O(items)
+    alternatives: ["tenacity with retry_if_result and wait_exponential", "Persist the cursor so a crashed sync can resume"]
+    edge_cases: ["429 then 503 then success", "Five 503s in a row", "Single empty page"]
+    production: ["Add jitter to backoff", "Respect Retry-After as an HTTP-date too", "Checkpoint progress — customers' APIs fail at the worst time"]
+  examples:
+    - args:
+        - - { status: 200, items: [1, 2], next: "c1" }
+          - { status: 429, retry_after: 30 }
+          - { status: 503 }
+          - { status: 503 }
+          - { status: 200, items: [3], next: null }
+      expected: { items: [1, 2, 3], slept: 33, gave_up: false, cursors: [null, "c1", "c1", "c1", "c1"] }
+  hidden:
+    - { args: [[{ status: 503 }, { status: 503 }, { status: 503 }, { status: 503 }, { status: 503 }]] }
+    - { args: [[{ status: 200, items: [], next: null }]] }
+    - { args: [[{ status: 503 }, { status: 503 }, { status: 503 }, { status: 503 }, { status: 200, items: ["a"], next: "x" }, { status: 503 }, { status: 429, retry_after: 2 }, { status: 503 }, { status: 200, items: ["b"], next: null }]] }
+
+- slug: sql-window-functions
+  title: Window functions in Python
+  difficulty: hard
+  roles: [data-engineer, forward-deployed-engineer, backend-engineer]
+  topics: [sql-patterns, sorting, etl]
+  minutes: 30
+  entrypoint: windowed
+  description: |
+    Reproduce this SQL in Python:
+
+    ```sql
+    SELECT user, day, amount,
+           SUM(amount) OVER (PARTITION BY user ORDER BY day) AS running_total,
+           DENSE_RANK() OVER (PARTITION BY user ORDER BY amount DESC) AS amount_rank,
+           amount - LAG(amount) OVER (PARTITION BY user ORDER BY day) AS change
+    FROM orders ORDER BY user, day
+    ```
+
+    Days within a user are unique ISO dates. `change` is `None` for a user's first day. Return the rows
+    with the extra columns.
+  io: { input: "rows: list[dict] with user, day, amount", output: "list[dict]" }
+  starter: |
+    def windowed(rows: list[dict]) -> list[dict]:
+        return sorted(rows, key=lambda r: (r["user"], r["day"]))
+  hints:
+    - "Partition first (group by user), then work on each sorted partition."
+    - "Running total and lag are one pass in day order; dense rank maps each distinct amount (descending) to 1, 2, 3…"
+    - |
+      for user, part in groups: part.sort(key=day); ranks = {a: i + 1 for i, a in enumerate(sorted({r["amount"] for r in part}, reverse=True))}
+          total = 0; prev = None; for r in part: total += amount; out.append({**r, running_total, amount_rank: ranks[amount], change: None if prev is None else amount - prev})
+  solution:
+    code: |
+      from collections import defaultdict
+
+      def windowed(rows: list[dict]) -> list[dict]:
+          partitions: dict = defaultdict(list)
+          for row in rows:
+              partitions[row["user"]].append(row)
+          out = []
+          for user in sorted(partitions):
+              part = sorted(partitions[user], key=lambda r: r["day"])
+              distinct = sorted({r["amount"] for r in part}, reverse=True)
+              rank = {amount: i + 1 for i, amount in enumerate(distinct)}
+              total, previous = 0, None
+              for r in part:
+                  total += r["amount"]
+                  out.append({**r, "running_total": total, "amount_rank": rank[r["amount"]], "change": None if previous is None else r["amount"] - previous})
+                  previous = r["amount"]
+          return out
+    explanation: Window functions are "group, sort, then compute per row with access to neighbours". Dense rank gives equal amounts the same rank with no gaps.
+    time: O(n log n)
+    space: O(n)
+    alternatives: ["pandas: groupby().cumsum(), rank(method='dense', ascending=False), diff()", "Let the database do it — usually the right answer"]
+    edge_cases: ["Ties in amount", "Single row per user", "Negative amounts (refunds)"]
+    production: ["Window functions over huge partitions need sorting spills — push them to the warehouse"]
+  examples:
+    - args: [[{ user: "b", day: "2026-01-02", amount: 5 }, { user: "a", day: "2026-01-02", amount: 30 }, { user: "a", day: "2026-01-01", amount: 10 }, { user: "a", day: "2026-01-03", amount: 30 }]]
+      expected:
+        - { user: "a", day: "2026-01-01", amount: 10, running_total: 10, amount_rank: 2, change: null }
+        - { user: "a", day: "2026-01-02", amount: 30, running_total: 40, amount_rank: 1, change: 20 }
+        - { user: "a", day: "2026-01-03", amount: 30, running_total: 70, amount_rank: 1, change: 0 }
+        - { user: "b", day: "2026-01-02", amount: 5, running_total: 5, amount_rank: 1, change: null }
+  hidden:
+    - { args: [[]] }
+    - { args: [[{ user: "u", day: "2026-03-01", amount: -2 }, { user: "u", day: "2026-02-01", amount: 7 }, { user: "u", day: "2026-04-01", amount: 7 }, { user: "u", day: "2026-05-01", amount: 1 }]] }
+
+- slug: multi-region-traffic
+  title: Plan multi-region traffic
+  difficulty: hard
+  roles: [cloud-engineer, solutions-architect, site-reliability-engineer]
+  topics: [resilience, sorting, simulation]
+  minutes: 30
+  entrypoint: allocate
+  description: |
+    Distribute `demand` units of traffic across regions `[{"name", "healthy", "latency_ms", "capacity"}]`:
+
+    1. Only healthy regions get traffic.
+    2. Keep `headroom` percent of each region's capacity free (usable = floor(capacity × (100 − headroom) / 100)).
+    3. Fill regions in order of latency (ties by name) up to their usable capacity.
+    4. If demand still remains, use the reserved headroom in the same order (up to full capacity) and set
+       `"degraded": true`.
+
+    Return `{"allocation": {region: units} (only regions with traffic), "unserved": n, "degraded": bool}`.
+  io: { input: "regions: list[dict], demand: int, headroom: int", output: "dict" }
+  starter: |
+    def allocate(regions, demand, headroom):
+        healthy = [r for r in regions if r["healthy"]]
+        share = demand // max(len(healthy), 1)
+        return {"allocation": {r["name"]: share for r in healthy}, "unserved": 0, "degraded": False}
+  hints:
+    - "Two greedy passes over the same ordering: normal capacity first, then headroom."
+    - "Sort healthy regions by (latency_ms, name). Track remaining demand and per-region allocation."
+    - |
+      order = sorted(healthy, key=lambda r: (r["latency_ms"], r["name"]))
+      for r in order: take = min(remaining, usable(r)); alloc[r] += take; remaining -= take
+      if remaining: degraded = True; for r in order: take = min(remaining, r["capacity"] - alloc[r]) ...
+  solution:
+    code: |
+      def allocate(regions, demand, headroom):
+          order = sorted((r for r in regions if r["healthy"]), key=lambda r: (r["latency_ms"], r["name"]))
+          alloc = {r["name"]: 0 for r in order}
+          remaining = demand
+          for r in order:
+              usable = r["capacity"] * (100 - headroom) // 100
+              take = min(remaining, usable)
+              alloc[r["name"]] += take
+              remaining -= take
+          degraded = False
+          if remaining > 0:
+              for r in order:
+                  take = min(remaining, r["capacity"] - alloc[r["name"]])
+                  if take > 0:
+                      degraded = True
+                      alloc[r["name"]] += take
+                      remaining -= take
+          return {"allocation": {k: v for k, v in alloc.items() if v}, "unserved": remaining, "degraded": degraded}
+    explanation: |
+      Latency-first greedy keeps users close; the headroom reserve absorbs spikes and the loss of another
+      region. Spending it is allowed, but the plan says so loudly, because the next failure will not be
+      absorbed.
+    time: O(r log r)
+    space: O(r)
+    alternatives: ["Weighted round robin proportional to capacity (better spread, worse latency)", "Linear programming when costs and latencies per user region matter"]
+    edge_cases: ["No healthy regions → all unserved", "Demand 0", "Headroom 0"]
+    production: ["Use integer weights in DNS/global load balancers (Route 53 weighted records)", "Re-plan continuously from health checks, with hysteresis to avoid flapping"]
+  examples:
+    - args:
+        - - { name: "eu-west-1", healthy: true, latency_ms: 20, capacity: 100 }
+          - { name: "us-east-1", healthy: true, latency_ms: 80, capacity: 200 }
+          - { name: "ap-south-1", healthy: false, latency_ms: 10, capacity: 500 }
+        - 250
+        - 20
+      expected: { allocation: { eu-west-1: 90, us-east-1: 160 }, unserved: 0, degraded: true }
+      explanation: "Usable capacity is 80 + 160 = 240, so the last 10 units come from headroom, lowest latency first (eu-west-1)."
+  hidden:
+    - { args: [[{ name: "a", healthy: false, latency_ms: 1, capacity: 10 }], 5, 0] }
+    - { args: [[{ name: "b", healthy: true, latency_ms: 5, capacity: 10 }, { name: "a", healthy: true, latency_ms: 5, capacity: 10 }], 25, 10] }
+    - { args: [[{ name: "x", healthy: true, latency_ms: 5, capacity: 999 }], 0, 30] }
+
+- slug: cron-next-run
+  title: Compute the next cron run
+  difficulty: hard
+  roles: [devops-engineer, automation-engineer, infrastructure-automation-engineer]
+  topics: [datetime, parsing, simulation]
+  minutes: 40
+  entrypoint: next_run
+  description: |
+    Given a five-field cron expression (`minute hour day-of-month month day-of-week`) and a start time
+    `"YYYY-MM-DDTHH:MM"`, return the next matching time **strictly after** the start, in the same format.
+
+    - Fields support `*`, numbers, ranges `a-b`, steps `*/n` and `a-b/n`, and comma lists.
+    - Day of week: 0–7 where both 0 and 7 are Sunday.
+    - If both day-of-month and day-of-week are restricted (not `*`), a day matches when **either** matches
+      (classic cron). Otherwise only the restricted one applies.
+    - Return `None` if nothing matches within the next 5 years (e.g. February 30th).
+  io: { input: "expr: str, start: str", output: "str | None" }
+  starter: |
+    from datetime import datetime, timedelta
+
+    def next_run(expr: str, start: str):
+        t = datetime.fromisoformat(start) + timedelta(minutes=1)
+        return t.strftime("%Y-%m-%dT%H:%M")
+  hints:
+    - "Expand each field into a set of allowed values first, then search forward."
+    - "Search day by day (only check hours/minutes on days that match), not minute by minute."
+    - |
+      day = start.date(); for each day up to 5 years: if month ok and day ok:
+          for h in sorted(hours): for m in sorted(minutes): t = datetime(day, h, m); if t > start: return t
+  solution:
+    code: |
+      from datetime import date, datetime, timedelta
+
+      def expand(field: str, low: int, high: int) -> set[int]:
+          values: set[int] = set()
+          for part in field.split(","):
+              rng, _, step = part.partition("/")
+              step_n = int(step) if step else 1
+              if rng == "*":
+                  a, b = low, high
+              elif "-" in rng:
+                  a, b = (int(x) for x in rng.split("-", 1))
+              else:
+                  a = b = int(rng)
+                  if step:
+                      b = high
+              values.update(range(a, b + 1, step_n))
+          return values
+
+      def next_run(expr: str, start: str):
+          minute_f, hour_f, dom_f, month_f, dow_f = expr.split()
+          minutes, hours = sorted(expand(minute_f, 0, 59)), sorted(expand(hour_f, 0, 23))
+          doms, months = expand(dom_f, 1, 31), expand(month_f, 1, 12)
+          dows = {d % 7 for d in expand(dow_f, 0, 7)}
+          t0 = datetime.fromisoformat(start)
+          day = t0.date()
+          for _ in range(366 * 5 + 2):
+              if day.month in months:
+                  dom_ok = day.day in doms
+                  dow_ok = (day.weekday() + 1) % 7 in dows
+                  if dom_f != "*" and dow_f != "*":
+                      day_ok = dom_ok or dow_ok
+                  else:
+                      day_ok = dom_ok and dow_ok
+                  if day_ok:
+                      for h in hours:
+                          for m in minutes:
+                              t = datetime(day.year, day.month, day.day, h, m)
+                              if t > t0:
+                                  return t.strftime("%Y-%m-%dT%H:%M")
+              day += timedelta(days=1)
+          return None
+    explanation: |
+      Python's weekday() has Monday = 0, cron has Sunday = 0, hence `(weekday() + 1) % 7`. The OR rule for
+      day-of-month and day-of-week is a famous cron surprise: `0 0 13 * 5` runs on every 13th **and** every
+      Friday.
+    time: O(days searched + hours × minutes on the first matching day)
+    space: O(60 + 24 + 31 + 12 + 7)
+    alternatives: ["croniter", "Jump field by field (minute → hour → day) for O(1)-ish next-time computation"]
+    edge_cases: ["Start exactly on a match is excluded", "Leap days (0 0 29 2 *)", "Impossible dates (0 0 30 2 *)", "7 as Sunday"]
+    production: ["Decide the time zone explicitly — cron runs in the host's local time, and DST skips or repeats hours"]
+  examples:
+    - { args: ["*/15 9-17 * * 1-5", "2026-11-06T17:50"], expected: "2026-11-09T09:00", explanation: "Friday after 17:45 → Monday 09:00." }
+    - { args: ["0 0 29 2 *", "2026-03-01T00:00"], expected: "2028-02-29T00:00" }
+  hidden:
+    - { args: ["0 0 30 2 *", "2026-01-01T00:00"] }
+    - { args: ["30 4 13 * 5", "2026-11-02T10:00"] }
+    - { args: ["0 12 * * 7", "2026-11-08T12:00"] }
+    - { args: ["* * * * *", "2026-12-31T23:59"] }
+
+- slug: capacity-planning-dp
+  title: Plan server capacity at minimum cost
+  difficulty: hard
+  roles: [software-development-engineer, solutions-architect, platform-engineer]
+  topics: [dynamic-programming, complexity]
+  minutes: 40
+  entrypoint: plan_capacity
+  description: |
+    For each hour t you choose a server count s_t with `demand[t] ≤ s_t ≤ max_servers`. The cost is
+    `run_cost × s_t` per hour plus `change_cost × |s_t − s_{t−1}|` for scaling, where `s_{−1} = initial`.
+
+    Return `{"cost": minimum_total_cost, "plan": [s_0, s_1, ...]}`. If several plans cost the same, return the
+    lexicographically smallest. If any demand exceeds `max_servers`, return `None`.
+  io: { input: "demand: list[int], max_servers: int, initial: int, run_cost: int, change_cost: int", output: "dict | None" }
+  starter: |
+    def plan_capacity(demand, max_servers, initial, run_cost, change_cost):
+        plan = list(demand)
+        prev, cost = initial, 0
+        for s in plan:
+            cost += run_cost * s + change_cost * abs(s - prev)
+            prev = s
+        return {"cost": cost, "plan": plan}
+  hints:
+    - "Matching demand exactly every hour isn't optimal when scaling is expensive — keep servers through a dip."
+    - "DP over (hour, servers): best[t][s] = cheapest cost of hours t..end given s_t = s. Fill it backwards."
+    - |
+      best[T-1][s] = run*s for valid s; best[t][s] = run*s + min(change*|s2 - s| + best[t+1][s2] for valid s2)
+      then walk forward from prev = initial choosing the smallest s with change*|s-prev| + best[t][s] == optimum
+  solution:
+    code: |
+      def plan_capacity(demand, max_servers, initial, run_cost, change_cost):
+          if any(d > max_servers for d in demand):
+              return None
+          T = len(demand)
+          if T == 0:
+              return {"cost": 0, "plan": []}
+          INF = float("inf")
+          best = [[INF] * (max_servers + 1) for _ in range(T)]
+          for s in range(demand[-1], max_servers + 1):
+              best[-1][s] = run_cost * s
+          for t in range(T - 2, -1, -1):
+              for s in range(demand[t], max_servers + 1):
+                  best[t][s] = run_cost * s + min(change_cost * abs(s2 - s) + best[t + 1][s2] for s2 in range(demand[t + 1], max_servers + 1))
+          plan, prev, total = [], initial, None
+          for t in range(T):
+              options = [(change_cost * abs(s - prev) + best[t][s], s) for s in range(demand[t], max_servers + 1)]
+              cost_here = min(c for c, _ in options)
+              if total is None:
+                  total = cost_here
+              s = min(s for c, s in options if c == cost_here)
+              plan.append(s)
+              prev = s
+          return {"cost": int(total), "plan": plan}
+    explanation: |
+      Filling the table backwards gives, for every hour and server count, the cheapest way to finish. Walking
+      forward and always taking the smallest count that still achieves that optimum produces the
+      lexicographically smallest optimal plan.
+    time: O(T × S²)
+    space: O(T × S)
+    alternatives: ["Forward DP with predecessor pointers (tie-breaking is harder)", "Convex cost tricks reduce the transition to O(S)"]
+    edge_cases: ["Empty demand", "Demand above max → None", "change_cost 0 → follow demand exactly"]
+    production: ["Real autoscaling uses forecasts with uncertainty — plan for a percentile of demand", "Scaling has lead time; this model assumes instant changes"]
+  examples:
+    - args: [[3, 1, 3], 5, 0, 1, 2]
+      expected: { cost: 15, plan: [3, 3, 3] }
+      explanation: "Dropping to 1 server saves 2 in running cost but costs 4 + 4 in scaling."
+  hidden:
+    - { args: [[], 3, 2, 1, 1] }
+    - { args: [[6], 5, 0, 1, 1] }
+    - { args: [[1, 4, 1, 4, 1], 6, 1, 2, 1] }
+    - { args: [[2, 2, 0, 0, 0, 3], 4, 0, 1, 3] }
+
+- slug: sse-stream-parser
+  title: Parse a server-sent event stream
+  difficulty: hard
+  roles: [genai-engineer, full-stack-engineer, backend-engineer]
+  topics: [streaming, parsing, generators]
+  minutes: 30
+  entrypoint: parse_sse
+  description: |
+    LLM APIs stream tokens as server-sent events. The bytes arrive in arbitrary chunks (a line can be split
+    across chunks). Parse them per the SSE rules:
+
+    - Lines end with `\n` or `\r\n`.
+    - `field: value` — strip **one** space after the colon if present. Fields: `event`, `data`, `id`.
+    - Lines starting with `:` are comments. A line without a colon is a field with an empty value.
+    - Multiple `data` lines in one event are joined with `\n`.
+    - A blank line dispatches the event if it has any data line: `{"event": type or "message", "data": ...,
+      "id": last id seen in the stream or None}`. `event` and `data` reset after dispatch; `id` persists.
+    - An event that is never terminated by a blank line is **not** dispatched.
+  io: { input: "chunks: list[str]", output: "list[dict]" }
+  starter: |
+    def parse_sse(chunks: list[str]) -> list[dict]:
+        events = []
+        for chunk in chunks:
+            for line in chunk.split("\n"):
+                if line.startswith("data: "):
+                    events.append({"event": "message", "data": line[6:], "id": None})
+        return events
+  hints:
+    - "Buffer text and only process complete lines; keep the incomplete tail for the next chunk."
+    - "Maintain state: current event type, list of data lines, last id. A blank line dispatches."
+    - |
+      buffer += chunk; while "\n" in buffer: line, buffer = buffer.split("\n", 1); line = line.rstrip("\r")
+          if line == "": dispatch if data; reset event/data
+          elif line.startswith(":"): continue
+          else: field, _, value = line.partition(":"); value = value[1:] if value.startswith(" ") else value
+  solution:
+    code: |
+      def parse_sse(chunks: list[str]) -> list[dict]:
+          events: list[dict] = []
+          buffer = ""
+          event_type, data, last_id = "", [], None
+          for chunk in chunks:
+              buffer += chunk
+              while "\n" in buffer:
+                  line, buffer = buffer.split("\n", 1)
+                  if line.endswith("\r"):
+                      line = line[:-1]
+                  if line == "":
+                      if data:
+                          events.append({"event": event_type or "message", "data": "\n".join(data), "id": last_id})
+                      event_type, data = "", []
+                      continue
+                  if line.startswith(":"):
+                      continue
+                  field, _, value = line.partition(":")
+                  if value.startswith(" "):
+                      value = value[1:]
+                  if field == "data":
+                      data.append(value)
+                  elif field == "event":
+                      event_type = value
+                  elif field == "id":
+                      last_id = value
+          return events
+    explanation: |
+      Network chunks don't respect line boundaries, so the parser keeps a buffer and only consumes complete
+      lines. The persistent id is what a client sends back as Last-Event-ID to resume a stream.
+    time: O(total characters)
+    space: O(longest event)
+    alternatives: ["A generator that yields events as soon as they complete (what a streaming UI needs)", "httpx-sse or the provider's SDK"]
+    edge_cases: ["A line split across chunks", "\\r\\n line endings", "Comments (keep-alives)", "An unterminated final event"]
+    production: ["Treat a 'data: [DONE]' sentinel (OpenAI) as end of stream", "Time out if no bytes arrive for a while — streams hang silently"]
+  examples:
+    - args: [["event: delta\ndata: Hel", "lo\n\n: keep-alive\nid: 7\ndata: wor", "ld\ndata: !\n\ndata: [DONE]\n"]]
+      expected: [{ event: "delta", data: "Hello", id: null }, { event: "message", data: "world\n!", id: "7" }]
+  hidden:
+    - { args: [[]] }
+    - { args: [["data:no-space\r\n\r\ndata:  two spaces\n\n"]] }
+    - { args: [["id: 1\n\nevent: x\n\n", "data\n\n", "d", "a", "t", "a", ":", " ", "z", "\n", "\n"]] }

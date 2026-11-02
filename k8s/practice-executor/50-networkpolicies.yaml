@@ -1,0 +1,52 @@
+# Intended traffic, for clusters that enforce NetworkPolicy. mk4's kindnet does NOT enforce these; sandbox
+# isolation there comes from runsc network=none (05-runtimeclass.yaml), not from these objects.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: deny-all, namespace: practice-sandbox }
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: executor-api, namespace: practice-exec }
+spec:
+  podSelector: { matchLabels: { app: practice-executor-api } }
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: jithendar } }
+          podSelector: { matchLabels: { app: jithendar-com } }
+      ports: [{ port: 8080, protocol: TCP }]
+  egress:
+    - to: [{ podSelector: { matchLabels: { app: practice-redis } } }]
+      ports: [{ port: 6379, protocol: TCP }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: dispatcher, namespace: practice-exec }
+spec:
+  podSelector: { matchLabels: { app: practice-dispatcher } }
+  policyTypes: ["Ingress", "Egress"]
+  egress:
+    - to: [{ podSelector: { matchLabels: { app: practice-redis } } }]
+      ports: [{ port: 6379, protocol: TCP }]
+    # Kubernetes API server (in-cluster service and the node addresses minikube uses).
+    - ports: [{ port: 443, protocol: TCP }, { port: 8443, protocol: TCP }, { port: 6443, protocol: TCP }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: redis, namespace: practice-exec }
+spec:
+  podSelector: { matchLabels: { app: practice-redis } }
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: practice-executor-api } }
+        - podSelector: { matchLabels: { app: practice-dispatcher } }
+      ports: [{ port: 6379, protocol: TCP }]

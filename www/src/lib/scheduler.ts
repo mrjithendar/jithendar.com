@@ -15,6 +15,24 @@ export async function workerTick(now = new Date()) {
   if (published.length) log.info("scheduled posts published", { count: published.length, ids: published });
   const jobs = await runDueJobs({ indexnow: indexNowHandler }, now);
   if (jobs.done || jobs.retried || jobs.failed) log.info("jobs processed", jobs);
+  await practiceTick(now);
+}
+
+const practiceState = globalThis as unknown as { __practiceRetentionDay?: string };
+
+/** Python practice: collect finished runs nobody polled for, end timed sessions past their deadline, daily retention. */
+async function practiceTick(now: Date) {
+  const { sweepPendingSubmissions } = await import("./practice/submissions");
+  const { expireSessions } = await import("./practice/sessions");
+  const swept = await sweepPendingSubmissions(now);
+  const expired = await expireSessions(now);
+  if (swept || expired) log.info("practice sweep", { submissions: swept, sessionsExpired: expired });
+  const day = now.toISOString().slice(0, 10);
+  if (practiceState.__practiceRetentionDay !== day) {
+    practiceState.__practiceRetentionDay = day;
+    const { applyRetention } = await import("./practice/profile");
+    await applyRetention(now);
+  }
 }
 
 export function startWorker() {

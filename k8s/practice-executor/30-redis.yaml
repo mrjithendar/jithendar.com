@@ -1,0 +1,43 @@
+# The executor's own queue (not the site's Redis: that one evicts keys under memory pressure, a queue must not).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: practice-redis
+  namespace: practice-exec
+  labels: { app: practice-redis, app.kubernetes.io/part-of: python-practice }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: practice-redis } }
+  template:
+    metadata:
+      labels: { app: practice-redis, app.kubernetes.io/part-of: python-practice }
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext: { runAsNonRoot: true, runAsUser: 999, runAsGroup: 999, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: redis
+          image: redis:8.2-alpine
+          command: ["sh", "-c"]
+          args: ['exec redis-server --requirepass "$REDIS_PASSWORD" --maxmemory 96mb --maxmemory-policy noeviction --save "" --appendonly no --protected-mode yes']
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: practice-executor-env, key: REDIS_PASSWORD } }
+          ports: [{ containerPort: 6379, name: redis }]
+          readinessProbe: { tcpSocket: { port: redis }, periodSeconds: 10 }
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits: { cpu: 250m, memory: 128Mi }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+          volumeMounts: [{ name: data, mountPath: /data }]
+      volumes: [{ name: data, emptyDir: { sizeLimit: 64Mi } }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: practice-redis
+  namespace: practice-exec
+spec:
+  selector: { app: practice-redis }
+  ports: [{ name: redis, port: 6379, targetPort: redis }]
