@@ -1,0 +1,49 @@
+# The dispatcher may create, watch, read logs of and delete pods in practice-sandbox — nothing else, nowhere
+# else. Sandbox pods run as a service account with no permissions and no mounted token.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: practice-dispatcher
+  namespace: practice-exec
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: practice-api
+  namespace: practice-exec
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: practice-sandbox
+  namespace: practice-sandbox
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: practice-dispatcher
+  namespace: practice-sandbox
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: practice-dispatcher
+  namespace: practice-sandbox
+subjects:
+  - kind: ServiceAccount
+    name: practice-dispatcher
+    namespace: practice-exec
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: practice-dispatcher

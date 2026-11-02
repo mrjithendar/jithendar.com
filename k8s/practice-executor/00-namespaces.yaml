@@ -1,0 +1,20 @@
+# Python practice executor: the API, dispatcher and queue live in practice-exec; every submitted program runs
+# in its own short-lived pod in practice-sandbox. See www/docs/PYTHON_PRACTICE_EXECUTOR.md.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: practice-exec
+  labels:
+    app.kubernetes.io/part-of: python-practice
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: practice-sandbox
+  labels:
+    app.kubernetes.io/part-of: python-practice
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest

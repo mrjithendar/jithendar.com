@@ -17,6 +17,7 @@ with cluster-generated fields removed. Deployed with `kubectl apply -k k8s` (nor
 | `60-ingress.yaml` | Ingresses for `jithendar.com` and `www.jithendar.com` (HTTPS + HTTP redirect) |
 | `70-observability.yaml` | Headless Service `jithendar-com-metrics` (Prometheus, port 9464) and Role/RoleBinding `alloy-logs`; see `www/docs/OBSERVABILITY.md` |
 | `kustomization.yaml` | The list above plus the image digest pin |
+| `practice-executor/` | Python practice code runner (separate kustomization, **not** applied by `deploy.sh`; apply once by hand after gVisor is verified; CI then rolls out new image digests when `PRACTICE_EXECUTOR_DEPLOY=true` — `www/docs/PYTHON_PRACTICE_EXECUTOR.md`) |
 
 ## Before the first deploy
 

@@ -33,6 +33,10 @@ const SEVERITY: [string, Severity][] = [
   ["site-config.publish", "notice"],
   ["database.", "warning"],
   ["audit.export", "notice"],
+  ["practice.settings", "warning"],
+  ["practice.problem.archive", "notice"],
+  ["practice.abuse", "warning"],
+  ["practice.", "info"],
 ];
 
 export function severityOf(action: string): Severity {

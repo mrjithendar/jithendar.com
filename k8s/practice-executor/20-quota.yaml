@@ -1,0 +1,28 @@
+# Hard cap on what all sandboxes together may use (protects the rest of mk4 from a flood of runs).
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: sandbox-capacity
+  namespace: practice-sandbox
+spec:
+  hard:
+    pods: "8"
+    limits.cpu: "8"
+    limits.memory: 5Gi
+    requests.cpu: "2"
+    requests.memory: 2Gi
+    requests.ephemeral-storage: 512Mi
+    limits.ephemeral-storage: 1Gi
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: sandbox-defaults
+  namespace: practice-sandbox
+spec:
+  limits:
+    - type: Container
+      max:
+        cpu: "1"
+        memory: 512Mi

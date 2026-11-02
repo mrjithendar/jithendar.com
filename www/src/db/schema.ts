@@ -523,3 +523,427 @@ export const backupRun = pgTable(
   },
   (t) => [index("backup_run_started_idx").on(t.startedAt)],
 );
+
+// --- Python practice (/python-practice; see docs/PYTHON_PRACTICE.md) --------------------------------------
+// Users are the site's Better Auth users (no separate identity). Hidden test cases live in practice_test_case
+// and are read only by lib/practice/evaluator.ts and the admin editor (tests/practice-boundaries.test.ts).
+
+export type PracticeDifficultyMix = Partial<Record<"beginner" | "easy" | "medium" | "hard" | "expert", number>>;
+
+/** Engineering roles (seeded from content/python-practice/roles.yaml, then edited in Admin → Python practice). */
+export const practiceRole = pgTable("practice_role", {
+  slug: text("slug").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  icon: text("icon").notNull().default("code"),
+  competencies: jsonb("competencies").$type<string[]>().notNull().default([]),
+  learningPath: jsonb("learning_path").$type<string[]>().notNull().default([]),
+  topics: text("topics").array().notNull().default(sql`'{}'::text[]`),
+  difficultyMix: jsonb("difficulty_mix").$type<PracticeDifficultyMix>().notNull().default({}),
+  scenarios: jsonb("scenarios").$type<string[]>().notNull().default([]),
+  libraries: jsonb("libraries").$type<string[]>().notNull().default([]),
+  sort: integer("sort").notNull().default(100),
+  /** active | hidden */
+  status: text("status").notNull().default("active"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+export const practiceTopic = pgTable("practice_topic", {
+  slug: text("slug").primaryKey(),
+  name: text("name").notNull(),
+  /** One of the dashboard's skill areas (lib/practice/types.ts SKILL_AREAS). */
+  area: text("area").notNull(),
+  description: text("description").notNull().default(""),
+  sort: integer("sort").notNull().default(100),
+});
+
+export const practiceProblem = pgTable(
+  "practice_problem",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    slug: text("slug").notNull().unique(),
+    title: text("title").notNull(),
+    difficulty: text("difficulty").notNull(),
+    roles: text("roles").array().notNull().default(sql`'{}'::text[]`),
+    topics: text("topics").array().notNull().default(sql`'{}'::text[]`),
+    /** draft | published | archived */
+    status: text("status").notNull().default("draft"),
+    /** The version users get; earlier versions stay for interpreting old submissions. */
+    currentVersion: integer("current_version").notNull().default(1),
+    estimatedMinutes: integer("estimated_minutes").notNull().default(15),
+    /** seed (from the repository catalog; updated by later seeds) or admin (edited here; seeds never touch it). */
+    source: text("source").notNull().default("admin"),
+    seedHash: text("seed_hash"),
+    dailyEligible: boolean("daily_eligible").notNull().default(true),
+    createdBy: text("created_by"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+    publishedAt: ts("published_at"),
+  },
+  (t) => [index("practice_problem_status_idx").on(t.status, t.difficulty)],
+);
+
+export type PracticeSolution = {
+  code: string;
+  explanation: string;
+  time: string;
+  space: string;
+  alternatives: string[];
+  edgeCases: string[];
+  production: string[];
+  alternativeCode?: string[];
+};
+export type PracticeLimits = { perTestSeconds: number; totalSeconds: number; memoryMb: number };
+
+/** Immutable content of one problem version (statement, starter, hints, solution, grading settings). */
+export const practiceProblemVersion = pgTable(
+  "practice_problem_version",
+  {
+    problemId: uuid("problem_id")
+      .notNull()
+      .references(() => practiceProblem.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    title: text("title").notNull(),
+    description: text("description").notNull(),
+    entrypoint: text("entrypoint").notNull(),
+    starterCode: text("starter_code").notNull(),
+    /** Helper code (fakes, harness) run before the submission inside the sandbox. Shown to users. */
+    prelude: text("prelude").notNull().default(""),
+    /** exact | unordered | float */
+    comparator: text("comparator").notNull().default("exact"),
+    tolerance: jsonb("tolerance").$type<number>().notNull().default(1e-6),
+    constraints: jsonb("constraints").$type<string[]>().notNull().default([]),
+    io: jsonb("io").$type<{ input?: string; output?: string }>().notNull().default({}),
+    hints: jsonb("hints").$type<string[]>().notNull().default([]),
+    solution: jsonb("solution").$type<PracticeSolution>().notNull(),
+    limits: jsonb("limits").$type<PracticeLimits>().notNull(),
+    contentHash: text("content_hash").notNull(),
+    note: text("note").notNull().default(""),
+    createdBy: text("created_by"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ name: "practice_problem_version_pk", columns: [t.problemId, t.version] })],
+);
+
+/** Test cases per problem version. Expected outputs and every hidden case are evaluator-only. */
+export const practiceTestCase = pgTable(
+  "practice_test_case",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    problemId: uuid("problem_id").notNull(),
+    version: integer("version").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    /** public | hidden */
+    visibility: text("visibility").notNull(),
+    isExample: boolean("is_example").notNull().default(false),
+    label: text("label").notNull().default(""),
+    explanation: text("explanation").notNull().default(""),
+    args: jsonb("args").$type<unknown[]>().notNull().default([]),
+    kwargs: jsonb("kwargs").$type<Record<string, unknown>>().notNull().default({}),
+    expected: jsonb("expected"),
+  },
+  (t) => [
+    index("practice_test_case_problem_idx").on(t.problemId, t.version, t.ordinal),
+    foreignKey({ name: "practice_test_case_version_fk", columns: [t.problemId, t.version], foreignColumns: [practiceProblemVersion.problemId, practiceProblemVersion.version] }).onDelete("cascade"),
+  ],
+);
+
+/** Per-user practice settings and verified aggregates (XP and streaks are written by the server only). */
+export const practiceProfile = pgTable("practice_profile", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  roles: text("roles").array().notNull().default(sql`'{}'::text[]`),
+  leaderboardOptIn: boolean("leaderboard_opt_in").notNull().default(false),
+  publicName: text("public_name"),
+  xp: integer("xp").notNull().default(0),
+  currentStreak: integer("current_streak").notNull().default(0),
+  longestStreak: integer("longest_streak").notNull().default(0),
+  lastActiveDay: text("last_active_day"),
+  preferences: jsonb("preferences").$type<Record<string, unknown>>().notNull().default({}),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+export type PracticeSessionConfig = {
+  roles: string[];
+  difficulties: string[];
+  topics: string[];
+  count: number;
+  durationMinutes: number | null;
+  includeFailed: boolean;
+  excludeSolved: boolean;
+};
+
+export const practiceSession = pgTable(
+  "practice_session",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    /** guided | timed | mock | adaptive | daily */
+    mode: text("mode").notNull(),
+    config: jsonb("config").$type<PracticeSessionConfig>().notNull(),
+    /** active | completed | expired | abandoned */
+    status: text("status").notNull().default("active"),
+    currentIndex: integer("current_index").notNull().default(0),
+    startedAt: ts("started_at").notNull().defaultNow(),
+    /** Server-side deadline (timed and mock sessions). Refreshing or reconnecting cannot move it. */
+    deadlineAt: ts("deadline_at"),
+    completedAt: ts("completed_at"),
+    score: jsonb("score").$type<Record<string, unknown> | null>(),
+    /** Why the problems were chosen (adaptive mode). */
+    rationale: jsonb("rationale").$type<string[]>().notNull().default([]),
+  },
+  (t) => [index("practice_session_user_idx").on(t.userId, t.startedAt), index("practice_session_status_idx").on(t.status, t.deadlineAt)],
+);
+
+export const practiceSessionItem = pgTable(
+  "practice_session_item",
+  {
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => practiceSession.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    problemId: uuid("problem_id")
+      .notNull()
+      .references(() => practiceProblem.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    /** pending | submitted | skipped */
+    status: text("status").notNull().default("pending"),
+    hintsUsed: integer("hints_used").notNull().default(0),
+    solutionRevealed: boolean("solution_revealed").notNull().default(false),
+    bestSubmissionId: uuid("best_submission_id"),
+    passed: integer("passed").notNull().default(0),
+    total: integer("total").notNull().default(0),
+    score: integer("score").notNull().default(0),
+    feedback: jsonb("feedback").$type<Record<string, unknown> | null>(),
+  },
+  (t) => [primaryKey({ name: "practice_session_item_pk", columns: [t.sessionId, t.position] })],
+);
+
+export type PracticeTestResult = {
+  /** Position among the tests of this run (public tests carry their ordinal; hidden tests are only counted). */
+  index: number;
+  visibility: "public" | "hidden";
+  status: "passed" | "failed" | "error" | "timeout" | "memory" | "skipped";
+  args?: unknown[];
+  kwargs?: Record<string, unknown>;
+  expected?: unknown;
+  actual?: unknown;
+  actualRepr?: string;
+  stdout?: string;
+  error?: { type: string; message: string; traceback?: string };
+  ms?: number;
+  /** A custom input the user added on Run (no expected value). */
+  custom?: boolean;
+};
+
+export const practiceSubmission = pgTable(
+  "practice_submission",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    problemId: uuid("problem_id")
+      .notNull()
+      .references(() => practiceProblem.id, { onDelete: "cascade" }),
+    problemVersion: integer("problem_version").notNull(),
+    sessionId: uuid("session_id").references(() => practiceSession.id, { onDelete: "set null" }),
+    /** run (public tests) | submit (public + hidden, graded) */
+    kind: text("kind").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    code: text("code").notNull(),
+    codeSha256: text("code_sha256").notNull(),
+    runtime: text("runtime").notNull(),
+    /** queued | running | completed | error */
+    status: text("status").notNull().default("queued"),
+    /** accepted | wrong_answer | runtime_error | timeout | memory | syntax_error | missing_entrypoint | infrastructure_error | cancelled */
+    verdict: text("verdict"),
+    passed: integer("passed").notNull().default(0),
+    total: integer("total").notNull().default(0),
+    /** User-visible results: details for public tests only; hidden tests are pass/fail. */
+    results: jsonb("results").$type<PracticeTestResult[]>().notNull().default([]),
+    loadError: jsonb("load_error").$type<{ type: string; message: string; line?: number; offset?: number } | null>(),
+    maxMs: jsonb("max_ms").$type<number | null>(),
+    maxMemoryKb: integer("max_memory_kb"),
+    pythonVersion: text("python_version"),
+    hintsUsed: integer("hints_used").notNull().default(0),
+    solutionRevealed: boolean("solution_revealed").notNull().default(false),
+    /** Accepted without having revealed the solution (hints allowed, recorded separately). */
+    independent: boolean("independent").notNull().default(false),
+    score: integer("score"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+    finishedAt: ts("finished_at"),
+  },
+  (t) => [
+    uniqueIndex("practice_submission_idem_idx").on(t.userId, t.idempotencyKey),
+    index("practice_submission_user_idx").on(t.userId, t.createdAt),
+    index("practice_submission_problem_idx").on(t.problemId, t.createdAt),
+    index("practice_submission_session_idx").on(t.sessionId),
+    index("practice_submission_pending_idx").on(t.status, t.createdAt).where(sql`${t.status} in ('queued', 'running')`),
+  ],
+);
+
+/** The executor job behind a submission (operations view: queue times, retries, infrastructure errors). */
+export const practiceExecutionJob = pgTable(
+  "practice_execution_job",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    submissionId: uuid("submission_id")
+      .notNull()
+      .unique()
+      .references(() => practiceSubmission.id, { onDelete: "cascade" }),
+    executorJobId: text("executor_job_id"),
+    status: text("status").notNull().default("queued"),
+    error: text("error"),
+    queuedAt: ts("queued_at").notNull().defaultNow(),
+    finishedAt: ts("finished_at"),
+  },
+  (t) => [index("practice_execution_job_status_idx").on(t.status, t.queuedAt)],
+);
+
+export const practiceProgress = pgTable(
+  "practice_progress",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    problemId: uuid("problem_id")
+      .notNull()
+      .references(() => practiceProblem.id, { onDelete: "cascade" }),
+    /** attempted | solved (independently) | solved_assisted (accepted after revealing the solution) */
+    status: text("status").notNull().default("attempted"),
+    runs: integer("runs").notNull().default(0),
+    submits: integer("submits").notNull().default(0),
+    hintsUsed: integer("hints_used").notNull().default(0),
+    solutionRevealedAt: ts("solution_revealed_at"),
+    firstAttemptAt: ts("first_attempt_at").notNull().defaultNow(),
+    solvedAt: ts("solved_at"),
+    independentSolvedAt: ts("independent_solved_at"),
+    /** Time from the first attempt to the first accepted submit (ms). */
+    solveMs: bigint("solve_ms", { mode: "number" }),
+    bestMs: jsonb("best_ms").$type<number | null>(),
+    lastSubmissionId: uuid("last_submission_id"),
+    draftCode: text("draft_code"),
+    draftSavedAt: ts("draft_saved_at"),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ name: "practice_progress_pk", columns: [t.userId, t.problemId] }), index("practice_progress_problem_idx").on(t.problemId)],
+);
+
+export const practiceSkill = pgTable(
+  "practice_skill",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    topic: text("topic").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    passes: integer("passes").notNull().default(0),
+    independentPasses: integer("independent_passes").notNull().default(0),
+    failures: integer("failures").notNull().default(0),
+    lastAt: ts("last_at").notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ name: "practice_skill_pk", columns: [t.userId, t.topic] })],
+);
+
+export const practiceBookmark = pgTable(
+  "practice_bookmark",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    problemId: uuid("problem_id")
+      .notNull()
+      .references(() => practiceProblem.id, { onDelete: "cascade" }),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ name: "practice_bookmark_pk", columns: [t.userId, t.problemId] })],
+);
+
+export const practiceNote = pgTable(
+  "practice_note",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    problemId: uuid("problem_id")
+      .notNull()
+      .references(() => practiceProblem.id, { onDelete: "cascade" }),
+    body: text("body").notNull(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ name: "practice_note_pk", columns: [t.userId, t.problemId] })],
+);
+
+export const practiceAchievement = pgTable(
+  "practice_achievement",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    badge: text("badge").notNull(),
+    earnedAt: ts("earned_at").notNull().defaultNow(),
+    /** The activity event that completed the requirement. */
+    eventId: uuid("event_id"),
+  },
+  (t) => [primaryKey({ name: "practice_achievement_pk", columns: [t.userId, t.badge] })],
+);
+
+/** One curated problem per day (Asia/Kolkata calendar day, YYYY-MM-DD). */
+export const practiceDailyChallenge = pgTable("practice_daily_challenge", {
+  day: text("day").primaryKey(),
+  problemId: uuid("problem_id")
+    .notNull()
+    .references(() => practiceProblem.id, { onDelete: "cascade" }),
+  /** auto, or the admin's user id */
+  chosenBy: text("chosen_by").notNull().default("auto"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+});
+
+/** Append-only record of what users did (the source for streaks, achievements, dashboards and exports). */
+export const practiceActivityEvent = pgTable(
+  "practice_activity_event",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    problemId: uuid("problem_id"),
+    sessionId: uuid("session_id"),
+    submissionId: uuid("submission_id"),
+    detail: jsonb("detail").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("practice_event_user_idx").on(t.userId, t.createdAt), index("practice_event_type_idx").on(t.type, t.createdAt)],
+);
+
+/** AI tutor calls: tokens, cost and outcome (prompts and answers are not stored). */
+export const practiceAiUsage = pgTable(
+  "practice_ai_usage",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
+    feature: text("feature").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    promptVersion: text("prompt_version").notNull(),
+    problemId: uuid("problem_id"),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    /** Estimated cost in millionths of a US dollar, from the per-million-token prices in the settings. */
+    costMicroUsd: bigint("cost_micro_usd", { mode: "number" }).notNull().default(0),
+    latencyMs: integer("latency_ms").notNull().default(0),
+    /** ok | error | quota | disabled */
+    status: text("status").notNull(),
+    errorCode: text("error_code"),
+    requestId: text("request_id").notNull(),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("practice_ai_usage_user_idx").on(t.userId, t.createdAt), index("practice_ai_usage_created_idx").on(t.createdAt)],
+);

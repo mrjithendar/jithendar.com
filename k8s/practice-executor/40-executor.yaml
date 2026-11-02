@@ -1,0 +1,94 @@
+# API (no Kubernetes credentials, never runs code) and dispatcher (starts sandbox pods). Same image, two commands.
+# Secret practice-executor-env (created by scripts/create-practice-executor-secrets.sh, never committed):
+#   EXECUTOR_API_TOKEN, REDIS_PASSWORD, EXECUTOR_REDIS_URL
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: practice-executor-config
+  namespace: practice-exec
+data:
+  EXECUTOR_ENV: production
+  EXECUTOR_BACKEND: kubernetes
+  EXECUTOR_SANDBOX_NAMESPACE: practice-sandbox
+  EXECUTOR_RUNTIME_CLASS: gvisor-nonet
+  EXECUTOR_SANDBOX_SERVICE_ACCOUNT: practice-sandbox
+  EXECUTOR_IMAGE_PULL_SECRET: ecr-pull
+  EXECUTOR_DISPATCHER_CONCURRENCY: "4"
+  EXECUTOR_PER_USER_CONCURRENCY: "2"
+  EXECUTOR_PER_USER_PER_MINUTE: "30"
+  EXECUTOR_MAX_QUEUE: "200"
+  # Runtime id → sandbox image (ids must match Admin → Python practice → Runtimes). CI's deploy job replaces this
+  # with the digest it just pushed, and the two images below with practice-executor@sha256:… .
+  EXECUTOR_RUNTIMES: '{"python-3.13": "881026659929.dkr.ecr.us-east-1.amazonaws.com/practice-sandbox:py3.13-REPLACE_WITH_DIGEST"}'
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: practice-executor-api
+  namespace: practice-exec
+  labels: { app: practice-executor-api, app.kubernetes.io/part-of: python-practice }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: practice-executor-api } }
+  template:
+    metadata:
+      labels: { app: practice-executor-api, app.kubernetes.io/part-of: python-practice }
+    spec:
+      serviceAccountName: practice-api
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      imagePullSecrets: [{ name: ecr-pull }]
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: api
+          image: 881026659929.dkr.ecr.us-east-1.amazonaws.com/practice-executor:latest
+          command: ["python", "-m", "app.main"]
+          envFrom:
+            - configMapRef: { name: practice-executor-config }
+            - secretRef: { name: practice-executor-env }
+          ports: [{ containerPort: 8080, name: http }]
+          readinessProbe: { httpGet: { path: /readyz, port: http }, periodSeconds: 10 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 20 }
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: practice-dispatcher
+  namespace: practice-exec
+  labels: { app: practice-dispatcher, app.kubernetes.io/part-of: python-practice }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: practice-dispatcher } }
+  template:
+    metadata:
+      labels: { app: practice-dispatcher, app.kubernetes.io/part-of: python-practice }
+    spec:
+      serviceAccountName: practice-dispatcher
+      enableServiceLinks: false
+      imagePullSecrets: [{ name: ecr-pull }]
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: dispatcher
+          image: 881026659929.dkr.ecr.us-east-1.amazonaws.com/practice-executor:latest
+          command: ["python", "-m", "app.dispatcher"]
+          envFrom:
+            - configMapRef: { name: practice-executor-config }
+            - secretRef: { name: practice-executor-env }
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: practice-executor
+  namespace: practice-exec
+spec:
+  selector: { app: practice-executor-api }
+  ports: [{ name: http, port: 80, targetPort: http }]

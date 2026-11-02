@@ -8,9 +8,20 @@ import { PasswordInput } from "@/components/ui/PasswordInput";
 import { authClient } from "@/lib/auth-client";
 import { PASSWORD_HINT, PASSWORD_MIN, passwordProblem } from "@/lib/password-policy";
 
-export function LoginForm({ siteKey, registrationOpen, next }: { siteKey: string | undefined; registrationOpen: boolean; next: string }) {
+export function LoginForm({
+  siteKey,
+  registrationOpen,
+  next,
+  initialMode = "signin",
+}: {
+  siteKey: string | undefined;
+  registrationOpen: boolean;
+  next: string;
+  /** "signup" when a page sent the visitor here to register (e.g. /login?mode=signup from Python practice). */
+  initialMode?: "signin" | "signup";
+}) {
   const router = useRouter();
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [mode, setMode] = useState<"signin" | "signup">(registrationOpen ? initialMode : "signin");
   const [token, setToken] = useState<string | null>(null);
   const [resetKey, setResetKey] = useState(0);
   const [error, setError] = useState<string | null>(null);

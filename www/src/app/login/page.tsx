@@ -15,10 +15,10 @@ import { SocialButtons } from "./SocialButtons";
 export const metadata: Metadata = { title: "Sign in", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
 
-type Params = { setup?: string; next?: string; error?: string; reauth?: string; expired?: string; signedOut?: string };
+type Params = { setup?: string; next?: string; error?: string; reauth?: string; expired?: string; signedOut?: string; mode?: string };
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<Params> }) {
-  const { setup, next: rawNext, error, reauth, expired, signedOut } = await searchParams;
+  const { setup, next: rawNext, error, reauth, expired, signedOut, mode } = await searchParams;
   const next = safeNext(rawNext);
   const confirming = reauth === "1";
   const user = await getSessionUser();
@@ -54,7 +54,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
               <span className="h-px flex-1 bg-line" />
             </div>
           )}
-          {(siteKey || providers.length === 0) && <LoginForm siteKey={siteKey} registrationOpen={settings.features.registration} next={next} />}
+          {(siteKey || providers.length === 0) && <LoginForm siteKey={siteKey} registrationOpen={settings.features.registration} next={next} initialMode={mode === "signup" ? "signup" : "signin"} />}
         </div>
         <p className="mt-6 text-center text-sm leading-6 text-fg-subtle">
           {siteKey ? "Email sign-in is protected by Cloudflare Turnstile. " : ""}See the{" "}

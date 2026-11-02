@@ -1,0 +1,172 @@
+name: practice-executor
+
+# check   → pull requests and pushes touching the executor or the practice catalog: executor tests, then the
+#           catalog build check (runs every reference solution through the sandbox runner and verifies the
+#           committed catalog.generated.json is up to date)
+# release → default branch: build the arm64 images practice-executor:<sha> and practice-sandbox:py3.13-<sha>
+#           and push them to ECR (practice-executor:latest moves too, so a manual apply of the manifests works)
+# deploy  → default branch, only when repository variable PRACTICE_EXECUTOR_DEPLOY is "true": point the
+#           executor Deployments and the sandbox runtime at the digests just pushed and wait for the rollout.
+#           It never applies manifests: namespaces, RuntimeClass, admission policy, RBAC and Secrets are applied
+#           once by a person (www/docs/PYTHON_PRACTICE_EXECUTOR.md). Set the variable only after
+#           scripts/verify-practice-sandbox.sh passes on mk4; until then the job is skipped.
+#
+# Requires manual configuration: ECR repositories practice-executor and practice-sandbox in us-east-1, and push
+# permission for them on the CI IAM user (scripts/setup-ci-ecr-user.sh grants jithendar-com only); for deploy,
+# secret PRACTICE_CI_TOKEN (scripts/setup-practice-ci-deployer.sh) plus variables MK4_API_SERVER and MK4_CA_DATA
+# (already set by scripts/setup-ci-deployer.sh for the site).
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'executor/**'
+      - 'www/content/python-practice/**'
+      - 'k8s/practice-executor/**'
+      - '.github/workflows/ci-practice-executor.yml'
+  push:
+    paths:
+      - 'executor/**'
+      - 'www/content/python-practice/**'
+      - '.github/workflows/ci-practice-executor.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: practice-executor-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Install test dependencies
+        working-directory: executor
+        run: pip install --quiet ".[test]" pyyaml==6.0.3
+      - name: Executor tests
+        working-directory: executor
+        run: python -m pytest -q
+      - name: Catalog is valid and up to date
+        run: |
+          python executor/tools/build_problems.py
+          git diff --exit-code -- www/content/python-practice/catalog.generated.json || {
+            echo "::error::catalog.generated.json is stale: run python executor/tools/build_problems.py and commit it"; exit 1; }
+      - name: Render manifests
+        run: kubectl kustomize k8s/practice-executor > /dev/null
+
+  release:
+    needs: check
+    if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    env:
+      AWS_REGION: us-east-1
+    outputs:
+      executor_image: ${{ steps.push.outputs.executor_image }}
+      sandbox_image: ${{ steps.push.outputs.sandbox_image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
+      - name: Build and push
+        id: push
+        working-directory: executor
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          docker build --platform linux/arm64 --provenance=false -t "$REGISTRY/practice-executor:$GITHUB_SHA" .
+          docker build --platform linux/arm64 --provenance=false --build-arg PYTHON_VERSION=3.13 -t "$REGISTRY/practice-sandbox:py3.13-$GITHUB_SHA" sandbox
+          # Smoke test the sandbox image: run one job through the real runner, offline.
+          payload=$(python3 -c 'import base64,json; print(base64.b64encode(json.dumps({"nonce":"n","code":"def f(a):\n    return a*2\n","entrypoint":"f","tests":[{"id":"t0","args":[21]}],"limits":{"per_test_seconds":2,"total_seconds":5,"memory_mb":128,"output_bytes":1024}}).encode()).decode())')
+          docker run --rm --network none --read-only --tmpfs /tmp -e JOB_PAYLOAD="$payload" "$REGISTRY/practice-sandbox:py3.13-$GITHUB_SHA" | grep -q '"output": 42'
+          docker push --quiet "$REGISTRY/practice-executor:$GITHUB_SHA"
+          docker push --quiet "$REGISTRY/practice-sandbox:py3.13-$GITHUB_SHA"
+          docker tag "$REGISTRY/practice-executor:$GITHUB_SHA" "$REGISTRY/practice-executor:latest"
+          docker push --quiet "$REGISTRY/practice-executor:latest"
+          executor_image="$(docker inspect --format '{{index .RepoDigests 0}}' "$REGISTRY/practice-executor:$GITHUB_SHA")"
+          sandbox_image="$(docker inspect --format '{{index .RepoDigests 0}}' "$REGISTRY/practice-sandbox:py3.13-$GITHUB_SHA")"
+          [[ "$executor_image" == *@sha256:* && "$sandbox_image" == *@sha256:* ]] || { echo "::error::No pushed digest"; exit 1; }
+          echo "executor_image=$executor_image" >> "$GITHUB_OUTPUT"
+          echo "sandbox_image=$sandbox_image" >> "$GITHUB_OUTPUT"
+          {
+            echo "- practice-executor:$GITHUB_SHA → \`$executor_image\`"
+            echo "- practice-sandbox:py3.13-$GITHUB_SHA → \`$sandbox_image\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Signs in as ServiceAccount practice-exec/practice-ci-deployer (k8s/practice-executor/90-ci-deployer.yaml): it
+  # may only patch the two executor Deployments and practice-executor-config, so it cannot weaken the sandbox.
+  # Roll back: revert the commit on the default branch (CI rebuilds and redeploys), or switch execution off in
+  # Admin → Python practice → Settings (instant).
+  deploy:
+    needs: release
+    if: vars.PRACTICE_EXECUTOR_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: practice-executor-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/jithendar-ci-deployer.yaml
+          sparse-checkout-cone-mode: false
+      - uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
+      - name: Roll out to mk4
+        env:
+          MK4_API_SERVER: ${{ vars.MK4_API_SERVER }}
+          MK4_CA_DATA: ${{ vars.MK4_CA_DATA }}
+          MK4_CI_TOKEN: ${{ secrets.PRACTICE_CI_TOKEN }}
+          EXECUTOR_IMAGE: ${{ needs.release.outputs.executor_image }}
+          SANDBOX_IMAGE: ${{ needs.release.outputs.sandbox_image }}
+        run: |
+          set -euo pipefail
+          for v in MK4_API_SERVER MK4_CA_DATA MK4_CI_TOKEN EXECUTOR_IMAGE SANDBOX_IMAGE; do
+            [[ -n "${!v}" ]] || { echo "::error::$v is not set (secret PRACTICE_CI_TOKEN: scripts/setup-practice-ci-deployer.sh)"; exit 1; }
+          done
+          export KUBECONFIG="$RUNNER_TEMP/kubeconfig"
+          trap 'rm -f "$KUBECONFIG"' EXIT
+          (umask 077; perl -pe 's/\$\{(MK4_[A-Z_]+)\}/$ENV{$1}/g' .github/jithendar-ci-deployer.yaml > "$KUBECONFIG")
+          k() { kubectl -n practice-exec "$@"; }
+
+          # The sandbox runtime map first, so the new dispatcher pods start with the new sandbox image.
+          runtimes="$(jq -cn --arg img "$SANDBOX_IMAGE" '{"python-3.13": $img}')"
+          k patch configmap practice-executor-config --type merge \
+            -p "$(jq -cn --arg r "$runtimes" '{data: {EXECUTOR_RUNTIMES: $r}}')"
+
+          # New image plus a release annotation: always exactly one rollout per deployment, which also picks up the
+          # ConfigMap change (envFrom is read only at pod start).
+          for d in practice-executor-api practice-dispatcher; do
+            container="$(k get deploy "$d" -o jsonpath='{.spec.template.spec.containers[0].name}')"
+            k patch deploy "$d" --type strategic -p "$(jq -cn --arg c "$container" --arg img "$EXECUTOR_IMAGE" --arg sha "$GITHUB_SHA" \
+              '{spec: {template: {metadata: {annotations: {"practice.jithendar.com/release": $sha}},
+                                  spec: {containers: [{name: $c, image: $img}]}}}}')"
+          done
+          for d in practice-executor-api practice-dispatcher; do
+            if ! k rollout status deploy/"$d" --timeout=5m; then
+              echo "::error::Rollout of $d did not finish within 5 minutes"
+              k get pods -l app="$d" -o wide || true
+              exit 1
+            fi
+          done
+          {
+            echo '### Deployed to mk4'
+            echo "- practice-executor-api, practice-dispatcher → \`$EXECUTOR_IMAGE\`"
+            echo "- sandbox runtime python-3.13 → \`$SANDBOX_IMAGE\`"
+          } >> "$GITHUB_STEP_SUMMARY"
