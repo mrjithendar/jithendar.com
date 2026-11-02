@@ -4,7 +4,7 @@
 
 | Piece | Where |
 |---|---|
-| Image | `881026659929.dkr.ecr.us-east-1.amazonaws.com/jithendar-com` (arm64, immutable tags = commit SHA, scan on push, last 30 kept) |
+| Image | `881026659929.dkr.ecr.us-east-1.amazonaws.com/jithendar-com` (arm64, immutable tags = commit SHA except `latest`, scan on push, last 30 kept; created by Terraform in `infra/`, CI pushes as OIDC role `github-jithendar-com-ci`) |
 | Pipeline | `.github/workflows/ci-jithendar-com.yml`: `check` on pull requests; on `master`, `release` pushes `jithendar-com:<commit-sha>` (and `latest`) |
 | Deploy | `./deploy.sh [commit-sha]`, run by a person with the `mk4` kubeconfig and AWS access |
 | Manifests | `k8s/` at the repository root, one file per component (see `k8s/README.md`); the image digest is pinned in `k8s/kustomization.yaml` |

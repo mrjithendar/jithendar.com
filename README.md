@@ -10,7 +10,8 @@ Built with Next.js, MDX, PostgreSQL, Cloudflare R2 and Kubernetes.
 | `deploy.sh` | Deploy a CI-built image to the cluster |
 | `scripts/` | `create-secrets.sh` (first-time Secrets), `set-*-config.sh` (update site settings), `smoke.sh` (post-deploy checks), `set-image.sh` (used by `deploy.sh`) |
 | [`runner/`](runner/README.md) | Self-hosted GitHub Actions runners (retired for CI: builds run on GitHub-hosted runners) |
-| `.github/workflows/` | CI: checks pull requests; on `master`, builds and pushes the image to ECR |
+| `.github/workflows/` | CI: checks pull requests; on `master`, builds and pushes the image to ECR (`infra.yml` applies `infra/`) |
+| `infra/` | Terraform: ECR repositories and the CI's AWS role ([infra/README.md](infra/README.md)) |
 
 ## Release
 

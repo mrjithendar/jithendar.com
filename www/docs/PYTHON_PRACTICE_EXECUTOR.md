@@ -53,8 +53,8 @@ browser ─► jithendar-com (Next.js)                       practice-exec      
 1. **Install gVisor on every mk4 node** (on the mk4 host): `scripts/install-gvisor-mk4.sh` (dry run), then
    `scripts/install-gvisor-mk4.sh --apply`. It verifies the release checksums, adds the containerd handler
    `runsc-nonet` with `network = "none"` and restarts containerd node by node. *Not run by the agent.*
-2. **Create ECR repositories** `practice-executor` and `practice-sandbox` and allow the CI user to push to them;
-   merge to `master` so `.github/workflows/ci-practice-executor.yml` builds the images (it also moves
+2. **ECR repositories** `practice-executor` and `practice-sandbox` and CI's push rights come from Terraform
+   (`infra/`, see [infra/README.md](../../infra/README.md)); once it has applied, merge to `master` so `.github/workflows/ci-practice-executor.yml` builds the images (it also moves
    `practice-executor:latest`, which the manifests start from).
 3. **Apply the manifests:** `kubectl --context mk4 apply -k k8s/practice-executor`, then
    `scripts/create-practice-executor-secrets.sh mk4`. `ecr-pull` appears in both namespaces on its own (the

@@ -11,8 +11,9 @@ name: practice-executor
 #           once by a person (www/docs/PYTHON_PRACTICE_EXECUTOR.md). Set the variable only after
 #           scripts/verify-practice-sandbox.sh passes on mk4; until then the job is skipped.
 #
-# Requires manual configuration: ECR repositories practice-executor and practice-sandbox in us-east-1, and push
-# permission for them on the CI IAM user (scripts/setup-ci-ecr-user.sh grants jithendar-com only); for deploy,
+# AWS: the release job assumes role github-jithendar-com-ci through GitHub OIDC (repository variable
+# AWS_CI_ROLE_ARN); the role and the ECR repositories practice-executor and practice-sandbox come from infra/
+# (Terraform, .github/workflows/infra.yml). For deploy,
 # secret PRACTICE_CI_TOKEN (scripts/setup-practice-ci-deployer.sh) plus variables MK4_API_SERVER and MK4_CA_DATA
 # (already set by scripts/setup-ci-deployer.sh for the site).
 
@@ -68,6 +69,9 @@ jobs:
     if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
     env:
       AWS_REGION: us-east-1
     outputs:
@@ -79,8 +83,8 @@ jobs:
           persist-credentials: false
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_CI_ROLE_ARN }}
+          role-session-name: practice-executor-ci-${{ github.run_id }}
           aws-region: ${{ env.AWS_REGION }}
       - id: ecr
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2

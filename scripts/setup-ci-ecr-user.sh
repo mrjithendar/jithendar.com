@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SUPERSEDED by infra/ (Terraform + GitHub OIDC role github-jithendar-com-ci); kept only for reference. Do not run.
 # One-time (until GitHub OIDC replaces it): an IAM user that can only push images to the jithendar-com ECR
 # repository, with its access key stored as GitHub repository secrets for .github/workflows/ci-jithendar-com.yml.
 #

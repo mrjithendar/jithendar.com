@@ -12,10 +12,9 @@ name: jithendar.com
 # kubectl (see k8s/README.md).
 #
 # Both jobs run on GitHub-hosted runners, never on the mk4 server: builds there competed with the cluster
-# for memory and disk and froze the host (2026-10-29). The release job signs in to AWS with the access key
-# of IAM user github-jithendar-com-ecr (ECR push to jithendar-com only), stored as the repository secrets
-# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY by scripts/setup-ci-ecr-user.sh. Planned: GitHub OIDC instead
-# (scripts/setup-github-oidc.sh), which needs no stored key.
+# for memory and disk and froze the host (2026-10-29). The release job signs in to AWS through GitHub OIDC as
+# role github-jithendar-com-ci (repository variable AWS_CI_ROLE_ARN; ECR push/pull on this site's repositories
+# only, master only), created by infra/ (Terraform). No AWS key is stored in GitHub.
 
 on:
   workflow_dispatch:
@@ -77,6 +76,7 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+      id-token: write
     env:
       AWS_REGION: us-east-1
       REPOSITORY: jithendar-com
@@ -111,13 +111,11 @@ jobs:
           journalctl --no-pager -u systemd-oomd --since "-30 min" 2>/dev/null | tail -20 || true
       - name: Render production manifests
         run: kubectl kustomize ../k8s > /dev/null
-      # Later, with OIDC: add `id-token: write` to permissions and replace the two key inputs with
-      # `role-to-assume: ${{ vars.AWS_ROLE_ARN }}`.
       - name: Sign in to AWS
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_CI_ROLE_ARN }}
+          role-session-name: jithendar-com-ci-${{ github.run_id }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Log in to Amazon ECR
         id: ecr

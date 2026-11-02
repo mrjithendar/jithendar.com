@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SUPERSEDED by infra/ (Terraform creates role github-jithendar-com-ci); kept only for reference. Do not run.
 # PLANNED (not used yet): let GitHub Actions (master branch only) push images to ECR without stored AWS keys.
 # Today the workflow uses scripts/setup-ci-ecr-user.sh (an access key in repository secrets) instead.
 #
