@@ -213,15 +213,12 @@ spec:
     - podSelector:
         matchLabels:
           app: jithendar-redis
-  # Python practice executor API (k8s/practice-executor; PRACTICE_EXECUTOR_URL=http://practice-executor.practice-exec).
+  # Python practice executor API (k8s/practice-executor; PRACTICE_EXECUTOR_URL=http://practice-executor.jithendar).
   - ports:
     - port: 8080
       protocol: TCP
     to:
-    - namespaceSelector:
-        matchLabels:
-          kubernetes.io/metadata.name: practice-exec
-      podSelector:
+    - podSelector:
         matchLabels:
           app: practice-executor-api
   - ports:

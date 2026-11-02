@@ -1,6 +1,14 @@
-# Defence in depth: even a compromised dispatcher cannot create a weaker pod in practice-sandbox. Every pod
-# there must use the gVisor no-network runtime, mount no token, use no host namespaces, run non-root without
-# privileges, and mount nothing but emptyDir volumes. (ValidatingAdmissionPolicy is GA since Kubernetes 1.30.)
+# Sandbox pods share namespace jithendar with the site, its database and their Secrets. Pod-create permission in a
+# namespace normally means access to every Secret in it, so these policies pin down what the dispatcher (and
+# anyone creating a sandbox pod) may do, even if the dispatcher is compromised. (ValidatingAdmissionPolicy is GA
+# since Kubernetes 1.30.)
+#
+# practice-sandbox-pods: a pod created by the dispatcher, labelled practice-sandbox, or running as service account
+# practice-sandbox must use the gVisor no-network runtime, mount no token, Secret or ConfigMap (emptyDir only),
+# read nothing from Secrets/ConfigMaps into its environment, use no host namespaces, run non-root without
+# privileges, and have a deadline. CPU/memory limits are enforced by ResourceQuota practice-sandbox-capacity
+# (20-quota.yaml): a deadline puts the pod in its scope, and a quota on limits.* rejects pods without limits. (A CEL
+# check on resources.limits does not type-check on Kubernetes 1.37 and would fail every sandbox pod.)
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -11,14 +19,23 @@ spec:
   matchConstraints:
     namespaceSelector:
       matchLabels:
-        kubernetes.io/metadata.name: practice-sandbox
+        kubernetes.io/metadata.name: jithendar
     resourceRules:
       - apiGroups: [""]
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["pods"]
+  matchConditions:
+    - name: sandbox-or-dispatcher
+      expression: >-
+        request.userInfo.username == 'system:serviceaccount:jithendar:practice-dispatcher' ||
+        object.spec.serviceAccountName == 'practice-sandbox' ||
+        (has(object.metadata.labels) && 'app.kubernetes.io/name' in object.metadata.labels &&
+         object.metadata.labels['app.kubernetes.io/name'] == 'practice-sandbox')
   validations:
-    - expression: "object.spec.runtimeClassName == 'gvisor-nonet'"
+    - expression: "has(object.metadata.labels) && 'app.kubernetes.io/name' in object.metadata.labels && object.metadata.labels['app.kubernetes.io/name'] == 'practice-sandbox'"
+      message: "sandbox pods must be labelled app.kubernetes.io/name=practice-sandbox"
+    - expression: "has(object.spec.runtimeClassName) && object.spec.runtimeClassName == 'gvisor-nonet'"
       message: "sandbox pods must use RuntimeClass gvisor-nonet"
     - expression: "has(object.spec.automountServiceAccountToken) && object.spec.automountServiceAccountToken == false"
       message: "sandbox pods must not mount a service-account token"
@@ -27,11 +44,15 @@ spec:
     - expression: "!(has(object.spec.hostNetwork) && object.spec.hostNetwork) && !(has(object.spec.hostPID) && object.spec.hostPID) && !(has(object.spec.hostIPC) && object.spec.hostIPC)"
       message: "no host namespaces"
     - expression: "!has(object.spec.volumes) || object.spec.volumes.all(v, has(v.emptyDir))"
-      message: "only emptyDir volumes"
+      message: "only emptyDir volumes (no Secrets, ConfigMaps, projected tokens or host paths)"
+    - expression: "object.spec.containers.all(c, !has(c.envFrom) && (!has(c.env) || c.env.all(e, !has(e.valueFrom))))"
+      message: "no environment from Secrets, ConfigMaps or the downward API"
+    - expression: "!has(object.spec.initContainers) && !has(object.spec.ephemeralContainers)"
+      message: "no init or ephemeral containers"
+    - expression: "has(object.spec.securityContext) && has(object.spec.securityContext.runAsNonRoot) && object.spec.securityContext.runAsNonRoot == true"
+      message: "sandbox pods must run as non-root"
     - expression: "object.spec.containers.all(c, has(c.securityContext) && c.securityContext.allowPrivilegeEscalation == false && (!has(c.securityContext.privileged) || c.securityContext.privileged == false) && c.securityContext.readOnlyRootFilesystem == true)"
       message: "containers must be unprivileged with a read-only root filesystem"
-    - expression: "object.spec.containers.all(c, has(c.resources.limits) && 'cpu' in c.resources.limits && 'memory' in c.resources.limits)"
-      message: "containers must set CPU and memory limits"
     - expression: "has(object.spec.activeDeadlineSeconds) && object.spec.activeDeadlineSeconds <= 300"
       message: "sandbox pods need a deadline of at most 300 s"
 ---
@@ -41,4 +62,35 @@ metadata:
   name: practice-sandbox-pods
 spec:
   policyName: practice-sandbox-pods
+  validationActions: ["Deny"]
+---
+# The dispatcher may delete only sandbox pods, not the site's, the database's or the executor's own.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: practice-dispatcher-deletes
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: jithendar
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["DELETE"]
+        resources: ["pods"]
+  matchConditions:
+    - name: dispatcher
+      expression: "request.userInfo.username == 'system:serviceaccount:jithendar:practice-dispatcher'"
+  validations:
+    - expression: "has(oldObject.metadata.labels) && 'app.kubernetes.io/name' in oldObject.metadata.labels && oldObject.metadata.labels['app.kubernetes.io/name'] == 'practice-sandbox'"
+      message: "the dispatcher may delete only sandbox pods"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: practice-dispatcher-deletes
+spec:
+  policyName: practice-dispatcher-deletes
   validationActions: ["Deny"]

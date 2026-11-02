@@ -1,28 +1,19 @@
-# Hard cap on what all sandboxes together may use (protects the rest of mk4 from a flood of runs).
+# Hard cap on what all sandboxes together may use (protects the site and the rest of mk4 from a flood of runs).
+# Scope "Terminating" = pods with activeDeadlineSeconds set: only sandbox pods have one in namespace jithendar
+# (the admission policy requires it for them; the site, Postgres, Redis and the executor have none), so this
+# quota does not count or constrain anything else. (This scope cannot cap ephemeral storage; each sandbox pod
+# limits its own to 32Mi.)
 ---
 apiVersion: v1
 kind: ResourceQuota
 metadata:
-  name: sandbox-capacity
-  namespace: practice-sandbox
+  name: practice-sandbox-capacity
+  namespace: jithendar
 spec:
+  scopes: ["Terminating"]
   hard:
     pods: "8"
     limits.cpu: "8"
     limits.memory: 5Gi
     requests.cpu: "2"
     requests.memory: 2Gi
-    requests.ephemeral-storage: 512Mi
-    limits.ephemeral-storage: 1Gi
----
-apiVersion: v1
-kind: LimitRange
-metadata:
-  name: sandbox-defaults
-  namespace: practice-sandbox
-spec:
-  limits:
-    - type: Container
-      max:
-        cpu: "1"
-        memory: 512Mi

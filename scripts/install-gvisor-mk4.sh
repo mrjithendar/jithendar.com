@@ -15,6 +15,11 @@ RELEASE="${GVISOR_RELEASE:-latest}"
 APPLY=0
 [[ "${1:-}" == "--apply" ]] && APPLY=1
 
+if ! command -v minikube >/dev/null || ! minikube -p "$PROFILE" status >/dev/null 2>&1; then
+  echo "No running minikube profile '$PROFILE' here. Run this on the mk4 host (the machine where minikube runs)," >&2
+  echo "for example from the Mac: scp scripts/install-gvisor-mk4.sh <user>@<mk4-host>:/tmp/ && ssh <user>@<mk4-host> bash /tmp/install-gvisor-mk4.sh" >&2
+  exit 1
+fi
 nodes=$(minikube -p "$PROFILE" node list | awk '{print $1}')
 [[ -n "$nodes" ]] || { echo "No nodes found for profile $PROFILE" >&2; exit 1; }
 

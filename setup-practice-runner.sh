@@ -1,21 +1,18 @@
-# 1. On the mk4 host (needs minikube there): install gVisor
-scripts/install-gvisor-mk4.sh            # dry run: should list 5 nodes, "would install..."
-scripts/install-gvisor-mk4.sh --apply    # restarts containerd one node at a time
+# Python practice code runner on mk4. Comments are on their own lines: pasted into zsh, a trailing "# ..." is
+# passed to the command as arguments (unless `setopt interactivecomments`).
 
-# 2. From the Mac: code runner + its secret
-kubectl --context mk4 apply -k k8s/practice-executor
-scripts/create-practice-executor-secrets.sh mk4   # prints PRACTICE_EXECUTOR_TOKEN, keep it
+# 1. gVisor on every node. Must run ON THE mk4 HOST (where minikube runs), not on the Mac.
+#    Dry run first (one "→ mk4..." block per node), then --apply (each node ends with "active" and a runsc version).
+scp scripts/install-gvisor-mk4.sh <user>@<mk4-host>:/tmp/
+ssh <user>@<mk4-host> bash /tmp/install-gvisor-mk4.sh
+ssh <user>@<mk4-host> bash /tmp/install-gvisor-mk4.sh --apply
 
-# 3. Prove the sandbox is isolated (every line must be PASS)
+# 2. Back on the Mac. Every line must be PASS; stop here if not.
+kubectl --context mk4 -n jithendar delete pod -l practice.jithendar.com/verify=true
 scripts/verify-practice-sandbox.sh
 
-# 4. Let CI deploy the images, then run it
-scripts/setup-practice-ci-deployer.sh
-gh variable set PRACTICE_EXECUTOR_DEPLOY --body true
+# 3. Site: new executor URL + network rule + CI account rights, then restart
+./deploy.sh
+
+# 4. Pin the executor and sandbox images (needs the updated workflow pushed to master first)
 gh workflow run ci-practice-executor.yml --ref master
-
-
-# 5. Connect the site
-kubectl --context mk4 -n jithendar patch secret jithendar-com-env --type merge \
-  -p '{"stringData":{"PRACTICE_EXECUTOR_URL":"http://practice-executor.practice-exec","PRACTICE_EXECUTOR_TOKEN":"<token from step 2>"}}'
-./deploy.sh        # applies the site's network rule to the code runner and restarts the site

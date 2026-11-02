@@ -14,8 +14,7 @@ name: practice-executor
 # AWS: the release job assumes role github-jithendar-com-ci through GitHub OIDC (repository variable
 # AWS_CI_ROLE_ARN); the role and the ECR repositories practice-executor and practice-sandbox come from infra/
 # (Terraform, .github/workflows/infra.yml). For deploy,
-# secret PRACTICE_CI_TOKEN (scripts/setup-practice-ci-deployer.sh) plus variables MK4_API_SERVER and MK4_CA_DATA
-# (already set by scripts/setup-ci-deployer.sh for the site).
+# the site's cluster credentials MK4_API_SERVER, MK4_CA_DATA and MK4_CI_TOKEN (scripts/setup-ci-deployer.sh).
 
 on:
   workflow_dispatch:
@@ -93,18 +92,34 @@ jobs:
         working-directory: executor
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
+        # Tags are immutable in ECR, so a re-run for the same commit reuses the images already pushed for it
+        # instead of failing on "tag already exists"; the digests always come from ECR.
         run: |
-          docker build --platform linux/arm64 --provenance=false -t "$REGISTRY/practice-executor:$GITHUB_SHA" .
-          docker build --platform linux/arm64 --provenance=false --build-arg PYTHON_VERSION=3.13 -t "$REGISTRY/practice-sandbox:py3.13-$GITHUB_SHA" sandbox
-          # Smoke test the sandbox image: run one job through the real runner, offline.
-          payload=$(python3 -c 'import base64,json; print(base64.b64encode(json.dumps({"nonce":"n","code":"def f(a):\n    return a*2\n","entrypoint":"f","tests":[{"id":"t0","args":[21]}],"limits":{"per_test_seconds":2,"total_seconds":5,"memory_mb":128,"output_bytes":1024}}).encode()).decode())')
-          docker run --rm --network none --read-only --tmpfs /tmp -e JOB_PAYLOAD="$payload" "$REGISTRY/practice-sandbox:py3.13-$GITHUB_SHA" | grep -q '"output": 42'
-          docker push --quiet "$REGISTRY/practice-executor:$GITHUB_SHA"
-          docker push --quiet "$REGISTRY/practice-sandbox:py3.13-$GITHUB_SHA"
-          docker tag "$REGISTRY/practice-executor:$GITHUB_SHA" "$REGISTRY/practice-executor:latest"
-          docker push --quiet "$REGISTRY/practice-executor:latest"
-          executor_image="$(docker inspect --format '{{index .RepoDigests 0}}' "$REGISTRY/practice-executor:$GITHUB_SHA")"
-          sandbox_image="$(docker inspect --format '{{index .RepoDigests 0}}' "$REGISTRY/practice-sandbox:py3.13-$GITHUB_SHA")"
+          set -euo pipefail
+          digest() {  # repository tag → digest, or empty when the tag does not exist
+            aws ecr describe-images --repository-name "$1" --image-ids imageTag="$2" \
+              --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true
+          }
+          executor_tag="$GITHUB_SHA"; sandbox_tag="py3.13-$GITHUB_SHA"
+          have_executor="$(digest practice-executor "$executor_tag")"
+          have_sandbox="$(digest practice-sandbox "$sandbox_tag")"
+          if [[ -n "$have_executor" && -n "$have_sandbox" ]]; then
+            echo "Images for $GITHUB_SHA are already in ECR; reusing them."
+          else
+            docker build --platform linux/arm64 --provenance=false -t "$REGISTRY/practice-executor:$executor_tag" .
+            docker build --platform linux/arm64 --provenance=false --build-arg PYTHON_VERSION=3.13 -t "$REGISTRY/practice-sandbox:$sandbox_tag" sandbox
+            # Smoke test the sandbox image: run one job through the real runner, offline.
+            payload=$(python3 -c 'import base64,json; print(base64.b64encode(json.dumps({"nonce":"n","code":"def f(a):\n    return a*2\n","entrypoint":"f","tests":[{"id":"t0","args":[21]}],"limits":{"per_test_seconds":2,"total_seconds":5,"memory_mb":128,"output_bytes":1024}}).encode()).decode())')
+            docker run --rm --network none --read-only --tmpfs /tmp -e JOB_PAYLOAD="$payload" "$REGISTRY/practice-sandbox:$sandbox_tag" | grep -q '"output": 42'
+            [[ -n "$have_sandbox" ]] || docker push --quiet "$REGISTRY/practice-sandbox:$sandbox_tag"
+            if [[ -z "$have_executor" ]]; then
+              docker push --quiet "$REGISTRY/practice-executor:$executor_tag"
+              docker tag "$REGISTRY/practice-executor:$executor_tag" "$REGISTRY/practice-executor:latest"
+              docker push --quiet "$REGISTRY/practice-executor:latest"
+            fi
+          fi
+          executor_image="$REGISTRY/practice-executor@$(digest practice-executor "$executor_tag")"
+          sandbox_image="$REGISTRY/practice-sandbox@$(digest practice-sandbox "$sandbox_tag")"
           [[ "$executor_image" == *@sha256:* && "$sandbox_image" == *@sha256:* ]] || { echo "::error::No pushed digest"; exit 1; }
           echo "executor_image=$executor_image" >> "$GITHUB_OUTPUT"
           echo "sandbox_image=$sandbox_image" >> "$GITHUB_OUTPUT"
@@ -113,8 +128,9 @@ jobs:
             echo "- practice-sandbox:py3.13-$GITHUB_SHA → \`$sandbox_image\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # Signs in as ServiceAccount practice-exec/practice-ci-deployer (k8s/practice-executor/90-ci-deployer.yaml): it
-  # may only patch the two executor Deployments and practice-executor-config, so it cannot weaken the sandbox.
+  # Signs in as ServiceAccount jithendar/github-ci-deployer (k8s/80-ci-deployer.yaml), the same one that restarts the
+  # site: it may only patch the two executor Deployments and practice-executor-config here, cannot read Secrets or
+  # create pods, so it cannot weaken the sandbox.
   # Roll back: revert the commit on the default branch (CI rebuilds and redeploys), or switch execution off in
   # Admin → Python practice → Settings (instant).
   deploy:
@@ -136,18 +152,18 @@ jobs:
         env:
           MK4_API_SERVER: ${{ vars.MK4_API_SERVER }}
           MK4_CA_DATA: ${{ vars.MK4_CA_DATA }}
-          MK4_CI_TOKEN: ${{ secrets.PRACTICE_CI_TOKEN }}
+          MK4_CI_TOKEN: ${{ secrets.MK4_CI_TOKEN }}
           EXECUTOR_IMAGE: ${{ needs.release.outputs.executor_image }}
           SANDBOX_IMAGE: ${{ needs.release.outputs.sandbox_image }}
         run: |
           set -euo pipefail
           for v in MK4_API_SERVER MK4_CA_DATA MK4_CI_TOKEN EXECUTOR_IMAGE SANDBOX_IMAGE; do
-            [[ -n "${!v}" ]] || { echo "::error::$v is not set (secret PRACTICE_CI_TOKEN: scripts/setup-practice-ci-deployer.sh)"; exit 1; }
+            [[ -n "${!v}" ]] || { echo "::error::$v is not set (scripts/setup-ci-deployer.sh)"; exit 1; }
           done
           export KUBECONFIG="$RUNNER_TEMP/kubeconfig"
           trap 'rm -f "$KUBECONFIG"' EXIT
           (umask 077; perl -pe 's/\$\{(MK4_[A-Z_]+)\}/$ENV{$1}/g' .github/jithendar-ci-deployer.yaml > "$KUBECONFIG")
-          k() { kubectl -n practice-exec "$@"; }
+          k() { kubectl -n jithendar "$@"; }
 
           # The sandbox runtime map first, so the new dispatcher pods start with the new sandbox image.
           runtimes="$(jq -cn --arg img "$SANDBOX_IMAGE" '{"python-3.13": $img}')"

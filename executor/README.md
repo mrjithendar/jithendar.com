@@ -22,7 +22,7 @@ runbook: [../www/docs/PYTHON_PRACTICE_EXECUTOR.md](../www/docs/PYTHON_PRACTICE_E
 | `EXECUTOR_BACKEND` | kubernetes | `local` runs code on this machine **without isolation**; needs `EXECUTOR_ALLOW_INSECURE_LOCAL=yes-i-understand` |
 | `EXECUTOR_RUNTIMES` | `{}` | JSON: runtime id → sandbox image |
 | `EXECUTOR_RUNTIME_CLASS` | gvisor-nonet | |
-| `EXECUTOR_SANDBOX_NAMESPACE` | practice-sandbox | |
+| `EXECUTOR_SANDBOX_NAMESPACE` | practice-sandbox | mk4 sets `jithendar` (`k8s/practice-executor/40-executor.yaml`) |
 | `EXECUTOR_MAX_PER_TEST_SECONDS` / `_TOTAL_SECONDS` / `_MEMORY_MB` | 5 / 20 / 256 | caps on what callers may request |
 | `EXECUTOR_PER_USER_CONCURRENCY` / `_PER_MINUTE` | 2 / 30 | |
 | `EXECUTOR_MAX_QUEUE` | 200 | 503 above this |

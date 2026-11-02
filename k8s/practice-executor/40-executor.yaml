@@ -6,11 +6,11 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: practice-executor-config
-  namespace: practice-exec
+  namespace: jithendar
 data:
   EXECUTOR_ENV: production
   EXECUTOR_BACKEND: kubernetes
-  EXECUTOR_SANDBOX_NAMESPACE: practice-sandbox
+  EXECUTOR_SANDBOX_NAMESPACE: jithendar
   EXECUTOR_RUNTIME_CLASS: gvisor-nonet
   EXECUTOR_SANDBOX_SERVICE_ACCOUNT: practice-sandbox
   EXECUTOR_IMAGE_PULL_SECRET: ecr-pull
@@ -26,7 +26,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: practice-executor-api
-  namespace: practice-exec
+  namespace: jithendar
   labels: { app: practice-executor-api, app.kubernetes.io/part-of: python-practice }
 spec:
   replicas: 2
@@ -59,7 +59,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: practice-dispatcher
-  namespace: practice-exec
+  namespace: jithendar
   labels: { app: practice-dispatcher, app.kubernetes.io/part-of: python-practice }
 spec:
   replicas: 1
@@ -88,7 +88,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: practice-executor
-  namespace: practice-exec
+  namespace: jithendar
 spec:
   selector: { app: practice-executor-api }
   ports: [{ name: http, port: 80, targetPort: http }]

@@ -1,23 +1,22 @@
-# Intended traffic, for clusters that enforce NetworkPolicy. mk4's kindnet does NOT enforce these; sandbox
-# isolation there comes from runsc network=none (05-runtimeclass.yaml), not from these objects.
+# Allowed traffic. mk4's kindnet (v20260820) DOES enforce NetworkPolicy (verified 2026-11-02: the site's egress
+# rule blocked it from the executor until it allowed app=practice-executor-api). Sandbox isolation still does not
+# rely on these: runsc network=none (05-runtimeclass.yaml) gives sandbox pods only a loopback interface.
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: deny-all, namespace: practice-sandbox }
+metadata: { name: practice-sandbox, namespace: jithendar }
 spec:
-  podSelector: {}
+  podSelector: { matchLabels: { app.kubernetes.io/name: practice-sandbox } }
   policyTypes: ["Ingress", "Egress"]
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: executor-api, namespace: practice-exec }
+metadata: { name: practice-executor-api, namespace: jithendar }
 spec:
   podSelector: { matchLabels: { app: practice-executor-api } }
   policyTypes: ["Ingress", "Egress"]
   ingress:
-    - from:
-        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: jithendar } }
-          podSelector: { matchLabels: { app: jithendar-com } }
+    - from: [{ podSelector: { matchLabels: { app: jithendar-com } } }]
       ports: [{ port: 8080, protocol: TCP }]
   egress:
     - to: [{ podSelector: { matchLabels: { app: practice-redis } } }]
@@ -27,7 +26,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: dispatcher, namespace: practice-exec }
+metadata: { name: practice-dispatcher, namespace: jithendar }
 spec:
   podSelector: { matchLabels: { app: practice-dispatcher } }
   policyTypes: ["Ingress", "Egress"]
@@ -41,7 +40,7 @@ spec:
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: { name: redis, namespace: practice-exec }
+metadata: { name: practice-redis, namespace: jithendar }
 spec:
   podSelector: { matchLabels: { app: practice-redis } }
   policyTypes: ["Ingress", "Egress"]

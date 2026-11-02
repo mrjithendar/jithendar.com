@@ -1,5 +1,7 @@
 # GitHub Actions (.github/workflows/ci-jithendar-com.yml) restarts deployment/jithendar-com after pushing a new
-# :latest image. This ServiceAccount may only do that: watch deployments in jithendar and restart jithendar-com.
+# :latest image, and .github/workflows/ci-practice-executor.yml rolls out new executor images. This ServiceAccount
+# may only do that: watch deployments and pods in jithendar, restart jithendar-com, set images on the two executor
+# Deployments and patch practice-executor-config. It cannot read Secrets or create pods.
 # scripts/setup-ci-deployer.sh applies this file and stores a kubeconfig for it as the repository secret KUBECONFIG_MK4.
 apiVersion: v1
 kind: ServiceAccount
@@ -17,11 +19,20 @@ rules:
 - apiGroups: ["apps"]
   resources: ["deployments", "replicasets"]
   verbs: ["get", "list", "watch"]
-# kubectl rollout restart (patches the pod template's restartedAt annotation)
+# kubectl rollout restart (patches the pod template's restartedAt annotation); for the practice executor
+# (ci-practice-executor.yml), new image digests on its two Deployments
 - apiGroups: ["apps"]
   resources: ["deployments"]
-  resourceNames: ["jithendar-com"]
+  resourceNames: ["jithendar-com", "practice-executor-api", "practice-dispatcher"]
   verbs: ["patch"]
+# ci-practice-executor.yml: sandbox image digest (EXECUTOR_RUNTIMES) and rollout diagnostics
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["practice-executor-config"]
+  verbs: ["get", "patch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
