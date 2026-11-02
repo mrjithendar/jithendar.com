@@ -1,0 +1,94 @@
+<mxfile host="app.diagrams.net" agent="build_diagrams.py" version="24.7.17" type="device">
+  <diagram id="moks-rerank-sequence-0" name="Rerank sequence">
+    <mxGraphModel dx="800" dy="800" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="620" pageHeight="790" background="#ffffff" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="w" value="kb_search&#10;moks-worker" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f5f3ff;strokeColor=#6d28d9;fontColor=#2e1065;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="16" width="130" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="s" value="search()&#10;rag/service.py" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e3a8a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="173" y="16" width="130" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="d" value="PostgreSQL&#10;authority" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#fffbeb;strokeColor=#b45309;fontColor=#451a03;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="317" y="16" width="130" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="r" value="moks-reranker&#10;PyTorch, CPU" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#fdf2f8;strokeColor=#be185d;fontColor=#500724;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="460" y="16" width="130" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="w-life" value="" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#cbd5e1;strokeColor=#cbd5e1;fontColor=#475569;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="94.5" y="66" width="1" height="708" as="geometry" />
+        </mxCell>
+        <mxCell id="s-life" value="" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#cbd5e1;strokeColor=#cbd5e1;fontColor=#475569;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="237.5" y="66" width="1" height="708" as="geometry" />
+        </mxCell>
+        <mxCell id="d-life" value="" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#cbd5e1;strokeColor=#cbd5e1;fontColor=#475569;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="381.5" y="66" width="1" height="708" as="geometry" />
+        </mxCell>
+        <mxCell id="r-life" value="" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#cbd5e1;strokeColor=#cbd5e1;fontColor=#475569;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="524.5" y="66" width="1" height="708" as="geometry" />
+        </mxCell>
+        <mxCell id="note8" value="Grants for the scope&#10;keyword, identifier, vector&#10;fused with RRF" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e3a8a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="131" y="108" width="214" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="note9" value="_score: small signals&#10;_prepare: at most 30,&#10;4 per document, no repeats" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e3a8a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="131" y="250" width="214" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="note10" value="Gate: 1 worker, 4 queued&#10;429 if full, 504 at deadline&#10;batches of 16, raw logits" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#fdf2f8;strokeColor=#be185d;fontColor=#500724;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="398" y="364" width="214" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="note11" value="Accept only the exact ids,&#10;finite scores, same revision;&#10;else keep the existing order" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#fef2f2;strokeColor=#b91c1c;fontColor=#7f1d1d;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="131" y="502" width="214" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="note12" value="Pin exact identifiers,&#10;superseded last; _select:&#10;3 per document, no near repeats" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e3a8a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="131" y="574" width="214" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" value="1. query and scope" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.0423728813559322;exitDx=0;exitDy=0;entryX=0;entryY=0.0423728813559322;entryDx=0;entryDy=0;" edge="1" parent="1" source="w-life" target="s-life">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="0" y="-13" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e1" value="2. chunk rows by id" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.1977401129943503;exitDx=0;exitDy=0;entryX=0;entryY=0.1977401129943503;entryDx=0;entryDy=0;" edge="1" parent="1" source="s-life" target="d-life">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="0" y="-13" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e2" value="3. active and readable only" style="edgeStyle=none;rounded=0;html=0;strokeColor=#64748b;strokeWidth=1.4;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0;exitY=0.24293785310734464;exitDx=0;exitDy=0;entryX=1;entryY=0.24293785310734464;entryDx=0;entryDy=0;dashed=1;dashPattern=6 4;" edge="1" parent="1" source="d-life" target="s-life">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="0" y="-13" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e3" value="4. POST /rerank, Bearer&#10;ids + text, 1500 ms" style="edgeStyle=none;rounded=0;html=0;strokeColor=#b45309;strokeWidth=2.2;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.403954802259887;exitDx=0;exitDy=0;entryX=0;entryY=0.403954802259887;entryDx=0;entryDy=0;" edge="1" parent="1" source="s-life" target="r-life">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="0" y="-21" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e4" value="5. ids, scores, model, revision" style="edgeStyle=none;rounded=0;html=0;strokeColor=#64748b;strokeWidth=1.4;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0;exitY=0.5536723163841808;exitDx=0;exitDy=0;entryX=1;entryY=0.5536723163841808;entryDx=0;entryDy=0;dashed=1;dashPattern=6 4;" edge="1" parent="1" source="r-life" target="s-life">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="0" y="-13" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e5" value="timeout, 429, 5xx: fallback" style="edgeStyle=none;rounded=0;html=0;strokeColor=#b91c1c;strokeWidth=1.4;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0;exitY=0.5988700564971752;exitDx=0;exitDy=0;entryX=1;entryY=0.5988700564971752;entryDx=0;entryDy=0;dashed=1;dashPattern=5 4;" edge="1" parent="1" source="r-life" target="s-life">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="0" y="-13" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e6" value="6. recheck, only if reranked" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.8502824858757062;exitDx=0;exitDy=0;entryX=0;entryY=0.8502824858757062;entryDx=0;entryDy=0;" edge="1" parent="1" source="s-life" target="d-life">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="0" y="-13" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e7" value="7. documents still usable" style="edgeStyle=none;rounded=0;html=0;strokeColor=#64748b;strokeWidth=1.4;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0;exitY=0.8954802259887006;exitDx=0;exitDy=0;entryX=1;entryY=0.8954802259887006;entryDx=0;entryDy=0;dashed=1;dashPattern=6 4;" edge="1" parent="1" source="d-life" target="s-life">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="0" y="-13" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e8" value="8. passages + citations" style="edgeStyle=none;rounded=0;html=0;strokeColor=#64748b;strokeWidth=1.4;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0;exitY=0.9519774011299436;exitDx=0;exitDy=0;entryX=1;entryY=0.9519774011299436;entryDx=0;entryDy=0;dashed=1;dashPattern=6 4;" edge="1" parent="1" source="s-life" target="w-life">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="0" y="-13" as="offset" />
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
