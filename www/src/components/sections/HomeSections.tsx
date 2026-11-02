@@ -83,10 +83,11 @@ function Hero({ s }: { s: Of<"hero"> }) {
         {s.heading} {s.highlight && <span className="text-accent-text">{s.highlight}</span>}
       </h1>
       {s.subtitle && <p className={`mt-5 max-w-3xl text-[1.0625rem] leading-relaxed text-fg-muted text-pretty sm:text-lg ${center ? "mx-auto" : ""}`}>{s.subtitle}</p>}
-      {(s.primary.href || s.secondary.href) && (
-        <div className={`mt-8 flex flex-col gap-3 sm:flex-row ${center ? "sm:justify-center" : ""}`}>
+      {(s.primary.href || s.secondary.href || s.tertiary.href) && (
+        <div className={`mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap ${center ? "sm:justify-center" : ""}`}>
           <ButtonLink href={s.primary.href} label={s.primary.label} variant="primary" />
           <ButtonLink href={s.secondary.href} label={s.secondary.label} variant="secondary" />
+          <ButtonLink href={s.tertiary.href} label={s.tertiary.label} variant="secondary" />
         </div>
       )}
     </div>

@@ -139,6 +139,8 @@ function SectionEditor({ s, i, ctx }: { s: Section; i: number; ctx: Ctx }) {
             <LinkField path={p("primary.href")} label="Main button link" />
             <TextField path={p("secondary.label")} label="Second button text" max={40} />
             <LinkField path={p("secondary.href")} label="Second button link" />
+            <TextField path={p("tertiary.label")} label="Third button text" max={40} />
+            <LinkField path={p("tertiary.href")} label="Third button link" />
             <Choice path={p("layout")} label="Layout" options={opts({ text: "Text only", split: "Text and image", banner: "Background image" })} />
             <Choice path={p("align")} label="Alignment" options={opts({ start: "Left", center: "Centred" })} />
           </Grid>

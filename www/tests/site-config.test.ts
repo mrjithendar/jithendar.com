@@ -112,6 +112,19 @@ describe("schema and validation", () => {
 });
 
 describe("migration, defaults and fallbacks", () => {
+  it("gives configurations saved before the third hero button the practice link, and keeps it cleared", () => {
+    const hero = (c: SiteConfig) => c.homepage.sections.find((x) => x.type === "hero") as Extract<SiteConfig["homepage"]["sections"][number], { type: "hero" }>;
+    const old = structuredClone(defaultConfig()) as unknown as { homepage: { sections: Record<string, unknown>[] } };
+    delete old.homepage.sections[0].tertiary;
+    const { config, fallbacks } = normalizeConfig(old);
+    expect(fallbacks).toEqual([]);
+    expect(hero(config).tertiary).toEqual({ label: "Practice Python", href: "/python-practice" });
+
+    const cleared = structuredClone(defaultConfig());
+    hero(cleared).tertiary = { label: "", href: "" };
+    expect(hero(normalizeConfig(cleared).config).tertiary).toEqual({ label: "", href: "" });
+  });
+
   it("migrates the legacy settings row (schema v0)", () => {
     const { config } = normalizeConfig(
       { siteName: "Old Name", hero: { title: "A legacy headline here", subtitle: "Legacy subtitle with enough characters" }, announcement: { enabled: true, text: "Hello", href: "/about" }, features: { comments: false, registration: true, contactForm: true } },

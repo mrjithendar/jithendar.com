@@ -267,6 +267,9 @@ const sectionSchema = z.discriminatedUnion("type", [
     subtitle: text(300),
     primary: link,
     secondary: link,
+    // Added 2026-11-02. Configurations saved before then have no third button: the default gives them the practice
+    // link; clearing the text or link in the admin hides it.
+    tertiary: link.default({ label: "Practice Python", href: "/python-practice" }),
     layout: z.enum(["text", "split", "banner"]),
     align: z.enum(["start", "center"]),
     image: banner,
@@ -581,6 +584,7 @@ export function defaultConfig(): SiteConfig {
             "Sourced news, in-depth analysis and hands-on tutorials across AI engineering, platform engineering, infrastructure as code and security. Every article is reviewed by a human editor.",
           primary: { label: "Read the latest articles", href: "/blog" },
           secondary: { label: "About the publication", href: "/about" },
+          tertiary: { label: "Practice Python", href: "/python-practice" },
           layout: "text",
           align: "start",
           image: emptyBanner(),

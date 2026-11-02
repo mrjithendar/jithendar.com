@@ -75,7 +75,7 @@ if [[ -n "${no_runtime:-}" ]]; then
   echo "SKIP  in-sandbox checks (gVisor kernel, loopback only, no token, API/metadata/internet/DNS unreachable): the probe pod could not start"
 else
   echo "$out" | sed 's/^/      /'
-  check "gVisor kernel"               'grep -q "KERNEL.*\(gVisor\|Linux version 4.4.0\)" <<<"$out"'
+  check "gVisor kernel"               'grep -qi "KERNEL.*\(gVisor\|Linux version 4.4.0\)" <<<"$out"'
   check "loopback only"               'grep -q "IFACES \[.lo.\]\|IFACES none" <<<"$out"'
   check "no service-account token"    'grep -q "TOKEN False" <<<"$out"'
   check "API server unreachable"      '! grep -q "APISERVER open" <<<"$out" && grep -q APISERVER <<<"$out"'
