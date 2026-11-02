@@ -4,14 +4,13 @@
 # only kind of role the Terraform role (and therefore this stack's CI) may create or change.
 data "aws_caller_identity" "current" {}
 
-data "aws_iam_openid_connect_provider" "github" {
-  url = "https://token.actions.githubusercontent.com"
-}
-
 locals {
-  account_id    = data.aws_caller_identity.current.account_id
-  ci_boundary   = "arn:aws:iam::${local.account_id}:policy/jithendar-com-ci-boundary"
-  ecr_repo_arns = [for r in aws_ecr_repository.this : r.arn]
+  account_id = data.aws_caller_identity.current.account_id
+  # The GitHub OIDC provider already exists in the account (infra/bootstrap reads it). Its ARN is fixed, so it is
+  # built here rather than looked up: a lookup by URL needs iam:ListOpenIDConnectProviders on "*".
+  github_oidc_provider_arn = "arn:aws:iam::${local.account_id}:oidc-provider/token.actions.githubusercontent.com"
+  ci_boundary              = "arn:aws:iam::${local.account_id}:policy/jithendar-com-ci-boundary"
+  ecr_repo_arns            = [for r in aws_ecr_repository.this : r.arn]
 }
 
 resource "aws_iam_role" "ci" {
@@ -23,7 +22,7 @@ resource "aws_iam_role" "ci" {
     Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow"
-      Principal = { Federated = data.aws_iam_openid_connect_provider.github.arn }
+      Principal = { Federated = local.github_oidc_provider_arn }
       Action    = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringEquals = {
