@@ -11,6 +11,15 @@ dependencies = [
   "pydantic==2.14.2",
 ]
 
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+# Only the service package is installable. sandbox/ (runner.py, copied into its own image) and tools/ are scripts;
+# without this, setuptools refuses to build ("Multiple top-level packages discovered in a flat-layout").
+[tool.setuptools]
+packages = ["app"]
+
 [project.optional-dependencies]
 test = ["pytest==9.2.0", "fakeredis==2.40.0"]
 

@@ -68,6 +68,16 @@ def _ints(v: Any) -> Any:
     return v
 
 
+# Key order of dicts is not part of a result (the grader ignores it), but solutions that use threads or asyncio
+# fill dicts in completion order. Sorting keeps catalog.generated.json identical between builds, which CI checks.
+def _sorted(v: Any) -> Any:
+    if isinstance(v, list):
+        return [_sorted(x) for x in v]
+    if isinstance(v, dict):
+        return {k: _sorted(v[k]) for k in sorted(v)}
+    return v
+
+
 def canon(v: Any) -> str:
     return json.dumps(_ints(v), sort_keys=True, separators=(",", ":"))
 
@@ -164,7 +174,7 @@ def build(check_only: bool) -> int:
                     "example": kind == "example",
                     "args": case.get("args", []),
                     "kwargs": case.get("kwargs", {}),
-                    "expected": r["output"],
+                    "expected": _sorted(r["output"]),
                     "explanation": case.get("explanation", ""),
                     "label": case.get("label", ""),
                 }
