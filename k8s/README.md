@@ -16,8 +16,8 @@ with cluster-generated fields removed. Deployed with `kubectl apply -k k8s` (nor
 | `55-tlsstore.yaml` | Traefik `TLSStore default`: `jithendar-com-tls` is the default certificate for every namespace, so `/argocd`, `/grafana`, `/prometheus` and `/roboshop` share it |
 | `60-ingress.yaml` | Ingresses for `jithendar.com` and `www.jithendar.com` (HTTPS + HTTP redirect) |
 | `70-observability.yaml` | Headless Service `jithendar-com-metrics` (Prometheus, port 9464) and Role/RoleBinding `alloy-logs`; see `www/docs/OBSERVABILITY.md` |
-| `kustomization.yaml` | The list above plus the image digest pin |
-| `practice-executor/` | Python practice code runner, in namespace `jithendar` (separate kustomization, **not** applied by `deploy.sh`; apply once by hand after gVisor is verified; CI then rolls out new image digests when `PRACTICE_EXECUTOR_DEPLOY=true` — `www/docs/PYTHON_PRACTICE_EXECUTOR.md`) |
+| `kustomization.yaml` | The list above |
+| `practice-executor/` | Python practice code runner, in namespace `jithendar` (separate kustomization, **not** applied by `deploy.sh`; apply once by hand after gVisor is verified; CI then restarts it on `:latest` when `PRACTICE_EXECUTOR_DEPLOY=true` — `www/docs/PYTHON_PRACTICE_EXECUTOR.md`) |
 
 ## Before the first deploy
 
@@ -30,14 +30,15 @@ creates the first three.
 
 ## Deploy
 
+The site always runs `jithendar-com:latest` with `imagePullPolicy: Always`. CI pushes `:latest` and restarts
+the Deployment on every push to `master`, so new code needs nothing here.
+
 ```sh
-./deploy.sh          # the most recently pushed image
-./deploy.sh <sha>    # a specific commit (also how you roll back)
+./deploy.sh
 ```
 
-It pins the image digest in `kustomization.yaml`, server dry-runs, applies, waits for the rollouts
-(undoing the site's rollout if it fails) and runs `scripts/smoke.sh`. Commit `kustomization.yaml`
-afterwards so Git records what is live.
+Server dry-runs, applies `k8s/`, restarts the site so it pulls `:latest`, waits for the rollouts and runs
+`scripts/smoke.sh`.
 
 To apply manifest changes without a new image, review and apply directly:
 
@@ -46,4 +47,4 @@ kubectl --context mk4 diff -k k8s
 kubectl --context mk4 apply -k k8s
 ```
 
-Never `kubectl apply -f k8s/`: it would try to apply `kustomization.yaml` itself and skip the digest pin.
+Never `kubectl apply -f k8s/`: it would try to apply `kustomization.yaml` itself.

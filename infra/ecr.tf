@@ -1,6 +1,5 @@
 # Image repositories for jithendar.com. Tags are immutable (commit SHAs) except `latest`, which CI moves:
-# the site runs jithendar-com:latest with imagePullPolicy Always, and the executor manifests start from
-# practice-executor:latest until CI pins digests. Sandbox images are only ever referenced by digest.
+# the site, the executor and the sandbox pods all run :latest with imagePullPolicy Always.
 locals {
   repositories = {
     "jithendar-com"     = { mutable_tags = ["latest"] }

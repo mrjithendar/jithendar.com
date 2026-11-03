@@ -18,9 +18,9 @@ data:
   EXECUTOR_PER_USER_CONCURRENCY: "2"
   EXECUTOR_PER_USER_PER_MINUTE: "30"
   EXECUTOR_MAX_QUEUE: "200"
-  # Runtime id → sandbox image (ids must match Admin → Python practice → Runtimes). CI's deploy job replaces this
-  # with the digest it just pushed, and the two images below with practice-executor@sha256:… .
-  EXECUTOR_RUNTIMES: '{"python-3.13": "881026659929.dkr.ecr.us-east-1.amazonaws.com/practice-sandbox:py3.13-REPLACE_WITH_DIGEST"}'
+  # Runtime id → sandbox image (ids must match Admin → Python practice → Runtimes). Always :latest; the dispatcher
+  # starts sandbox pods with imagePullPolicy Always, and CI moves :latest on every release.
+  EXECUTOR_RUNTIMES: '{"python-3.13": "881026659929.dkr.ecr.us-east-1.amazonaws.com/practice-sandbox:latest"}'
 ---
 apiVersion: apps/v1
 kind: Deployment

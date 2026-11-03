@@ -19,8 +19,5 @@ resources:
 - 70-observability.yaml
 - 80-ci-deployer.yaml
 
-# Release: ./deploy.sh [commit-sha] rewrites only this digest (via scripts/set-image.sh); the image in
-# 30-jithendar-com.yaml is replaced by it. Never deploy a mutable tag.
-images:
-- name: 881026659929.dkr.ecr.us-east-1.amazonaws.com/jithendar-com
-  digest: sha256:ab475be7fe79512c1b319dcce7fc2011024da309d10e06f5231ad9a6e480fbfa
+# The site always runs jithendar-com:latest (imagePullPolicy Always, set in 30-jithendar-com.yaml): CI pushes
+# :latest and restarts the Deployment. No digest pinning.

@@ -66,11 +66,11 @@ browser ─► jithendar-com (Next.js)                       executor           
    loopback only, no token, API server / metadata / internet / DNS unreachable, a sandbox pod without gVisor is
    rejected, the dispatcher cannot start a pod reading the site's Secret or delete the site's pods).
 5. **Let CI deploy:** `gh variable set PRACTICE_EXECUTOR_DEPLOY --body true`, then re-run the workflow on `master`.
-   The `deploy` job signs in with the site's existing CI credentials (`MK4_CI_TOKEN`), pins both executor
-   Deployments and the sandbox runtime to the digests it just pushed and waits for the rollout. From then on every
-   push that touches `executor/` or the practice catalog deploys. It never applies manifests, so changes to
-   `k8s/practice-executor/` are still applied by hand — then re-run the workflow, because a manual apply resets
-   the images to `:latest`.
+   The `deploy` job signs in with the site's existing CI credentials (`MK4_CI_TOKEN`) and restarts both executor
+   Deployments, which run `practice-executor:latest`; sandbox pods use `practice-sandbox:latest` with
+   `imagePullPolicy: Always`. The release job moves both `:latest` tags. From then on every push that touches
+   `executor/` or the practice catalog deploys. It never applies manifests, so changes to
+   `k8s/practice-executor/` are still applied by hand.
 6. **Connect the site:** `./deploy.sh` (applies the site's egress rule to the executor and restarts it), then
    switch on *Admin → Python practice → Settings → Allow running and submitting code*.
 7. Optional: validate a problem from the admin editor (“Validate”) to see an end-to-end run.

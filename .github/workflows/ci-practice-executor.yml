@@ -4,9 +4,10 @@ name: practice-executor
 #           catalog build check (runs every reference solution through the sandbox runner and verifies the
 #           committed catalog.generated.json is up to date)
 # release → default branch: build the arm64 images practice-executor:<sha> and practice-sandbox:py3.13-<sha>
-#           and push them to ECR (practice-executor:latest moves too, so a manual apply of the manifests works)
-# deploy  → default branch, only when repository variable PRACTICE_EXECUTOR_DEPLOY is "true": point the
-#           executor Deployments and the sandbox runtime at the digests just pushed and wait for the rollout.
+#           and push them to ECR, then move practice-executor:latest and practice-sandbox:latest to them
+# deploy  → default branch, only when repository variable PRACTICE_EXECUTOR_DEPLOY is "true": restart the
+#           executor Deployments so they pull :latest, and wait for the rollout. Everything runs :latest; sandbox
+#           pods pull practice-sandbox:latest with imagePullPolicy Always.
 #           It never applies manifests: namespaces, RuntimeClass, admission policy, RBAC and Secrets are applied
 #           once by a person (www/docs/PYTHON_PRACTICE_EXECUTOR.md). Set the variable only after
 #           scripts/verify-practice-sandbox.sh passes on mk4; until then the job is skipped.
@@ -73,9 +74,6 @@ jobs:
       id-token: write
     env:
       AWS_REGION: us-east-1
-    outputs:
-      executor_image: ${{ steps.push.outputs.executor_image }}
-      sandbox_image: ${{ steps.push.outputs.sandbox_image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -92,8 +90,8 @@ jobs:
         working-directory: executor
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
-        # Tags are immutable in ECR, so a re-run for the same commit reuses the images already pushed for it
-        # instead of failing on "tag already exists"; the digests always come from ECR.
+        # Commit tags are immutable in ECR, so a re-run for the same commit pulls the images already pushed for it
+        # instead of failing on "tag already exists". :latest is mutable and always moves to this commit.
         run: |
           set -euo pipefail
           digest() {  # repository tag → digest, or empty when the tag does not exist
@@ -105,6 +103,8 @@ jobs:
           have_sandbox="$(digest practice-sandbox "$sandbox_tag")"
           if [[ -n "$have_executor" && -n "$have_sandbox" ]]; then
             echo "Images for $GITHUB_SHA are already in ECR; reusing them."
+            docker pull --quiet "$REGISTRY/practice-executor:$executor_tag"
+            docker pull --quiet "$REGISTRY/practice-sandbox:$sandbox_tag"
           else
             docker build --platform linux/arm64 --provenance=false -t "$REGISTRY/practice-executor:$executor_tag" .
             docker build --platform linux/arm64 --provenance=false --build-arg PYTHON_VERSION=3.13 -t "$REGISTRY/practice-sandbox:$sandbox_tag" sandbox
@@ -112,25 +112,20 @@ jobs:
             payload=$(python3 -c 'import base64,json; print(base64.b64encode(json.dumps({"nonce":"n","code":"def f(a):\n    return a*2\n","entrypoint":"f","tests":[{"id":"t0","args":[21]}],"limits":{"per_test_seconds":2,"total_seconds":5,"memory_mb":128,"output_bytes":1024}}).encode()).decode())')
             docker run --rm --network none --read-only --tmpfs /tmp -e JOB_PAYLOAD="$payload" "$REGISTRY/practice-sandbox:$sandbox_tag" | grep -q '"output": 42'
             [[ -n "$have_sandbox" ]] || docker push --quiet "$REGISTRY/practice-sandbox:$sandbox_tag"
-            if [[ -z "$have_executor" ]]; then
-              docker push --quiet "$REGISTRY/practice-executor:$executor_tag"
-              docker tag "$REGISTRY/practice-executor:$executor_tag" "$REGISTRY/practice-executor:latest"
-              docker push --quiet "$REGISTRY/practice-executor:latest"
-            fi
+            [[ -n "$have_executor" ]] || docker push --quiet "$REGISTRY/practice-executor:$executor_tag"
           fi
-          executor_image="$REGISTRY/practice-executor@$(digest practice-executor "$executor_tag")"
-          sandbox_image="$REGISTRY/practice-sandbox@$(digest practice-sandbox "$sandbox_tag")"
-          [[ "$executor_image" == *@sha256:* && "$sandbox_image" == *@sha256:* ]] || { echo "::error::No pushed digest"; exit 1; }
-          echo "executor_image=$executor_image" >> "$GITHUB_OUTPUT"
-          echo "sandbox_image=$sandbox_image" >> "$GITHUB_OUTPUT"
+          docker tag "$REGISTRY/practice-executor:$executor_tag" "$REGISTRY/practice-executor:latest"
+          docker tag "$REGISTRY/practice-sandbox:$sandbox_tag" "$REGISTRY/practice-sandbox:latest"
+          docker push --quiet "$REGISTRY/practice-executor:latest"
+          docker push --quiet "$REGISTRY/practice-sandbox:latest"
           {
-            echo "- practice-executor:$GITHUB_SHA → \`$executor_image\`"
-            echo "- practice-sandbox:py3.13-$GITHUB_SHA → \`$sandbox_image\`"
+            echo "- practice-executor:latest = practice-executor:$GITHUB_SHA"
+            echo "- practice-sandbox:latest = practice-sandbox:$sandbox_tag"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Signs in as ServiceAccount jithendar/github-ci-deployer (k8s/80-ci-deployer.yaml), the same one that restarts the
-  # site: it may only patch the two executor Deployments and practice-executor-config here, cannot read Secrets or
-  # create pods, so it cannot weaken the sandbox.
+  # site: it may only restart the two executor Deployments here, cannot read Secrets or create pods, so it cannot
+  # weaken the sandbox.
   # Roll back: revert the commit on the default branch (CI rebuilds and redeploys), or switch execution off in
   # Admin → Python practice → Settings (instant).
   deploy:
@@ -153,11 +148,9 @@ jobs:
           MK4_API_SERVER: ${{ vars.MK4_API_SERVER }}
           MK4_CA_DATA: ${{ vars.MK4_CA_DATA }}
           MK4_CI_TOKEN: ${{ secrets.MK4_CI_TOKEN }}
-          EXECUTOR_IMAGE: ${{ needs.release.outputs.executor_image }}
-          SANDBOX_IMAGE: ${{ needs.release.outputs.sandbox_image }}
         run: |
           set -euo pipefail
-          for v in MK4_API_SERVER MK4_CA_DATA MK4_CI_TOKEN EXECUTOR_IMAGE SANDBOX_IMAGE; do
+          for v in MK4_API_SERVER MK4_CA_DATA MK4_CI_TOKEN; do
             [[ -n "${!v}" ]] || { echo "::error::$v is not set (scripts/setup-ci-deployer.sh)"; exit 1; }
           done
           export KUBECONFIG="$RUNNER_TEMP/kubeconfig"
@@ -165,18 +158,9 @@ jobs:
           (umask 077; perl -pe 's/\$\{(MK4_[A-Z_]+)\}/$ENV{$1}/g' .github/jithendar-ci-deployer.yaml > "$KUBECONFIG")
           k() { kubectl -n jithendar "$@"; }
 
-          # The sandbox runtime map first, so the new dispatcher pods start with the new sandbox image.
-          runtimes="$(jq -cn --arg img "$SANDBOX_IMAGE" '{"python-3.13": $img}')"
-          k patch configmap practice-executor-config --type merge \
-            -p "$(jq -cn --arg r "$runtimes" '{data: {EXECUTOR_RUNTIMES: $r}}')"
-
-          # New image plus a release annotation: always exactly one rollout per deployment, which also picks up the
-          # ConfigMap change (envFrom is read only at pod start).
+          # Both Deployments and sandbox pods run :latest with imagePullPolicy Always, so a restart deploys the release.
           for d in practice-executor-api practice-dispatcher; do
-            container="$(k get deploy "$d" -o jsonpath='{.spec.template.spec.containers[0].name}')"
-            k patch deploy "$d" --type strategic -p "$(jq -cn --arg c "$container" --arg img "$EXECUTOR_IMAGE" --arg sha "$GITHUB_SHA" \
-              '{spec: {template: {metadata: {annotations: {"practice.jithendar.com/release": $sha}},
-                                  spec: {containers: [{name: $c, image: $img}]}}}}')"
+            k rollout restart deploy/"$d"
           done
           for d in practice-executor-api practice-dispatcher; do
             if ! k rollout status deploy/"$d" --timeout=5m; then
@@ -187,6 +171,6 @@ jobs:
           done
           {
             echo '### Deployed to mk4'
-            echo "- practice-executor-api, practice-dispatcher → \`$EXECUTOR_IMAGE\`"
-            echo "- sandbox runtime python-3.13 → \`$SANDBOX_IMAGE\`"
+            echo "- practice-executor-api, practice-dispatcher restarted on \`practice-executor:latest\` ($GITHUB_SHA)"
+            echo "- sandbox runtime python-3.13 → \`practice-sandbox:latest\`"
           } >> "$GITHUB_STEP_SUMMARY"

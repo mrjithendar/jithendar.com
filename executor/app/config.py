@@ -29,7 +29,7 @@ class Settings:
     # kubernetes (production) or local (development only: runs code on this machine without isolation).
     backend: str = "kubernetes"
     allow_insecure_local: bool = False
-    # runtime id → sandbox image (e.g. {"python-3.13": "…/practice-sandbox@sha256:…"}).
+    # runtime id → sandbox image (e.g. {"python-3.13": "…/practice-sandbox:latest"}).
     runtimes: dict[str, str] = field(default_factory=dict)
     sandbox_namespace: str = "practice-sandbox"
     runtime_class: str = "gvisor-nonet"

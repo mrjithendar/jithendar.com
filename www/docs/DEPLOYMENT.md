@@ -1,13 +1,13 @@
 # Deployment — jithendar.com on mk4
 
-**CI builds and pushes the image; `./deploy.sh` (repository root) deploys it** with `kubectl apply -k` (owner decision, 2026-10-27). Argo CD is not used for this site, and CI has no cluster access.
+**CI builds, pushes `jithendar-com:latest` and restarts the site**; `./deploy.sh` (repository root) applies manifest changes with `kubectl apply -k`. Argo CD is not used for this site. The site always runs `:latest` with `imagePullPolicy: Always`, never a pinned digest (owner decision, 2026-11-03). CI's only cluster access is restarting the Deployment.
 
 | Piece | Where |
 |---|---|
 | Image | `881026659929.dkr.ecr.us-east-1.amazonaws.com/jithendar-com` (arm64, immutable tags = commit SHA except `latest`, scan on push, last 30 kept; created by Terraform in `infra/`, CI pushes as OIDC role `github-jithendar-com-ci`) |
-| Pipeline | `.github/workflows/ci-jithendar-com.yml`: `check` on pull requests; on `master`, `release` pushes `jithendar-com:<commit-sha>` (and `latest`) |
-| Deploy | `./deploy.sh [commit-sha]`, run by a person with the `mk4` kubeconfig and AWS access |
-| Manifests | `k8s/` at the repository root, one file per component (see `k8s/README.md`); the image digest is pinned in `k8s/kustomization.yaml` |
+| Pipeline | `.github/workflows/ci-jithendar-com.yml`: `check` on pull requests; on `master`, `release` pushes `jithendar-com:latest` (and `:<commit-sha>` for history) and runs `kubectl rollout restart` |
+| Deploy | Automatic on push to `master`. `./deploy.sh` for manifest changes, run by a person with the `mk4` kubeconfig |
+| Manifests | `k8s/` at the repository root, one file per component (see `k8s/README.md`); the image is `jithendar-com:latest` |
 | Image pulls | Secret `jithendar/ecr-pull`, refreshed every 6 h by CronJob `roboshop-ai/ecr-refresh` |
 | TLS | ClusterIssuers `letsencrypt-prod`/`-staging` (`k8s/45-jithendar-letsencrypt.yaml`) → Certificate `jithendar/jithendar-com` (apex + www, `k8s/50-certificate.yaml`) → Secret `jithendar-com-tls`. `TLSStore default` (`k8s/55-tlsstore.yaml`) makes it Traefik's default certificate, which also serves `/argocd`, `/grafana`, `/prometheus` and `/roboshop`. **Do not delete it.** |
 
@@ -50,17 +50,13 @@ R2 bucket setup (CORS, lifecycle) and the S3 → R2 migration: see `docs/MEDIA.m
 
 ## Release
 
-1. Push to `master`. CI's `release` job lints, tests, builds `linux/arm64` with `GIT_SHA` baked in and pushes `jithendar-com:<commit-sha>`. The run summary prints the exact deploy command.
-2. When the run is green, from the repository root:
-   ```bash
-   git pull
-   ./deploy.sh            # the most recently pushed image
-   ./deploy.sh <sha>      # a specific commit (also how you roll back)
-   ```
-   `deploy.sh` resolves the digest in ECR, pins it in `k8s/kustomization.yaml`, server dry-runs, applies, waits for the rollout (runs `rollout undo` if it fails) and runs the smoke test.
-3. Commit the updated `kustomization.yaml` so Git records what is live.
+Push to `master`. CI's `release` job lints, tests, builds `linux/arm64` with `GIT_SHA` baked in, pushes `jithendar-com:latest` and restarts `deploy/jithendar-com`, which pulls the new `:latest`. Nothing else to do.
 
-Always deploy from an up-to-date checkout: `deploy.sh` applies the manifests in your working tree.
+After changing `k8s/`, from an up-to-date checkout at the repository root:
+```bash
+./deploy.sh
+```
+It server dry-runs, applies `k8s/`, restarts the site on `:latest`, waits for the rollout and runs the smoke test.
 
 ## Smoke test
 
@@ -73,8 +69,7 @@ The script checks health (and version), homepage, about, RSS, both sitemaps, rob
 
 ## Rollback
 
-- **Immediate:** `kubectl --context mk4 -n jithendar rollout undo deployment/jithendar-com`.
-- **Lasting:** `./deploy.sh <older-commit-sha>` (any commit among the last 30 images in ECR).
+`git revert` the bad commit and push: CI builds it, moves `:latest` and restarts the site. (`kubectl rollout undo` does not help: the previous pod template is also `:latest`.) A failed rollout leaves the old pods serving, so a broken image never takes the site down by itself.
 
 ## Limits
 

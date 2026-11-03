@@ -70,7 +70,7 @@ def pod_spec(name: str, job_id: str, image: str, payload: str, deadline: int, s:
             {
                 "name": "run",
                 "image": image,
-                "imagePullPolicy": "IfNotPresent",
+                "imagePullPolicy": "Always",
                 "env": [{"name": "JOB_PAYLOAD", "value": payload}, {"name": "PYTHONHASHSEED", "value": "0"}],
                 "resources": {
                     "limits": {"cpu": s.sandbox_cpu, "memory": s.sandbox_memory, "ephemeral-storage": "32Mi"},

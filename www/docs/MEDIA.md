@@ -168,7 +168,7 @@ Rows created before R2 are marked `s3-legacy` by migration 0004 and keep being s
 4. Spot-check pages with images. Keep the S3 bucket untouched until you are satisfied.
 
 **Rollback**: Admin → Storage → **Roll back to S3** points every migrated row at its S3 object again (R2 copies
-stay and are reused if you migrate again). Code rollback: `./deploy.sh <previous-sha>`; migration 0004 only
+stay and are reused if you migrate again). Code rollback: revert the commit and push (CI redeploys `:latest`); migration 0004 only
 adds columns and a table, so the previous image starts and serves S3 rows (uploads it makes are labelled
 `s3-legacy` by the column default). Files uploaded to R2 after the upgrade are not readable by the old image
 until you roll forward again.
