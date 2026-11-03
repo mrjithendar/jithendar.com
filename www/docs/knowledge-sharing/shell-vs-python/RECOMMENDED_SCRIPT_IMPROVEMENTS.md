@@ -1,0 +1,15 @@
+# Recommended script improvements (not part of the article)
+
+Found while writing the shell scripting vs Python draft on 2026-11-03. None of these were changed; the article describes the code as it is at the cited commits. If any are fixed, update the matching paragraphs and rerun `verify_examples.py` (the excerpt check will fail until the line ranges are updated).
+
+| # | Repository and file | Observation | Suggested change | Evidence |
+| --- | --- | --- | --- | --- |
+| 1 | roboshop-ai `services/web/nginx/start.sh` line 33 | An out-of-range port exits 1 with no message; every other validation prints one. | `[ "$port" -ge 1 ] && [ "$port" -le 65535 ] \|\| { echo 'Invalid port' >&2; exit 1; }` | Ran `--test` under dash with `NGINX_HTTP_PORT=70000`: exit 1, empty stderr |
+| 2 | jithendar.com `scripts/smoke.sh` line 3 | Comment says it exits on the first failed check; it counts failures and exits at the end (except a no-response health request on line 24). | Reword the comment. | Code reading |
+| 3 | jithendar.com `scripts/smoke.sh` lines 25, 31 | Health JSON is parsed with a `sed` regular expression, which depends on compact output and key order. | Use `jq -r .status` if jq can be a dependency on the deploy host, or `python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])'`. | Code reading |
+| 4 | jithendar.com `scripts/smoke.sh` line 48 | `\|\| true` also hides a failed curl, which then reads as "0 matching lines". | Fetch `robots.txt` into a variable first (so `set -e` sees curl's status), then `grep -c ... <<<"$robots" \|\| true`. | Code reading |
+| 5 | moks `scripts/backup.sh` lines 7–9 | On failure, `pipefail` stops the script but leaves a partial `.sql.gz` in the output directory. | Write to `"$FILE.partial"`, `trap 'rm -f "$FILE.partial"' EXIT`, and `mv` into place after the pipeline succeeds. | Code reading |
+| 6 | tools `scripts/argocd/validate.py` | All validation uses `assert`, which Python removes under `-O` or `PYTHONOPTIMIZE`, so the checks would silently pass. | Raise a dedicated exception (or `sys.exit(message)`) instead of `assert`. | Python language reference: assert statements are skipped when optimisation is requested |
+| 7 | moks `backend/moks/connectors/finops.py` line 48 | `Config(retries={"max_attempts": 3})` sets no mode, so Boto3 uses legacy mode; `cloudwatch.py` uses standard. In a `Config` object `max_attempts` excludes the first call. | Set `"mode": "standard"` for consistency, or use `total_max_attempts` to make the total explicit. | Boto3 retries guide |
+| 8 | moks `scripts/create-runtime-key.sh` line 33 | `k rollout restart ... 2>/dev/null && echo ... \|\| echo "MOKS not deployed yet"` reports "not deployed" for any restart failure, including RBAC or connection errors. | Check whether the deployments exist first, then restart without hiding stderr. | Code reading (not run: it creates IAM keys) |
+| 9 | tools `tests/scripts/test_initialize.py` | Very dense style (one-space indents, several statements per line) makes the useful PATH-mocking pattern hard to learn from. | Reformat with a standard formatter when next edited. | Code reading |

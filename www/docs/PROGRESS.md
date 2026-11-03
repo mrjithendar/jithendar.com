@@ -27,6 +27,14 @@ A ```` ```mermaid ```` fence in a post or page now shows as a diagram. Uncommitt
 - **Commands:** `verify_article.py` passes (29 verbatim excerpts, 45 example outputs matched, Python 3.11.9). MOKS tests for the quoted code: 51 passed on a throwaway PostgreSQL. `content`, `editor-workflow` and `links` tests pass alone, after two fixes: an indented code line under a list item broke the editor round trip, and `/python-practice` is now plain text because the link checker does not know the route. Full `npm test` had one 30 s timeout in a different unrelated test on each of three runs, while another session was editing `CodeBlock.tsx` and `package.json`. `lint`, `typecheck` and `build` not run: no application code changed.
 - **Open:** category is a `devops-sre` placeholder; tracebacks not checked on Python 3.12; gaps listed in the package README.
 
+## Draft article: Python vs Go vs TypeScript (2026-11-03, owner request)
+
+`content/blog/python-vs-go-vs-typescript.mdx`, `status: review`, written against roboshop-ai `c81e85a`, jithendar.com `f12f8cc`, moks `74a097d` and tools `387bd30`. Nothing published or committed. No application code changed.
+
+- **Files:** the article; `docs/knowledge-sharing/python-vs-go-vs-typescript/` (README with SEO metadata, files used, validation and limitations; `verify_examples.py`).
+- **Commands:** `verify_examples.py` passes (99 programs on CPython 3.11.9, Go 1.27.3 with `-race` and Node 26.13.0 match their `Output:` comments; 1 expected Go compile failure; pytest, `go test -race` and Vitest suites pass; `gofmt`/`go vet` clean; mypy `--strict`; `tsc` 6.0.3 and 7.0.2 strict with `erasableSyntaxOnly`; 10 project excerpts match their commits). RoboShop currency service `go test -race` 8/8. `npx vitest run`: 433 passed. Front matter validated against `articleFrontmatter`. Lint, typecheck and build not run: no application code changed.
+- **Open:** category `ai-engineering` is a placeholder; Python examples not run on 3.12+; confirm Mermaid rendering is deployed (one diagram).
+
 ## Draft article: Python vs TypeScript (2026-11-03, owner request)
 
 `content/blog/python-vs-typescript.mdx`, `status: review`, written against jithendar.com `dc249e8`, moks `ef6908a` and roboshop-ai `c81e85a`. Nothing published or committed. No application code changed.
