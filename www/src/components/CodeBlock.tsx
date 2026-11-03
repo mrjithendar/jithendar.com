@@ -3,9 +3,18 @@
 import { useRef, useState, type ComponentProps } from "react";
 import { LANGUAGE_LABELS } from "@/lib/code-languages";
 import { CheckIcon, CopyIcon } from "./icons";
+import { MermaidBlock } from "./MermaidBlock";
+
+type PreProps = ComponentProps<"pre"> & { "data-language"?: string };
+
+/** Highlighted <pre> in a frame with its language and a copy button; ```mermaid fences become diagrams. */
+export function CodeBlock(props: PreProps) {
+  if (props["data-language"] === "mermaid") return <MermaidBlock {...props} />;
+  return <HighlightedCode {...props} />;
+}
 
 /** Highlighted <pre> in a frame with its language and a keyboard-accessible, announced copy button. */
-export function CodeBlock({ "data-language": language, ...props }: ComponentProps<"pre"> & { "data-language"?: string }) {
+function HighlightedCode({ "data-language": language, ...props }: PreProps) {
   const pre = useRef<HTMLPreElement>(null);
   const [status, setStatus] = useState("");
   const label = language && language !== "text" ? (LANGUAGE_LABELS[language] ?? language) : "";

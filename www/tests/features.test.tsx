@@ -173,6 +173,16 @@ describe("MDX pipeline", () => {
     expect(html).toContain('class="shiki');
     expect(html).toContain("--shiki-dark");
   });
+  it("sends mermaid fences as labelled source, which the browser then draws", async () => {
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { mdxComponents } = await import("@/components/Mdx");
+    const { Content } = await compileMdx("```mermaid\nflowchart LR\n  A --> B\n```");
+    const html = renderToStaticMarkup(<Content components={mdxComponents} />);
+    expect(html).toContain('data-language="mermaid"');
+    expect(html).toContain(">Mermaid<");
+    expect(html.replace(/<[^>]+>/g, "")).toContain("A --&gt; B");
+    expect(html).not.toContain("<svg");
+  });
 });
 
 describe("Markdown safety", () => {

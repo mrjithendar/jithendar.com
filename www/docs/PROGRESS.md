@@ -1,5 +1,48 @@
 # Progress log — jithendar.com
 
+## Draft article: Mermaid diagrams on jithendar.com (2026-11-03, owner request)
+
+`content/blog/mermaid-diagrams-on-jithendar-com.mdx`, `status: review`. Explains what Mermaid is, why it suits a technical blog, and how the Mermaid change below was built, with 5 Mermaid diagrams. Nothing published or committed. **Publish only after the Mermaid change is deployed.**
+
+- **Files:** the article; `docs/knowledge-sharing/mermaid-diagrams/README.md` (SEO metadata, sources, validation).
+- **Commands:** all 5 diagrams render in headless Chrome with Mermaid 12.2.0, light and dark, no `<script>` in the SVG. `content`, `links` and `editor-workflow` tests: 56 passed (after shortening the description to fit the 160-character limit).
+- **Open:** category `devops-sre` is a placeholder.
+
+## Mermaid diagrams in articles (2026-11-03, owner request)
+
+A ```` ```mermaid ```` fence in a post or page now shows as a diagram. Uncommitted, not deployed.
+
+- **How:** the server still sends the Shiki-highlighted source, labelled "Mermaid" (readers without JavaScript and crawlers get the text). In the browser, `MermaidBlock` loads the `mermaid` library with a dynamic import, so only pages with a diagram download it, and draws the SVG with a "Show source" toggle. It follows the site's light/dark theme. `securityLevel: "strict"` sanitises labels and disables click handlers. If the source does not parse, the code block stays as it is.
+- **New dependency:** `mermaid` 12.2.0, pinned. Justification: no existing dependency draws diagrams. Rendering on the server instead (`rehype-mermaid`) would need a headless browser in the image and in CI.
+- **Files:** `src/components/MermaidBlock.tsx` (new), `src/components/CodeBlock.tsx` (routes `mermaid` fences), `src/app/globals.css` (`.mermaid-diagram`), `src/lib/code-languages.ts` (label), `tests/features.test.tsx` (server output for a mermaid fence), `package.json`, `package-lock.json`.
+- **Commands:** `typecheck` passes, `lint` clean, `build` succeeds. `npm test`: 427 passed, 2 failed with 30 s timeouts. The 4 test files that timed out across runs (`api-keys`, `article-route`, `responsive-content`, `setup-action`) pass when run alone (17/17). Both diagrams in `learning-terraform-real-project-tools-repository.mdx` rendered in headless Chrome with Mermaid 12.2.0 and these settings, with no `<script>` in the SVG.
+- **Not verified:** a real article page in a browser (no local database here).
+- **Open:** the admin editor's preview (`/api/admin/preview` → `src/lib/mdx/html.ts`, an HTML string, not React) still shows the highlighted source, not the diagram.
+
+## Draft article: Learning Python through real projects (2026-11-03, owner request)
+
+`content/blog/python-tutorial-beginners-real-projects.mdx`, `status: review`, written against moks `ef6908a` and roboshop-ai `c81e85a`. Nothing published or committed. No application code changed.
+
+- **Files:** the article, `docs/knowledge-sharing/python-tutorial/` (README with SEO metadata, files used, validation, gaps; `verify_article.py`).
+- **Commands:** `verify_article.py` passes (29 verbatim excerpts, 45 example outputs matched, Python 3.11.9). MOKS tests for the quoted code: 51 passed on a throwaway PostgreSQL. `content`, `editor-workflow` and `links` tests pass alone, after two fixes: an indented code line under a list item broke the editor round trip, and `/python-practice` is now plain text because the link checker does not know the route. Full `npm test` had one 30 s timeout in a different unrelated test on each of three runs, while another session was editing `CodeBlock.tsx` and `package.json`. `lint`, `typecheck` and `build` not run: no application code changed.
+- **Open:** category is a `devops-sre` placeholder; tracebacks not checked on Python 3.12; gaps listed in the package README.
+
+## Draft article: Python vs TypeScript (2026-11-03, owner request)
+
+`content/blog/python-vs-typescript.mdx`, `status: review`, written against jithendar.com `dc249e8`, moks `ef6908a` and roboshop-ai `c81e85a`. Nothing published or committed. No application code changed.
+
+- **Files:** the article; `public/images/python-vs-typescript/typescript-python-architecture.svg`; `docs/knowledge-sharing/python-vs-typescript/` (README with SEO metadata, files used, sources, validation and limitations; `verify_examples.py`).
+- **Commands:** `verify_examples.py` passes (44 example groups run on CPython 3.11.9 and Node 26.13.0 and match their `Output:` comments; mypy; `tsc` 6.0.3 and 7.0.2, strict, with and without `noUncheckedIndexedAccess`; 9 project excerpts match their commits). `npx vitest run`: 428 passed, 1 `article-route` timeout under load that passes alone (8/8). Lint, typecheck and build not run: no application code changed.
+- **Open:** category `ai-engineering` is a placeholder. Python examples were not run on 3.12+ (only 3.11 is installed here). `/python-practice` is linked as an absolute URL because the link checker does not know the route.
+
+## Draft article: Learning TypeScript through jithendar.com (2026-11-03, owner request)
+
+`content/blog/learning-typescript-real-project-jithendar-com.mdx`, `status: review`, written against this repository at `dc249e8`. Nothing published or committed. No application code changed.
+
+- **Files:** the article, `docs/knowledge-sharing/typescript-tutorial/` (README with SEO metadata, files used, validation, gaps; `verify_article.py`).
+- **Commands:** `verify_article.py` passes (77 blocks; 36 TS/TSX examples compiled with TypeScript 6.0.3). `npm test` 425 passed in 42 files, after one fix: the editor round trip first failed on a paragraph starting with inline `<p>` code. `npm run typecheck` passes; `npm run lint` is clean. `build` not run: no application code changed, and the MDX compile was checked directly.
+- **Open:** category is a `devops-sre` placeholder (no web-development category exists). Six implementation gaps are listed in the package README, including deprecated `React.FormEvent` in 7 files and the link checker not knowing `/python-practice`.
+
 ## Python practice platform (2026-11-02, owner request)
 
 `/python-practice`: role-based Python practice and interview preparation, plus a sandboxed code runner. Uncommitted. **Code execution is built but off**: mk4 has no gVisor runtime yet. Docs: `PYTHON_PRACTICE.md`, `PYTHON_PRACTICE_EXECUTOR.md`.

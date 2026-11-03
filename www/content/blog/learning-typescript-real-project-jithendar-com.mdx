@@ -1,0 +1,1567 @@
+---
+title: "Learning TypeScript Through a Real Project: How I Use It on jithendar.com"
+slug: learning-typescript-real-project-jithendar-com
+description: "A beginner-friendly TypeScript tutorial built on real code from jithendar.com: types, unions, React props, API calls, Zod validation and tsconfig."
+seoTitle: "TypeScript Tutorial: Real TypeScript Examples from a Next.js Site"
+seoDescription: "Learn TypeScript with React through real examples from a Next.js codebase: types, narrowing, props, async code, unknown, generics and tsconfig."
+author: jithendar-dharmapuri
+category: devops-sre
+tags: [TypeScript, JavaScript, React, Next.js, Zod, Tutorial]
+contentType: tutorial
+status: review
+related:
+  - projects/nextjs-site-on-kubernetes
+---
+
+This site, jithendar.com, is a Next.js application written in TypeScript. Every page you read here, the comment box under this article, the admin editor I write in, and the API routes behind them are `.ts` and `.tsx` files. This TypeScript tutorial uses that code to teach the language from the beginning.
+
+You do not need to know TypeScript already. You do need to be comfortable with everyday JavaScript: variables, functions, objects, arrays, `async`/`await`, and roughly what React does. Each section starts with a small example, then shows where the same idea appears in the real project, and then names the mistake TypeScript helps you catch.
+
+I checked everything here against the `www/` folder of the [jithendar.com repository](https://github.com/mrjithendar/jithendar.com/tree/dc249e807f83ef5a0e2aaa34638c42399e91e905/www) at commit `dc249e8`, on 3 November 2026. The versions installed there are TypeScript 6.0.3, Next.js 16.4.3, React 19.3.1 and Zod 4.6.7. Every code block has one of three labels:
+
+- **Actual project code**: copied from the file named, unchanged.
+- **Simplified from project code**: shortened from the file named. I say what I left out, and I do not change what the remaining lines do.
+- **Standalone teaching example**: written for this article. I compiled each one with the same TypeScript version and strictness settings the project uses.
+
+The TypeScript examples that are meant to fail show the compiler's real error message in a comment, so you can recognise it when you see it in your own editor.
+
+## What TypeScript is, and what it is not
+
+TypeScript is JavaScript with type annotations added. A **type** describes what kind of value something is allowed to hold: a string, a number, an object with certain fields, and so on. You write the types, and a program called the **TypeScript compiler** (`tsc`) reads your code and reports places where the values do not match the types.
+
+Here is a JavaScript function with a mistake that nothing warns you about:
+
+*Standalone teaching example.*
+
+```js
+function readingTime(post, wordsPerMinute = 200) {
+  const minutes = Math.max(1, Math.round(post.words / wordsPerMinute));
+  return `${minutes} min read`;
+}
+
+readingTime({ title: "Hello", wordz: 1800 }); // typo: "wordz"
+// Returns "NaN min read" instead of failing: post.words is undefined, so the maths gives NaN.
+```
+
+The same function in TypeScript:
+
+*Standalone teaching example.*
+
+```ts
+type Post = { title: string; words: number };
+
+function readingTime(post: Post, wordsPerMinute: number = 200): string {
+  const minutes = Math.max(1, Math.round(post.words / wordsPerMinute));
+  return `${minutes} min read`;
+}
+
+console.log(readingTime({ title: "Hello", words: 1800 }));
+```
+
+Three things are new:
+
+- `type Post = ...` gives a name to the shape of an object.
+- `post: Post` and `wordsPerMinute: number` are **parameter annotations**. The colon means "this has the type".
+- `): string` after the parameter list is the **return type**: what the function gives back.
+
+If you now write `wordz` instead of `words`, the compiler stops you before the code runs. You will see the exact error message in the section on objects.
+
+### How TypeScript becomes JavaScript
+
+Browsers and Node.js run JavaScript. Before TypeScript code runs, a tool removes the types. This is what `tsc` produces from the TypeScript version above:
+
+*Standalone teaching example.* (This is the compiler's output for the previous example, not code you write.)
+
+```js
+"use strict";
+function readingTime(post, wordsPerMinute = 200) {
+    const minutes = Math.max(1, Math.round(post.words / wordsPerMinute));
+    return `${minutes} min read`;
+}
+console.log(readingTime({ title: "Hello", words: 1800 }));
+```
+
+The `type Post` line and every annotation are gone. The logic is identical. That is the most important fact about TypeScript: **types exist only while you are writing and checking the code. At runtime, it is plain JavaScript.**
+
+In this project, two separate tools handle the two jobs:
+
+- **Checking.** `npm run typecheck` runs `next typegen && tsc --noEmit`. The `--noEmit` part means "check only, write no files". `next build` also fails when there are type errors, which is the Next.js default.
+- **Converting.** Next.js compiles the code with its own compiler, built on a tool called SWC, which strips the types without checking them.
+
+### What TypeScript cannot check
+
+Because the types are removed, TypeScript knows nothing about values that arrive while the program runs. It cannot check:
+
+- JSON returned by `fetch` or read from a file.
+- What a user types into a form.
+- Rows read from a database.
+- Environment variables.
+- Arguments sent to a server endpoint by someone who is not using your front end.
+
+For those, you need code that checks the value while the program runs. That is called **runtime validation**. This project does it in several places, and we will look at them in the sections on API requests and on `unknown`.
+
+## Understanding .ts and .tsx files
+
+### First, what JSX is
+
+React components describe their output with **JSX**: HTML-like tags written inside JavaScript.
+
+*Standalone teaching example.*
+
+```js
+function Greeting({ name }) {
+  return <p>Hello, {name}</p>;
+}
+```
+
+The line `<p>Hello, {name}</p>` is not valid plain JavaScript. A compiler turns it into ordinary function calls that React understands. The curly braces mean "insert this JavaScript value here".
+
+### TSX is JSX with types
+
+TypeScript files use two extensions:
+
+- **`.ts`** for TypeScript without JSX: utilities, types, database code, server logic.
+- **`.tsx`** for TypeScript that contains JSX: React components and pages.
+
+The extension matters because of syntax. TypeScript allows the older assertion form written as a type inside angle brackets in front of a value, and inside JSX that looks like an opening tag. So the compiler only reads JSX in `.tsx` files. If you put JSX in a `.ts` file you get confusing errors. Here is the first one TypeScript 6.0.3 reports for a one-line component in a `.ts` file:
+
+*Standalone teaching example.* (Saved as `hello.ts`, deliberately the wrong extension.)
+
+```ts
+export const Hello = () => <p>Hello</p>;
+// error TS1161: Unterminated regular expression literal.
+```
+
+The message mentions regular expressions because, without JSX enabled, the compiler tries to read `/p>` as the start of a regular expression. Renaming the file to `hello.tsx` fixes it.
+
+### Where each one appears in jithendar.com
+
+The project has 179 `.ts` files and 168 `.tsx` files under `www/src`. The comment system shows the split clearly. The shared comment types have no JSX, so they live in a `.ts` file:
+
+*Actual project code from [`www/src/lib/comment-types.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/comment-types.ts).*
+
+```ts
+export type CommentSort = "oldest" | "newest";
+export type Viewer = { id: string; role: "admin" | "author" | "user" } | null;
+
+export type DiscussionState = { enabled: boolean; locked: boolean; requireApproval: boolean; editWindowMinutes: number };
+```
+
+The component that renders the comments under a post returns JSX, so it is a `.tsx` file:
+
+*Actual project code from [`www/src/components/Comments.tsx`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/Comments.tsx).*
+
+```tsx
+export async function Comments({ postId, path }: { postId: string; path: string }) {
+  const initial = await listComments(postId, null).catch(() => null);
+  if (!initial?.state.enabled) return null;
+  const { config } = await getSiteConfig();
+  return <Discussion postId={postId} path={path} initial={initial} timeZone={config.general.timezone} />;
+}
+```
+
+A simple rule: if the file returns JSX anywhere, name it `.tsx`. Otherwise use `.ts`. Using `.tsx` for a file with no JSX works, but `.ts` tells the next reader the file has no UI in it.
+
+## Basic types and type inference
+
+The basic types are the ones you already know from JavaScript, written in lower case:
+
+*Standalone teaching example.*
+
+```ts
+const title = "Learning TypeScript";      // inferred: string
+const readingMinutes = 12;                // inferred: number
+const published = false;                  // inferred: boolean
+const tags = ["typescript", "react"];     // inferred: string[]
+
+const post: { title: string; minutes: number; tags: string[] } = {
+  title,
+  minutes: readingMinutes,
+  tags,
+};
+
+let excerpt: string | null = null;        // nothing yet
+excerpt = "A beginner-friendly tour.";
+console.log(post, published, excerpt);
+```
+
+The first four lines have no annotations at all. TypeScript works out the type from the value. This is called **type inference**. `string[]` means "an array of strings".
+
+The `post` line spells out an **object type** inline: the field names, each followed by a colon and a type, separated by semicolons.
+
+### When to write annotations
+
+Inference is enough most of the time. Write a type yourself when:
+
+- **A function takes parameters.** TypeScript cannot guess what callers will pass in.
+- **A value starts empty and is filled in later somewhere TypeScript cannot follow**, such as an object field or React state. For a plain `let` like `excerpt` above, TypeScript actually tracks later assignments, so the annotation there mainly documents intent. For an object it matters: in `const draft = { subtitle: null }`, the field's type is just `null`, and `draft.subtitle = "World"` is an error.
+- **You want to state a contract**, such as the return type of a function other files depend on. If the body later returns the wrong thing, the error appears in the function itself, not in every caller.
+
+Do not annotate things like `const count: number = 0`. It adds nothing.
+
+### null and undefined
+
+JavaScript has two "nothing" values. `undefined` usually means "never set" and `null` usually means "deliberately empty". In TypeScript's strict mode, which this project uses, neither one is allowed unless the type says so.
+
+The `|` symbol creates a **union type**: "one of these". `string | null` means "a string, or null". TypeScript then makes you handle the null case before you use string features:
+
+*Standalone teaching example.*
+
+```ts
+function excerptLength(excerpt: string | null): number {
+  return excerpt.length;
+}
+// error TS18047: 'excerpt' is possibly 'null'.
+```
+
+The fix is to check first. After the check, TypeScript knows the value must be a string:
+
+*Standalone teaching example.*
+
+```ts
+function excerptLength(excerpt: string | null): number {
+  if (excerpt === null) return 0;
+  return excerpt.length;
+}
+```
+
+### Arrays can be empty
+
+This project turns on a stricter setting called `noUncheckedIndexedAccess`. With it, reading `items[0]` gives "the item type, or `undefined`", because the array might be empty.
+
+*Standalone teaching example.*
+
+```ts
+const tags = ["typescript", "react"];
+console.log(tags[0].toUpperCase());
+// error TS2532: Object is possibly 'undefined'.
+```
+
+Two operators help here. `?.` (**optional chaining**) stops and returns `undefined` if the value on its left is missing. `??` (**nullish coalescing**) gives a fallback when the value on its left is `null` or `undefined`.
+
+*Standalone teaching example.*
+
+```ts
+const tags = ["typescript", "react"];
+console.log(tags[0]?.toUpperCase() ?? "no tags");
+```
+
+The project uses exactly this pattern when it needs the first thread of comments and there might be none:
+
+*Actual project code from [`www/src/app/_actions/comments.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/_actions/comments.ts).*
+
+```ts
+/** The thread containing `id`, as this user sees it (after posting, editing or deleting). */
+async function threadOf(postId: string, id: string, user: SessionUser): Promise<CommentView | null> {
+  const page = await listComments(postId, { id: user.id, role: user.role }, { focus: id });
+  return page.threads[0] ?? null;
+}
+```
+
+The return type promises "a comment thread, or null". `page.threads[0]` alone would be "a thread, or `undefined`", so `?? null` converts the missing case into the `null` the return type promises.
+
+**What TypeScript catches here:** code that assumes a value is present when it might not be. "Cannot read properties of undefined" is one of the most common JavaScript runtime errors, and these checks move many of them to compile time.
+
+**Try it:** write `const draft = { title: "Hello", subtitle: null };` and then `draft.subtitle = "World";`. Read the error (`TS2322: Type '"World"' is not assignable to type 'null'`), then fix it by annotating `draft` with an object type whose `subtitle` is `string | null`.
+
+## Functions
+
+A function's types are its parameters and its return value. Here is a JavaScript utility that turns a tag into a URL-friendly slug:
+
+*Standalone teaching example.*
+
+```js
+function tagSlug(tag) {
+  return tag.toLowerCase().trim().replace(/\s+/g, "-");
+}
+
+tagSlug(42); // TypeError at runtime: tag.toLowerCase is not a function
+```
+
+The project's real version says what it accepts and what it returns:
+
+*Actual project code from [`www/src/config/taxonomy.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/config/taxonomy.ts).*
+
+```ts
+/** URL-safe slug for a tag ("Argo CD" → "argo-cd"). */
+export function tagSlug(tag: string): string {
+  return tag
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^\w\s-]/g, "")
+    .trim()
+    .replace(/[\s_]+/g, "-")
+    .replace(/-+/g, "-");
+}
+```
+
+`tag: string` rejects `tagSlug(42)` before the code runs. `: string` after the parentheses promises a string back, so every caller can use string methods on the result without checking.
+
+### Optional parameters and default values
+
+*Standalone teaching example.*
+
+```ts
+function readingTime(words: number, wordsPerMinute: number = 200): string {
+  const minutes = Math.max(1, Math.round(words / wordsPerMinute));
+  return `${minutes} min read`;
+}
+readingTime(1800);       // "9 min read"
+readingTime(1800, 300);  // "6 min read"
+
+function greet(name?: string): string {
+  return `Hello, ${name ?? "reader"}`;
+}
+greet();
+greet("Asha");
+
+const double = (n: number): number => n * 2;
+double(4);
+```
+
+- `wordsPerMinute: number = 200` is a **default value**. Callers may leave it out. TypeScript can infer the type from the default, so `wordsPerMinute = 200` alone means the same thing.
+- `name?: string` is an **optional parameter**. The `?` means the caller may leave it out, so inside the function its type is `string | undefined`.
+- `=>` is JavaScript's arrow function syntax. In `(n: number): number => n * 2`, the annotations work exactly as in a normal function.
+
+The project's sign-in redirect helper uses both a union parameter and a default:
+
+*Actual project code from [`www/src/lib/safe-next.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/safe-next.ts).*
+
+```ts
+export function safeNext(next: string | null | undefined, fallback = "/account"): string {
+```
+
+That is only the first line. `next: string | null | undefined` says callers may pass a string, `null` or `undefined`. That fits its use: the value comes from a URL query parameter, which may be missing. `fallback = "/account"` is a default, with its type inferred as `string`. The body, which I have left out here, rejects anything that is not a same-site path and returns `fallback` instead. That check runs at runtime, because a string type says nothing about whether the string is a safe address.
+
+A second helper in the same file calls it:
+
+*Actual project code from [`www/src/lib/safe-next.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/safe-next.ts).*
+
+```ts
+/** The sign-in URL that returns to `path` afterwards. */
+export function loginHref(path: string | null | undefined): string {
+  const next = safeNext(path, "");
+  return next && next !== "/" ? `/login?next=${encodeURIComponent(next)}` : "/login";
+}
+```
+
+**What TypeScript catches here:** calling a function with the wrong kind of value.
+
+*Standalone teaching example.*
+
+```ts
+function readingTime(words: number, wordsPerMinute: number = 200): string {
+  return `${Math.max(1, Math.round(words / wordsPerMinute))} min read`;
+}
+readingTime("1800");
+// error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+```
+
+In JavaScript, `"1800" / 200` happens to work because of automatic conversion, which is exactly why this kind of bug survives until it does not.
+
+**Try it:** write `formatTags(tags: string[], separator = ", "): string` that joins the tags. Call it with and without the second argument.
+
+## Describing objects with type and interface
+
+Most real data is objects: a post, a comment, a user. TypeScript gives you two ways to name an object's shape.
+
+*Standalone teaching example.*
+
+```ts
+type Author = {
+  name: string;
+  image: string | null;     // always present, may be empty
+  website?: string;         // may be missing entirely
+};
+
+interface Comment {
+  readonly id: string;
+  body: string;
+  author: Author;
+}
+
+const c: Comment = { id: "c1", body: "Nice post", author: { name: "Asha", image: null } };
+c.body = "Edited";
+console.log(c.author.website?.length);
+```
+
+- A **type alias** (`type Author = ...`) names any type: an object, a union, a string, anything.
+- An **interface** (`interface Comment ...`) names an object shape only.
+- `website?: string` is an **optional property**: the object may not have the field at all. Compare it with `image: string | null`, where the field must always exist but its value may be `null`.
+- `readonly id` means the field cannot be reassigned after the object is created.
+
+### type or interface?
+
+For the object shapes in this tutorial, the two behave almost the same. The practical differences for a beginner are:
+
+- Only `type` can name a union, such as `"draft" | "review"`.
+- An interface can be extended with `extends`. A type alias does the same with `&`, which combines two types.
+- Declaring the same interface name twice merges the two. Declaring the same `type` name twice is an error.
+
+Pick one style per project and stay with it. jithendar.com uses `type` for its own data shapes. At commit `dc249e8`, `www/src` has exactly two `interface` declarations, and both use the merging behaviour from the last bullet. They add a field to the browser's built-in `Window` type:
+
+*Actual project code from [`www/src/components/Turnstile.tsx`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/Turnstile.tsx).*
+
+```tsx
+declare global {
+  interface Window {
+    turnstile?: {
+      render: (el: HTMLElement, opts: Record<string, unknown>) => string;
+      reset: (id?: string) => void;
+      remove: (id: string) => void;
+    };
+  }
+}
+```
+
+`Window` is already declared by TypeScript's browser types. `declare global` with `interface Window` adds an optional `turnstile` field to it, describing the object Cloudflare's Turnstile script creates when it loads (Turnstile is the human-verification check on the sign-in and contact forms). After that, `window.turnstile?.reset()` type-checks everywhere. A `type` alias could not do this, because it cannot be reopened.
+
+### Object models in the project
+
+The data shapes the site stores are plain `type` aliases. This is a post's cover image, stored in a JSON column in PostgreSQL:
+
+*Actual project code from [`www/src/db/schema.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/db/schema.ts).*
+
+```ts
+/** Cover image. `focalX`/`focalY` (0–100, default 50) keep the subject in view when cards crop it. */
+export type FeaturedImage = { src: string; alt: string; width: number; height: number; focalX?: number; focalY?: number };
+```
+
+`focalX?` and `focalY?` are optional, matching the comment: if they are missing, the image is centred.
+
+The post editor's form value uses `string | null` for fields that may be empty and a literal union for the status. I have cut it down to a few fields:
+
+*Simplified from project code in [`www/src/lib/post-form.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/post-form.ts). Omitted: 20 of the 25 fields.*
+
+```ts
+/** What the post editor edits. Also the payload of autosaves and what revisions are restored into. */
+export type PostFormValue = {
+  collection: "blog" | "news" | "projects";
+  slug: string;
+  title: string;
+  status: "draft" | "review" | "scheduled" | "published" | "archived";
+  publishedAt: string | null;
+  // ... 20 more fields
+};
+```
+
+`readonly` appears in the project's error classes. This shorthand declares and stores constructor parameters as read-only properties in one step:
+
+*Actual project code from [`www/src/lib/posts.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/posts.ts).*
+
+```ts
+export class PostError extends Error {
+  constructor(
+    message: string,
+    readonly status: number = 400,
+    readonly issues: string[] = [],
+  ) {
+    super(message);
+  }
+}
+```
+
+So `new PostError("Write a comment first.")` has `status` 400, and code that receives the error can read `error.status` but cannot change it.
+
+**What TypeScript catches here:** misspelt fields and writes to fields that should not change.
+
+*Standalone teaching example.*
+
+```ts
+type Author = { name: string; image: string | null };
+const a: Author = { name: "Asha", imgae: null };
+// error TS2561: Object literal may only specify known properties, but 'imgae' does not exist in type 'Author'. Did you mean to write 'image'?
+```
+
+*Standalone teaching example.*
+
+```ts
+interface Comment { readonly id: string; body: string }
+const c: Comment = { id: "c1", body: "x" };
+c.id = "c2";
+// error TS2540: Cannot assign to 'id' because it is a read-only property.
+```
+
+`readonly` is a compile-time rule. The compiled JavaScript does not freeze the object.
+
+## Union types and narrowing
+
+You have already seen `string | null`. Unions are most useful when a value can only be one of a few exact options.
+
+### Literal unions
+
+A **literal type** is a single exact value, such as `"draft"`. A union of literals lists every allowed option:
+
+*Standalone teaching example.*
+
+```ts
+type Status = "draft" | "review" | "published";
+
+function badgeLabel(status: Status): string {
+  if (status === "published") return "Live";
+  return "Not public yet";
+}
+badgeLabel("review");
+```
+
+In JavaScript a status would be any string, and a typo would quietly fall through to the wrong branch. Here the typo is caught:
+
+*Standalone teaching example.*
+
+```ts
+type Status = "draft" | "review" | "published";
+const s: Status = "pubished";
+// error TS2820: Type '"pubished"' is not assignable to type 'Status'. Did you mean '"published"'?
+```
+
+You saw literal unions in the project already: `CommentSort` is `"oldest" | "newest"`, and `Viewer` has a `role` that is `"admin" | "author" | "user"`.
+
+The project also builds a union from a list of values, so the list (used at runtime) and the type (used at compile time) cannot drift apart:
+
+*Actual project code from [`www/src/lib/comment-types.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/comment-types.ts).*
+
+```ts
+export const REPORT_REASONS = ["spam", "abuse", "off-topic", "other"] as const;
+export type ReportReason = (typeof REPORT_REASONS)[number];
+export const reportReasonLabels: Record<ReportReason, string> = {
+  spam: "Spam or advertising",
+  abuse: "Harassment, hate or abuse",
+  "off-topic": "Off-topic",
+  other: "Something else",
+};
+```
+
+Read it one piece at a time:
+
+- `as const` tells TypeScript to keep the exact strings instead of widening them to `string[]`.
+- `typeof REPORT_REASONS` asks for the type of that array. `[number]` then means "the type of any element in it". Together they produce `"spam" | "abuse" | "off-topic" | "other"`.
+- `Record<ReportReason, string>` means "an object with exactly those four keys, each holding a string". If someone adds a fifth reason to the array and forgets its label, this object stops compiling.
+
+That pattern is a little advanced. You can use it without writing it from scratch.
+
+### Narrowing with typeof
+
+When a value can be more than one type, you **narrow** it: you check which one it is, and TypeScript updates the type inside that branch.
+
+*Standalone teaching example.*
+
+```ts
+function formatId(id: string | number): string {
+  if (typeof id === "number") return id.toFixed(0);
+  return id.trim();
+}
+formatId(42);
+```
+
+Inside the `if`, `id` is a `number`. After it, TypeScript knows only a `string` is left. `typeof` checks, `===` comparisons against literals, `instanceof` and `Array.isArray` all narrow types this way.
+
+### Discriminated unions
+
+Now combine both ideas. A **discriminated union** is a union of object types that share one field with a different literal value in each. That shared field is the **discriminant**: checking it tells TypeScript which object you have.
+
+*Standalone teaching example.*
+
+```ts
+type SaveResult = { ok: true; id: string } | { ok: false; error: string };
+
+function describe(result: SaveResult): string {
+  if (result.ok) return `Saved as ${result.id}`;
+  return `Failed: ${result.error}`;
+}
+describe({ ok: false, error: "Too long" });
+```
+
+A successful result has an `id` and no `error`. A failed one has an `error` and no `id`. Reading `result.error` without checking `ok` first is an error:
+
+*Standalone teaching example.*
+
+```ts
+type SaveResult = { ok: true; id: string } | { ok: false; error: string };
+function describe(result: SaveResult): string {
+  return result.error;
+}
+// error TS2339: Property 'error' does not exist on type 'SaveResult'.
+//   Property 'error' does not exist on type '{ ok: true; id: string; }'.
+```
+
+The comment composer on this site uses exactly this shape for the function it calls when you press **Post**:
+
+*Actual project code from [`www/src/components/discussion/Composer.tsx`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Composer.tsx).*
+
+```ts
+export type ComposerSubmit = (body: string, clientKey: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+```
+
+This is a **function type**: "a function that takes two strings and returns a promise of a result". The arrow here separates parameters from the return type, rather than starting a function body. The composer then checks `ok` before it reads `error`:
+
+*Actual project code from [`www/src/components/discussion/Composer.tsx`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Composer.tsx).*
+
+```tsx
+      const r = await onSubmit(body, clientKey.current);
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+```
+
+**What TypeScript catches here:** using a field that only exists in one of the cases, and misspelt option values.
+
+**Try it:** add `"archived"` to the `Status` union in the `badgeLabel` example. Notice that nothing breaks, because the function has a catch-all `return`. In the answers section you will see a way to make TypeScript tell you about every place that needs updating.
+
+## TypeScript in React components
+
+Almost half of the TypeScript files on this site are `.tsx` files, mostly React components and pages, so this is where TypeScript with React becomes practical. It helps to know a few React terms first.
+
+### Hooks, briefly
+
+React components are functions that return JSX. **Hooks** are functions whose names start with `use` that let a component keep data between renders or reach the page:
+
+- `useState` stores a value and gives you a function to change it. Changing it re-renders the component.
+- `useRef` holds a value that survives renders without causing one. It is often used to point at a DOM element.
+- `useTransition` lets the component show a pending state while an update runs.
+
+### Typed props
+
+**Props** are the inputs a component receives, written as attributes in JSX. In TypeScript, you type them like any function parameter, because a component is a function whose single parameter is the props object.
+
+*Standalone teaching example.*
+
+```tsx
+type GreetingProps = {
+  name: string;
+  excited?: boolean;
+};
+
+export function Greeting({ name, excited = false }: GreetingProps) {
+  return <p>Hello, {name}{excited ? "!" : "."}</p>;
+}
+
+export function Usage() {
+  return <><Greeting name="Asha" /><Greeting name="Ravi" excited /></>;
+}
+```
+
+The curly braces after `function Greeting(` **destructure** the props: they pull `name` and `excited` out of the object. `excited = false` is a default, so the prop is optional in both the type and the value.
+
+The real comment composer types its props inline, right after the destructuring:
+
+*Actual project code from [`www/src/components/discussion/Composer.tsx`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Composer.tsx).*
+
+```tsx
+export function Composer({
+  label,
+  submitLabel,
+  pendingLabel = "Posting…",
+  initial = "",
+  autoFocus = false,
+  onSubmit,
+  onCancel,
+}: {
+  label: string;
+  submitLabel: string;
+  pendingLabel?: string;
+  initial?: string;
+  autoFocus?: boolean;
+  onSubmit: ComposerSubmit;
+  onCancel?: () => void;
+}) {
+```
+
+The same component is used for new comments, replies and edits. `onSubmit` is required and must match `ComposerSubmit`. `onCancel` is optional: `?` plus `() => void`, which means "a function that takes nothing and whose return value is ignored". Later the component only shows a **Cancel** button when `onCancel` was passed.
+
+Leaving out a required prop is caught at the place you use the component:
+
+*Standalone teaching example.*
+
+```tsx
+function Greeting({ name }: { name: string }) { return <p>{name}</p>; }
+export const x = <Greeting />;
+// error TS2741: Property 'name' is missing in type '{}' but required in type '{ name: string; }'.
+```
+
+### Typed state, including nullable state
+
+Here is the state at the top of the composer:
+
+*Actual project code from [`www/src/components/discussion/Composer.tsx`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Composer.tsx).*
+
+```tsx
+  const id = useId();
+  const [body, setBody] = useState(initial);
+  const [tab, setTab] = useState<"write" | "preview">("write");
+  const [preview, setPreview] = useState<{ html?: string; error?: string; loading?: boolean }>({});
+  const [error, setError] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  const clientKey = useRef(newKey());
+  const textarea = useRef<HTMLTextAreaElement>(null);
+```
+
+Notice which lines have angle brackets and which do not:
+
+- `useState(initial)` needs nothing extra. `initial` is a string, so `body` is inferred as `string`.
+- `useState<"write" | "preview">("write")` passes a type in angle brackets. Without it, TypeScript would infer `string`, and `setTab("wirte")` would be allowed. This is a generic, covered properly later.
+- `useState<string | null>(null)` is the **nullable state** pattern: "no error yet, a message later". It is required, as the next example shows.
+- `useRef<HTMLTextAreaElement>(null)` says "this will point at a textarea element once React attaches it". Until then, `textarea.current` is `null`, which is why the code later writes `textarea.current?.focus()`.
+
+If you leave the type off nullable state, TypeScript infers that the state can only ever be `null`:
+
+*Standalone teaching example.*
+
+```tsx
+import { useState } from "react";
+export function F() {
+  const [error, setError] = useState(null);
+  setError("Too long");
+  return <p>{error}</p>;
+}
+// error TS2345: Argument of type '"Too long"' is not assignable to parameter of type 'SetStateAction<null>'.
+```
+
+### Form events
+
+Event handlers receive an event object. When you write the handler inline in JSX, TypeScript infers the event type for you. The composer's textarea does this:
+
+*Actual project code from [`www/src/components/discussion/Composer.tsx`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Composer.tsx).*
+
+```tsx
+          onChange={(e) => setBody(e.target.value)}
+```
+
+There is no annotation on `e`, yet TypeScript knows `e.target` is the textarea, so `e.target.value` is a string.
+
+When the handler is a separate function, you write the type yourself. Here is the composer's submit handler:
+
+*Actual project code from [`www/src/components/discussion/Composer.tsx`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Composer.tsx).*
+
+```tsx
+  function submit(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (pending) return;
+    setError(null);
+    if (length < 2) return setError("Write a comment first.");
+    if (tooLong) return setError(`Comments can be up to ${MAX} characters.`);
+    start(async () => {
+      const r = await onSubmit(body, clientKey.current);
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+      setBody("");
+      setTab("write");
+      clientKey.current = newKey();
+    });
+  }
+```
+
+`e?` is optional because the same function also runs from the keyboard shortcut (Ctrl or ⌘ plus Enter), which calls `submit()` with no event. `e?.preventDefault()` stops the browser from reloading the page, but only if there is an event.
+
+One thing to know if you copy this: the installed React types (`@types/react` 19.3.0) mark `FormEvent` as deprecated, with the note that it "doesn't actually exist" as a browser event. They suggest `SubmitEvent` for form submissions and `ChangeEvent` for inputs. The code still compiles. A deprecation is shown in the editor, not reported as an error. For new code, I would write a separate handler like this:
+
+*Standalone teaching example.*
+
+```tsx
+import { useState, type SubmitEvent } from "react";
+
+export function NewsletterForm({ onSubscribe }: { onSubscribe: (email: string) => Promise<boolean> }) {
+  const [email, setEmail] = useState("");                 // string, inferred
+  const [error, setError] = useState<string | null>(null); // must say: starts null
+
+  async function handleSubmit(e: SubmitEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!email.includes("@")) return setError("Enter an email address.");
+    setError((await onSubscribe(email)) ? null : "Try again later.");
+  }
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <input value={email} onChange={(e) => setEmail(e.target.value)} />
+      {error && <p role="alert">{error}</p>}
+      <button type="submit">Subscribe</button>
+    </form>
+  );
+}
+```
+
+`import { ..., type SubmitEvent }` marks `SubmitEvent` as a type-only import, which is removed completely from the JavaScript output. The project writes its type imports the same way, for example `import type { CommentPage, CommentSort, CommentView } from "@/lib/comment-types";` in `Discussion.tsx`.
+
+### Server and client components
+
+Next.js has two kinds of React component. **Server components** run on the server, can be `async`, and can read the database directly. **Client components** run in the browser and can use state and event handlers. A file that starts with `"use client"` contains client components. `Composer.tsx` and `Discussion.tsx` both start that way.
+
+`Comments.tsx`, shown earlier, has no `"use client"`, so it is a server component. That is why it can be an `async function` and `await listComments(...)`. TypeScript types the two kinds the same way: props are a typed object parameter. What differs is where the code runs, which matters in the next section.
+
+## API requests and asynchronous code
+
+### `Promise<T>`
+
+An `async` function always returns a **promise**: an object that will hold a value later. TypeScript writes this as `Promise<T>`, where `T` is the type of the value the promise will hold. The angle brackets mean "fill in this type".
+
+*Standalone teaching example.*
+
+```ts
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function loadTitle(): Promise<string> {
+  await wait(10);
+  return "Hello";   // async wraps this in Promise<string>
+}
+```
+
+- `Promise<void>` means "finishes later with no useful value".
+- Inside `loadTitle`, you `return "Hello"`, a string, but the declared return type is `Promise<string>`, because `async` wraps the result.
+- `await loadTitle()` gives you back a plain `string`.
+
+### A real request: loading comments
+
+When a signed-in reader opens a post, the discussion component asks the server for their view of the comments: their likes, their pending comments, and what they are allowed to do. Here is the function that makes the request:
+
+*Actual project code from [`www/src/components/discussion/Discussion.tsx`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Discussion.tsx).*
+
+```tsx
+  const fetchPage = useCallback(
+    async (params: Record<string, string>): Promise<CommentPage> => {
+      const qs = new URLSearchParams(params);
+      const res = await fetch(`/api/comments/${postId}?${qs}`, { cache: "no-store", credentials: "same-origin" });
+      if (!res.ok) throw new Error(res.status === 404 ? "Comments are closed." : "Comments could not be loaded.");
+      return (await res.json()) as CommentPage;
+    },
+    [postId],
+  );
+```
+
+- `params: Record<string, string>` is an object whose keys and values are all strings, such as a sort order and a cursor.
+- `Promise<CommentPage>` promises the caller a page of comments.
+- `res.ok` is checked first, so HTTP errors become a thrown `Error` with a readable message.
+- `as CommentPage` is the important part. Read on.
+
+The server side of that request is an API route. It loads the comments and sends them back as JSON:
+
+*Simplified from project code in [`www/src/app/api/comments/[postId]/route.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/api/comments/%5BpostId%5D/route.ts). Omitted: the imports, the cache header constant, and the `try`/`catch` that turns errors into 400, 404 or 500 responses.*
+
+```ts
+export async function GET(request: Request, { params }: { params: Promise<{ postId: string }> }) {
+  const { postId } = await params;
+  const url = new URL(request.url);
+  const user = await getSessionUser();
+  const page = await listComments(postId, user ? { id: user.id, role: user.role } : null, {
+    sort: url.searchParams.get("sort") === "newest" ? "newest" : "oldest",
+    cursor: url.searchParams.get("cursor"),
+    focus: url.searchParams.get("focus"),
+  });
+  // ...
+  return Response.json({ ...page, signedIn: !!user }, { headers: NO_STORE });
+}
+```
+
+`listComments` is declared to return `Promise<CommentPage>`, so on the server the compiler checks that `page` really is a `CommentPage`. In Next.js 16, the route's `params` is a promise, which is why its type is `Promise<{ postId: string }>` and the code awaits it.
+
+### Declaring a type is not the same as checking the data
+
+`res.json()` returns `Promise<any>`, because TypeScript cannot know what a server will send. The words `as CommentPage` are a **type assertion**: you are telling the compiler "trust me, it is this shape". The compiler believes you. Nothing is checked at runtime.
+
+This short script shows what that means. It type-checks without errors:
+
+*Standalone teaching example.*
+
+```ts
+type Post = { slug: string; title: string };
+const json = '{"slug": "hello", "headline": "Hello"}'; // the server renamed a field
+const post = JSON.parse(json) as Post;                  // TypeScript is satisfied
+console.log(post.title);                                // undefined at runtime
+console.log(post.title.toUpperCase());                  // TypeError at runtime
+```
+
+I ran it with Node.js 26. The first `console.log` prints `undefined`. The second throws `TypeError: Cannot read properties of undefined (reading 'toUpperCase')`, even though the type says `title` is a string.
+
+In `fetchPage`, the assertion is a reasonable trade-off. The browser calls an API route in the same codebase, and the server builds its response from a function that is type-checked to return `CommentPage`. The two sides can still drift apart if one changes and the other is not rebuilt, and the client would not notice. The assertion is a promise you make, not a check the computer runs.
+
+### Runtime validation with Zod
+
+When data comes from somewhere you do not control, such as a request body, a form or an external API, the project checks it at runtime with **Zod**, a validation library. You describe the expected shape as a **schema**, an object that can check a value while the program runs. Zod checks the value and, if it passes, gives you correctly typed data.
+
+Here is an API route from the site's Python practice section that saves a learner's draft, note or bookmark:
+
+*Actual project code from [`www/src/app/api/practice/problems/[slug]/state/route.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/api/practice/problems/%5Bslug%5D/state/route.ts).*
+
+```ts
+const input = z.union([z.object({ draft: z.string() }), z.object({ note: z.string() }), z.object({ bookmarked: z.boolean() })]);
+
+/** PUT { draft } | { note } | { bookmarked }. */
+export async function PUT(req: Request, { params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  return withUser(
+    req,
+    async (user) => {
+      const parsed = input.safeParse(await readJson(req));
+      if (!parsed.success) throw new PracticeError("Invalid request.", 400, "invalid");
+      const body = parsed.data;
+      if ("draft" in body) await saveDraft(user.id, slug, body.draft);
+      else if ("note" in body) await saveNote(user.id, slug, body.note);
+      else await setBookmark(user.id, slug, body.bookmarked);
+      return json({ ok: true });
+    },
+    { mutating: true },
+  );
+}
+```
+
+- `z.union([...])` accepts any one of three object shapes.
+- `safeParse` never throws. It returns `{ success: true, data }` or `{ success: false, error }`. That is a discriminated union, and `success` is the discriminant.
+- After the `success` check, `parsed.data` has the type Zod worked out from the schema: one of the three objects.
+- `"draft" in body` narrows again. The `in` operator checks whether an object has a property, and TypeScript uses it to pick which of the three shapes `body` is.
+
+The contact form's schema adds rules a type cannot express, like length limits and email format:
+
+*Actual project code from [`www/src/lib/contact.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/contact.ts).*
+
+```ts
+export const contactInput = z.object({
+  name: z.string().trim().min(2, "Enter your name").max(100),
+  email: z.email("Enter a valid email").trim().max(200),
+  subject: z.string().trim().min(3, "Enter a subject").max(150),
+  message: z.string().trim().min(10, "Your message is too short").max(5000),
+});
+```
+
+`submitContact(raw: unknown, ...)` receives the form data as `unknown` and calls `contactInput.safeParse(raw)` before anything is stored.
+
+Zod can also produce the TypeScript type from a schema, so you describe the shape once. The article frontmatter schema does this:
+
+*Actual project code from [`www/src/lib/content/schema.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/content/schema.ts).*
+
+```ts
+export type ArticleFrontmatter = z.output<typeof articleFrontmatter>;
+```
+
+`z.output` gives the type of the data after validation. If someone adds a field to the schema, the type gets it automatically.
+
+If I wanted the browser to check the comments response too, the pattern would look like the next example. **This is a possible improvement, not what `fetchPage` does today.**
+
+*Standalone teaching example.*
+
+```ts
+import { z } from "zod";
+
+const PostSchema = z.object({ slug: z.string(), title: z.string() });
+type Post = z.infer<typeof PostSchema>;
+
+export async function getPostChecked(slug: string): Promise<Post> {
+  const res = await fetch(`/api/posts/${slug}`);
+  if (!res.ok) throw new Error(`Request failed (${res.status})`);
+  const parsed = PostSchema.safeParse(await res.json());
+  if (!parsed.success) throw new Error("The server sent an unexpected shape.");
+  return parsed.data;
+}
+```
+
+`z.infer` is another name for the output type. The cost is a schema to maintain beside the type, and some code sent to the browser. For a same-origin endpoint whose server code is already type-checked, the assertion may be enough. For anything external, validate.
+
+## any, unknown and safe error handling
+
+### any turns checking off
+
+`any` is TypeScript's way out. A value of type `any` can be used as anything, and nothing about it is checked:
+
+*Standalone teaching example.*
+
+```ts
+const data: any = JSON.parse('{"title": "Hello"}');
+data.title.toUpperCase();  // fine
+data.tilte.toUpperCase();  // also "fine" to the compiler; crashes at runtime
+```
+
+It is also contagious. If `data` is `any`, then `data.title` is `any` too, and so is everything you derive from it.
+
+In strict mode, TypeScript refuses to assume `any` silently. A parameter with no type and no default is an error:
+
+*Standalone teaching example.*
+
+```ts
+export function double(n) { return n * 2; }
+// error TS7006: Parameter 'n' implicitly has an 'any' type.
+```
+
+At commit `dc249e8`, `www/src` has no `any` annotations, no `as any`, and no `@ts-ignore` comments.
+
+### unknown makes you check first
+
+`unknown` is the safe opposite. Any value can be assigned to `unknown`, but you cannot use it until you have narrowed it:
+
+*Standalone teaching example.*
+
+```ts
+function lengthOf(value: unknown): number {
+  if (typeof value === "string") return value.length;
+  if (Array.isArray(value)) return value.length;
+  return 0;
+}
+lengthOf("hi");
+```
+
+That is the right type for values from outside the program. The comment system declares the text of a new comment as `unknown`, even though the browser normally sends a string, and checks it at runtime:
+
+*Actual project code from [`www/src/lib/comments.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/comments.ts).*
+
+```ts
+function cleanBody(body: unknown): string {
+  if (typeof body !== "string") throw new PostError("Write a comment first.");
+  const text = body.replace(/\r\n?/g, "\n").trim();
+  if (text.length < COMMENT_MIN || text.length > COMMENT_MAX) throw new PostError(`Comments must be ${COMMENT_MIN}–${COMMENT_MAX} characters.`);
+  return text;
+}
+```
+
+After the `typeof` check, `body` is a `string`, and `.replace` is allowed. The function's return type, `string`, is now backed by real checks, so the rest of the code can trust it.
+
+The post editor uses a tiny helper of the same kind for values read from a database row or a saved revision:
+
+*Actual project code from [`www/src/lib/post-form.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/post-form.ts).*
+
+```ts
+const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
+```
+
+"A non-empty string, or `null`". Any other value, whether a number, an empty string or `undefined`, becomes `null`.
+
+### Safe catch blocks
+
+JavaScript lets you `throw` anything, not just `Error` objects. So in strict mode, the variable in `catch (error)` has type `unknown`:
+
+*Standalone teaching example.*
+
+```ts
+try { JSON.parse("{"); } catch (error) {
+  console.log(error.message);
+}
+// error TS18046: 'error' is of type 'unknown'.
+```
+
+Narrow it before you use it:
+
+*Standalone teaching example.*
+
+```ts
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return "Something went wrong.";
+}
+```
+
+The discussion component does this in one line when loading comments fails:
+
+*Simplified from project code in [`www/src/components/discussion/Discussion.tsx`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Discussion.tsx). Omitted: the body of the `try`, which loads the page and scrolls to a linked comment.*
+
+```tsx
+      try {
+        const page = await fetchPage({ sort: nextSort });
+        // ...
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Comments could not be loaded.");
+        setStatus("error");
+      }
+```
+
+The server actions go one step further. They separate errors that are safe to show from everything else:
+
+*Actual project code from [`www/src/app/_actions/comments.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/_actions/comments.ts).*
+
+```ts
+  try {
+    return { ok: true, ...(await fn(user)) };
+  } catch (error) {
+    if (error instanceof PostError) return { ok: false, error: error.message };
+    const { log } = await import("@/lib/log");
+    log.error("comment action failed", { err: error });
+    return { ok: false, error: "Something went wrong. Please try again." };
+  }
+```
+
+A `PostError` is one the code threw on purpose, such as "You are commenting too quickly", so its message goes to the reader. Anything else might contain internal details, so it is logged on the server and the reader gets a generic message.
+
+### as is an assertion, not a check
+
+You saw `as CommentPage` earlier. Assertions are sometimes the right tool, but only when you have a reason, ideally a runtime check, to know they are true. Here is a careful use in the project:
+
+*Actual project code from [`www/src/lib/comments.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/comments.ts).*
+
+```ts
+  if (!REPORT_REASONS.includes(reason as ReportReason)) throw new PostError("Choose a reason.");
+```
+
+`reason` arrives as `unknown`. The `as ReportReason` is there only because `includes` on a list of exact strings will not accept an `unknown` argument. The real protection is the runtime `includes` check: if the reason is not in the list, the function stops.
+
+A related shortcut is the **non-null assertion**, a `!` after a value, which means "I know this is not `null` or `undefined`". In `submitComment`, the database insert returns an array of new rows, and the code writes `row!.id`. An insert that did not throw returns a row, so the `!` is safe in practice, but the compiler is taking the developer's word for it.
+
+**Rule of thumb:** prefer `unknown` plus a check over `any`, and prefer a check over `as`.
+
+## Generics
+
+A **generic** is a type with a blank in it. You write the blank as a **type parameter** in angle brackets, usually called `T`, and TypeScript fills it in each time you use the function or type.
+
+*Standalone teaching example.*
+
+```ts
+function firstOr<T>(items: T[], fallback: T): T {
+  return items[0] ?? fallback;
+}
+const n = firstOr([3, 5, 8], 0);        // T is number
+const s = firstOr(["a", "b"], "none");  // T is string
+console.log(n.toFixed(1), s.toUpperCase());
+```
+
+Read `firstOr<T>(items: T[], fallback: T): T` as: "for some type T, take an array of T and a fallback T, and return a T". You do not pass `T` yourself. TypeScript infers it from the arguments. Without generics you would need one function per type, or `any`, which would lose the result's type.
+
+You have already used generics written by other people:
+
+- `Promise<CommentPage>`: a promise that will hold a `CommentPage`.
+- `useState<string | null>(null)`: state whose value is a string or null.
+- `Record<K, V>`: an object whose keys are `K` and whose values are `V`. The project uses it for labels:
+
+*Actual project code from [`www/src/config/taxonomy.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/config/taxonomy.ts).*
+
+```ts
+export const collectionLabels: Record<Collection, string> = {
+  blog: "Articles",
+  news: "News",
+  projects: "Projects",
+};
+```
+
+### A generic in the project: the practice API helper
+
+The Python practice pages call their API through one small generic function:
+
+*Actual project code from [`www/src/components/practice/api.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/practice/api.ts).*
+
+```ts
+export async function api<T>(path: string, init: { method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {
+  const res = await fetch(path, {
+    method: init.method ?? (init.body === undefined ? "GET" : "POST"),
+    headers: init.body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    signal: init.signal,
+    credentials: "same-origin",
+    cache: "no-store",
+  });
+  const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+  if (!res.ok) throw new ApiError(data.error ?? `Request failed (${res.status}).`, res.status, data.code ?? "error", Number(res.headers.get("retry-after")) || undefined);
+  return data as T;
+}
+```
+
+A caller writes something like `api<{ ok: true }>("/api/...")`, and the result has that type. One function handles every endpoint, and each call site still gets a specific type.
+
+Notice the last line: `return data as T`. As with `fetchPage`, the generic decides what the caller sees, but nothing checks that the server actually sent a `T`. A generic is still a compile-time feature.
+
+### A constrained generic
+
+The comment server actions share one wrapper that checks the session and catches errors. Its result type is generic too:
+
+*Actual project code from [`www/src/app/_actions/comments.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/_actions/comments.ts).*
+
+```ts
+export type CommentResult<T = object> = ({ ok: true; message?: string } & T) | { ok: false; error: string; signedOut?: true };
+```
+
+- `T = object` is a **default type parameter**: if nobody fills in `T`, it is `object`.
+- `{ ok: true; message?: string } & T` merges the success fields with whatever extra data the action returns. For example, a like action returns `likes` and `liked`.
+- The failure side is the same for every action.
+
+The wrapper is declared as `async function signedIn<T extends object>(...)`. `T extends object` is a **constraint**: T can be any object type, but not a string or a number, because the code spreads it into an object. You can use code like this long before you need to write it.
+
+## Understanding tsconfig.json
+
+`tsconfig.json` tells the compiler which files to check and how strictly. This is the whole file in `www/`:
+
+*Actual project code from [`www/tsconfig.json`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/tsconfig.json).*
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [{ "name": "next" }],
+    "paths": { "@/*": ["./src/*"] }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts", ".next/dev/types/**/*.ts"],
+  "exclude": ["node_modules", ".next"]
+}
+```
+
+Every option in this file is set explicitly. Some match what TypeScript 6.0.3 would do anyway. I checked each default with `tsc --help --all` from the installed compiler, because TypeScript 6.0 changed several of them.
+
+| Option | What it does here | TypeScript 6.0.3 default if left out |
+|---|---|---|
+| `strict: true` | Turns on the whole family of strict checks, including null checks and no implicit `any` | `true` (older versions defaulted to `false`) |
+| `noUncheckedIndexedAccess: true` | `items[0]` may be `undefined` | `false`, so this one makes the project stricter than the default |
+| `noEmit: true` | Check only. Next.js does the actual compiling | `false` |
+| `target: "ES2022"` | Which JavaScript version the type checker assumes | `es2025` |
+| `lib` | Which built-in APIs exist: browser DOM plus the latest JavaScript | Based on `target` |
+| `jsx: "react-jsx"` | How JSX in `.tsx` files is understood | Not set |
+| `module` and `moduleResolution` | `esnext` and `bundler`: modern `import`/`export`, resolved the way a bundler resolves them | `bundler` resolution unless `module` is a Node mode |
+| `isolatedModules: true` | Every file must be compilable on its own, because SWC compiles one file at a time | `false` |
+| `esModuleInterop: true` | Smooths importing older CommonJS packages | `true` |
+| `skipLibCheck: true` | Does not type-check the `.d.ts` files inside installed packages, which is faster | `false` |
+| `allowJs: false` | Only TypeScript files are part of the program | `false` |
+| `resolveJsonModule: true` | Allows `import data from "./file.json"` | `false` |
+| `incremental: true` | Caches results between runs in `tsconfig.tsbuildinfo` | `false` |
+| `plugins: next` | Loads the Next.js plugin for editor hints | None |
+| `paths` | The `@/` import alias, explained below | None |
+
+### Strict mode
+
+`strict` is a bundle of checks. The ones you met in this tutorial are:
+
+- **`strictNullChecks`**: `null` and `undefined` are only allowed where the type includes them. This is behind the "possibly null" errors.
+- **`noImplicitAny`**: a parameter with no type is an error instead of silently becoming `any`.
+- **`useUnknownInCatchVariables`**: `catch (error)` gives `unknown`.
+
+For a new project, keep `strict` on from the first day. Switching it on later means fixing every error at once.
+
+### The @/ path alias
+
+`"paths": { "@/*": ["./src/*"] }` means an import starting with `@/` is looked up in `src/`. So code anywhere in the project can write:
+
+*Actual project code from [`www/src/app/_actions/comments.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/_actions/comments.ts).*
+
+```ts
+import { PostError } from "@/lib/posts";
+```
+
+instead of a relative path like `../../lib/posts`. Next.js reads the same setting when it bundles the code, so the alias works at runtime too.
+
+### Generated route types
+
+The `include` list contains `.next/types/**/*.ts`. Those files do not exist until Next.js writes them. That is why `npm run typecheck` runs `next typegen` first: it generates types describing the app's routes, then `tsc --noEmit` checks everything together.
+
+## Following one feature end to end: posting a comment
+
+Now let us follow one feature through every layer: posting a comment under an article. Here is the path the data takes:
+
+*Simplified from project code: the file and function at each step, as traced in this section.*
+
+```text
+Browser (client components)
+  Composer.tsx        body: string ──► onSubmit(body, clientKey)
+  Discussion.tsx      post() ──► postCommentAction({ postId, parentId, body, clientKey })
+                                   │  server action: an HTTP request under the hood
+Server
+  _actions/comments.ts  signedIn(): reads the user from the session cookie
+  lib/comments.ts       submitComment(): cleanBody(), id and rate checks, insert
+  db/schema.ts          comment table (Drizzle ORM ──► PostgreSQL)
+                                   │
+  back to the browser   CommentResult: { ok: true, id, status, thread, message }
+                                    or { ok: false, error, signedOut? }
+```
+
+### Step 1: the composer
+
+The reader types into the composer. `body` is `useState(initial)`, a `string`. On submit, the composer checks the length, then calls its `onSubmit` prop, which has the `ComposerSubmit` type. You saw both earlier.
+
+### Step 2: the discussion component calls the server
+
+`Discussion.tsx` provides the `onSubmit` function. It calls a **server action**: a function marked `"use server"` that runs on the server but is imported and called like a normal function from client code.
+
+*Actual project code from [`www/src/components/discussion/Discussion.tsx`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Discussion.tsx).*
+
+```tsx
+  async function post(body: string, clientKey: string, parent: CommentView | null) {
+    const r = handleResult(await postCommentAction({ postId, parentId: parent?.id ?? null, body, clientKey }));
+    if (!r.ok) return { ok: false as const, error: r.error };
+    if (r.thread) setThreads((t) => upsertThread(t, r.thread!, sort));
+    if (r.status === "approved") setTotal((n) => n + 1);
+    setNotice({ tone: r.status === "approved" ? "success" : "info", text: r.message ?? "Posted." });
+    setLive(r.message ?? "");
+    focusComment(r.id);
+    return { ok: true as const };
+  }
+```
+
+This is where TypeScript earns its keep across the network boundary. Because the client imports `postCommentAction` directly, the compiler knows its exact parameter and result types:
+
+- Passing `{ postid }` instead of `{ postId }` fails to compile.
+- After `if (!r.ok) return ...`, TypeScript knows `r` is the success case, so `r.id`, `r.status` and `r.thread` are available. Before that check, they are not.
+- `r.status === "approved"` is checked against the literal union `"approved" | "pending"` that `submitComment` returns.
+- `false as const` keeps the literal `false` rather than widening it to `boolean`, so the returned object matches `ComposerSubmit`'s `{ ok: false; error: string }`.
+
+### Step 3: the server action
+
+*Actual project code from [`www/src/app/_actions/comments.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/_actions/comments.ts).*
+
+```ts
+export async function postCommentAction(input: { postId: string; parentId?: string | null; body: string; clientKey: string }) {
+  return signedIn(async (user) => {
+    const r = await submitComment(user, { postId: input.postId, parentId: input.parentId ?? null, body: input.body, clientKey: input.clientKey });
+    return {
+      id: r.id,
+      status: r.status,
+      thread: await threadOf(input.postId, r.id, user),
+      message: r.status === "approved" ? "Your comment is published." : "Thanks! Your comment will appear after a moderator approves it.",
+    };
+  });
+}
+```
+
+There is no return type annotation. TypeScript infers it from `signedIn` and the object returned inside, and that inferred type is what the browser code in step 2 relies on. Note the comment at the top of the file: the user comes "from the session cookie (never from the arguments)". The user's identity is never taken from data the browser sends.
+
+### Step 4: the business logic checks everything again at runtime
+
+Here is the important part. A server action is still an HTTP endpoint. Someone can call it with a hand-made request, ignoring the TypeScript types entirely. So `submitComment` treats its input as untrusted:
+
+*Simplified from project code in [`www/src/lib/comments.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/comments.ts). Omitted: the duplicate-submission lookup, the parent-comment checks, the rate limit and duplicate-text queries, and the race-condition retry.*
+
+```ts
+export type SubmitInput = { postId: string; parentId?: string | null; body: unknown; clientKey?: string | null };
+
+export async function submitComment(user: { id: string; role: string }, input: SubmitInput): Promise<{ id: string; status: "approved" | "pending"; duplicate: boolean }> {
+  const state = await discussionFor(input.postId);
+  assertOpen(state);
+  const text = cleanBody(input.body);
+  const clientKey = input.clientKey && CLIENT_KEY.test(input.clientKey) ? input.clientKey : null;
+  // ...
+  const staff = user.role === "admin" || user.role === "author";
+  const status = staff || !state.requireApproval ? "approved" : "pending";
+  // ...
+}
+```
+
+Look at what runs at runtime here, and what it protects against:
+
+- `body: unknown` in `SubmitInput`, then `cleanBody()`: a missing, non-string, too-short or too-long body is rejected.
+- `discussionFor(input.postId)` starts with an `isUuid` check (a regular expression), then reads the post from the database and confirms it exists, is published and is not deleted. `assertOpen(state)` then rejects closed or locked discussions.
+- `CLIENT_KEY.test(...)`: the duplicate-protection key must match `/^[A-Za-z0-9_-]{8,64}$/`, or it is ignored.
+- The status comes from the user's role on the server, not from anything the browser sent.
+
+Here TypeScript and runtime checks work together. The `Promise<{ id: string; status: "approved" | "pending"; duplicate: boolean }>` return type makes sure every `return` in this long function produces the same shape. `cleanBody` and the regular expressions make sure the input really is what the types claim.
+
+### Step 5: the database
+
+The insert goes through Drizzle, a library that describes database tables in TypeScript:
+
+*Simplified from project code in [`www/src/db/schema.ts`](https://github.com/mrjithendar/jithendar.com/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/db/schema.ts). Omitted: the moderation, depth and timestamp columns, and the indexes and foreign keys.*
+
+```ts
+export const comment = pgTable(
+  "comment",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    postId: uuid("post_id")
+      .notNull()
+      .references(() => post.id, { onDelete: "cascade" }),
+    // ...
+    body: text("body").notNull(),
+    status: text("status").notNull().default("pending"),
+    // ...
+    parentId: uuid("parent_id"),
+    // ...
+    clientKey: text("client_key"),
+  },
+  // ...
+);
+```
+
+From this definition, Drizzle gives TypeScript the type of each row. `.notNull()` columns become `string`. Columns without it, like `parentId`, become `string | null`. So `db.insert(c).values({ ... })` in `submitComment` will not compile if a required column such as `body` is missing.
+
+One gap is worth seeing. `status` is a `text` column, so TypeScript sees it as any `string`, not as the literal union the code uses. That is why `submitComment` turns database values back into the union explicitly: `first.status === "approved" ? "approved" : "pending"`. The database itself also enforces rules no type can see, such as a unique index on the user and client key, and a foreign key that keeps a reply on the same post as its parent.
+
+### Step 6: back to the browser
+
+The server action's result goes back as a `CommentResult`. On a failure, `signedIn` returns `{ ok: false, error }`, plus `signedOut: true` when the session has ended. The composer shows the error, and the discussion shows a sign-in prompt.
+
+### What TypeScript checked and what it did not
+
+| Concern | Checked by |
+|---|---|
+| The client passes the fields the server action expects | TypeScript, at compile time |
+| The client reads `id` and `status` only on success | TypeScript (discriminated union) |
+| Every return in `submitComment` has the same shape | TypeScript |
+| A required database column is not forgotten | TypeScript, through Drizzle's types |
+| The request really contains a string body of the right length | Runtime: `cleanBody` |
+| The post id is a real, open, published post | Runtime: `isUuid` and a database query |
+| The user is signed in, and who they are | Runtime: the session cookie |
+| No duplicate comment from a double click | Runtime: client key and a unique index |
+| A reply is on the same post as its parent | Runtime: code check and a database foreign key |
+
+The top half helps the people writing the code. The bottom half protects the site from its users. You need both.
+
+## Common beginner mistakes
+
+**Putting JSX in a .ts file.** The errors look unrelated, such as `TS1161: Unterminated regular expression literal`. Rename the file to `.tsx`.
+
+**Reaching for any when the compiler complains.** It makes the error go away by switching checking off, for that value and everything derived from it. Use `unknown` and narrow it, or describe the real type.
+
+**Using as to silence an error.** `value as Post` does not turn a value into a `Post`. If the compiler says two types do not match, the assertion hides the mismatch until runtime. Use assertions only when a runtime check or a guarantee elsewhere backs them up, as `includes` does in `reportComment`.
+
+**Trusting API JSON because it has a type.** `(await res.json()) as CommentPage` documents what you expect. It does not check it. For data from outside your codebase, validate with a schema, as the practice and contact routes do with Zod.
+
+**Ignoring null and undefined.** When you see `TS18047: 'x' is possibly 'null'` or `TS2532: Object is possibly 'undefined'`, the compiler has found a real missing case. Handle it with an `if`, `?.` or `??`. Do not hide it with `!` unless you can say why the value must exist.
+
+**Forgetting the type on nullable state.** `useState(null)` makes state that can only ever be `null`. You will see `TS2345 ... SetStateAction<null>`. Write `useState<string | null>(null)`.
+
+**Annotating everything.** `const title: string = "Hello"` and `const [body, setBody] = useState<string>("")` repeat what inference already knows. Annotate parameters, empty starting values and public return types. Let inference do the rest.
+
+**Treating a typo in a union as a string.** `TS2820 ... Did you mean '"published"'?` is TypeScript reading your literal union. Accept the suggestion.
+
+**Reading a field from the wrong side of a union.** `TS2339: Property 'error' does not exist on type ...` on a discriminated union means you have not checked the discriminant yet. Check `if (!result.ok)` first.
+
+## Practice exercises
+
+Try each exercise in a `.ts` or `.tsx` file with `strict` on. The compiler will tell you whether you got it right.
+
+1. **Functions.** Write `formatTags` that takes an array of strings and an optional separator, defaulting to `", "`, and returns one string. `formatTags(["a", "b"])` should return `"a, b"`.
+2. **Literal unions.** Define a `DiscussionMode` type that allows only `"open"`, `"locked"` and `"closed"`. Write `canPost(mode)` that returns `true` only for `"open"`. Check that `canPost("opne")` fails to compile.
+3. **Nullable React state.** This component does not compile. Fix it without using `any`:
+
+*Standalone teaching example.* (Deliberately broken.)
+
+```tsx
+import { useState } from "react";
+export function SaveButton() {
+  const [message, setMessage] = useState(null);
+  return <button onClick={() => setMessage("Saved")}>{message ?? "Save"}</button>;
+}
+// error TS2345: Argument of type '"Saved"' is not assignable to parameter of type 'SetStateAction<null>'.
+```
+
+4. **unknown and catch.** Write `safeJsonTitle(text: string): string` that parses JSON and returns its `title` if it is a string, or `"Untitled"` in every other case, including invalid JSON. Use no `any` and no `as`.
+5. **Generics.** Write `lastOr` with a type parameter: it returns the last item of an array, or a fallback when the array is empty. `lastOr([1, 2, 3], 0)` should have the type `number`.
+
+## Suggested answers
+
+These are one way to solve each exercise. Each one compiles with the project's settings.
+
+**1. Functions**
+
+*Standalone teaching example.*
+
+```ts
+function formatTags(tags: string[], separator = ", "): string {
+  return tags.join(separator);
+}
+formatTags(["a", "b"]);        // "a, b"
+formatTags(["a", "b"], " / "); // "a / b"
+```
+
+**2. Literal unions**, plus the exhaustive check promised in the unions section:
+
+*Standalone teaching example.*
+
+```ts
+type DiscussionMode = "open" | "locked" | "closed";
+
+function canPost(mode: DiscussionMode): boolean {
+  return mode === "open";
+}
+
+function modeLabel(mode: DiscussionMode): string {
+  switch (mode) {
+    case "open": return "Open";
+    case "locked": return "Locked";
+    case "closed": return "Closed";
+    default: {
+      const unhandled: never = mode; // fails to compile if a new mode is not handled above
+      return unhandled;
+    }
+  }
+}
+canPost("open");
+modeLabel("locked");
+```
+
+`never` is the type with no possible values. Once every case is handled, nothing is left for `mode` to be, so assigning it to `never` compiles. Add `"archived"` to the union, and this line fails with `TS2322: Type '"archived"' is not assignable to type 'never'.`, which points you to the missing case. The project has a matching runtime list in `www/src/lib/comments.ts`: `DISCUSSION_MODES = ["open", "locked", "closed"] as const`.
+
+**3. Nullable React state**
+
+*Standalone teaching example.*
+
+```tsx
+import { useState } from "react";
+export function SaveButton() {
+  const [message, setMessage] = useState<string | null>(null);
+  return <button onClick={() => setMessage("Saved")}>{message ?? "Save"}</button>;
+}
+```
+
+**4. unknown and catch**
+
+*Standalone teaching example.*
+
+```ts
+function safeJsonTitle(text: string): string {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return "Untitled";
+  }
+  if (typeof data === "object" && data !== null && "title" in data && typeof data.title === "string") {
+    return data.title;
+  }
+  return "Untitled";
+}
+safeJsonTitle('{"title": "Hello"}'); // "Hello"
+safeJsonTitle("not json");           // "Untitled"
+```
+
+`JSON.parse` is declared to return `any`. Storing the result in an `unknown` variable puts the checks back. `catch` with no variable is allowed when you do not need the error. The `data !== null` check matters, because `typeof null` is `"object"` in JavaScript.
+
+**5. Generics**
+
+*Standalone teaching example.*
+
+```ts
+function lastOr<T>(items: T[], fallback: T): T {
+  return items.at(-1) ?? fallback;
+}
+const n = lastOr([1, 2, 3], 0);      // number
+const s = lastOr<string>([], "none"); // string, written explicitly because [] alone says nothing
+console.log(n, s);
+```
+
+## Quick reference
+
+| Concept | Meaning | Where it appears in jithendar.com |
+|---|---|---|
+| `.ts` and `.tsx` | TypeScript without and with JSX | `lib/comment-types.ts`, `components/Comments.tsx` |
+| Type inference | TypeScript works out a type from the value | `useState(initial)` in `Composer.tsx` |
+| Parameter and return types | What a function accepts and gives back | `tagSlug(tag: string): string` in `config/taxonomy.ts` |
+| Optional `?` and defaults | May be left out, or has a fallback value | `onCancel?` and `pendingLabel = "Posting…"` in `Composer.tsx` |
+| Union | One of several types or values | `CommentSort` in `lib/comment-types.ts` |
+| Nullable value | A union that includes `null` | The `error` state in `Composer.tsx`, which starts as `null` |
+| `noUncheckedIndexedAccess` | Indexing may give `undefined` | `page.threads[0] ?? null` in `_actions/comments.ts` |
+| Object type | The fields of an object | `FeaturedImage` in `db/schema.ts` |
+| `interface` merging | Adding fields to an existing type | `interface Window` in `components/Turnstile.tsx` |
+| `readonly` | Cannot be reassigned | `PostError` in `lib/posts.ts` |
+| Narrowing | A check that refines a type | `typeof body !== "string"` in `cleanBody` |
+| Discriminated union | Union told apart by a shared field | `ComposerSubmit` and `CommentResult` |
+| `as const` with `typeof` | A union built from a runtime list | `REPORT_REASONS` in `lib/comment-types.ts` |
+| `Promise<T>` | A value that arrives later | `fetchPage` in `Discussion.tsx` |
+| Type assertion `as` | Trust me: no runtime check | `(await res.json()) as CommentPage` |
+| Runtime validation | Checking real data while running | Zod `safeParse` in the practice state route and `lib/contact.ts` |
+| `unknown` | Must be checked before use | `cleanBody(body: unknown)` in `lib/comments.ts` |
+| `catch` narrowing | Handle thrown values safely | `error instanceof PostError` in `_actions/comments.ts` |
+| Generic | A type with a blank to fill in | `api<T>` in `components/practice/api.ts` |
+| `Record<K, V>` | Object with known keys | `collectionLabels` in `config/taxonomy.ts` |
+| `strict` | The main safety checks | `tsconfig.json` |
+| Path alias `@/` | Import from `src/` | `import { PostError } from "@/lib/posts"` |
+
+## Where to go next
+
+If you want to see how this same codebase is built and deployed to Kubernetes, I wrote about that in [How jithendar.com runs](/projects/nextjs-site-on-kubernetes). If you try the exercises and get stuck, or spot something in this article that does not match the code, the [contact page](/contact) reaches me directly.
+
+The best next step is to open a small file in a TypeScript project you already have, turn on `strict`, and fix what the compiler finds. Every error is one of the cases in this article.
