@@ -1,0 +1,325 @@
+---
+title: "How GitHub Actions Authenticates to My Minikube Cluster"
+slug: github-actions-authenticate-minikube
+description: "How jithendar.com's CI reaches a self-hosted minikube cluster: a public API port, a scoped ServiceAccount token, and a kubeconfig built at run time."
+seoTitle: "GitHub Actions to Minikube: ServiceAccount Token and RBAC Tutorial"
+seoDescription: "How jithendar.com's CI reaches a self-hosted minikube cluster: a public API port, a scoped ServiceAccount token, and a kubeconfig built at run time."
+author: jithendar-dharmapuri
+category: kubernetes
+tags: [Kubernetes, Minikube, GitHub Actions, RBAC, ServiceAccount, kubeconfig, CI/CD]
+contentType: tutorial
+status: review
+related:
+  - blog/deploy-nextjs-kubernetes-github-actions
+sources:
+  - title: "Authenticating (service account tokens, bearer tokens)"
+    url: https://kubernetes.io/docs/reference/access-authn-authz/authentication/
+    publisher: Kubernetes
+  - title: "Managing Service Accounts: long-lived API tokens"
+    url: https://kubernetes.io/docs/reference/access-authn-authz/service-accounts-admin/
+    publisher: Kubernetes
+  - title: "Using RBAC Authorization"
+    url: https://kubernetes.io/docs/reference/access-authn-authz/rbac/
+    publisher: Kubernetes
+  - title: "minikube start flags"
+    url: https://minikube.sigs.k8s.io/docs/commands/start/
+    publisher: minikube
+  - title: "Using secrets in GitHub Actions"
+    url: https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions
+    publisher: GitHub
+  - title: "OpenID Connect in GitHub Actions"
+    url: https://docs.github.com/en/actions/security-for-github-actions/security-hardening-your-deployments/about-security-hardening-with-openid-connect
+    publisher: GitHub
+---
+<Todo>(1) The API port is written as `<api-port>` on purpose. The real port is in the public repository already (a comment in scripts/setup-ci-deployer.sh), but decide whether you want the article to name it. (2) Section 8 describes a live bug (CI restarts the site but the site keeps running an older image). Fix it or keep the section as a lesson; the text must match whatever you choose. (3) The repositories do not record why a long-lived token was chosen over GitHub OIDC for Kubernetes, so the article gives no reason; add yours if you have one. (4) Add your own commentary, confirm the AI-assistance line against the AI use policy, then set status and publishedAt.</Todo>
+
+This site is built by GitHub Actions and runs on **mk4**, a four-node minikube cluster on a single server that I manage myself. GitHub's runners live on the public internet and mk4 does not, so every release has to answer one question: how does a throwaway virtual machine at GitHub prove to my cluster that it is allowed to touch the site?
+
+This article walks through the exact answer used today, file by file, and then through its weak spots. All of it was checked against the live cluster on 3 November 2026.
+
+## 1. The short version
+
+A release job on GitHub does four things to reach the cluster:
+
+1. It builds a kubeconfig file at run time from a template in the repository and three values stored in GitHub.
+2. It connects to the cluster's Kubernetes API over HTTPS at `jithendar.com:<api-port>`.
+3. It checks the server's certificate against the cluster's own certificate authority (CA), stored in GitHub as a variable.
+4. It presents a bearer token that belongs to one ServiceAccount, `jithendar/github-ci-deployer`, which RBAC allows to do almost nothing.
+
+Then it runs `kubectl rollout restart` and `kubectl rollout status`, and deletes the file.
+
+```text
+GitHub-hosted runner
+  │  kubeconfig built from: MK4_API_SERVER (variable)
+  │                         MK4_CA_DATA    (variable)
+  │                         MK4_CI_TOKEN   (secret)
+  ▼
+https://jithendar.com:<api-port>    ← DNS points at the server
+  ▼
+Docker port mapping on the server   ← <api-port> → 8443 in the minikube node
+  ▼
+kube-apiserver
+  ├─ TLS: certificate signed by minikubeCA, SAN includes jithendar.com
+  ├─ Authentication: token → system:serviceaccount:jithendar:github-ci-deployer
+  └─ Authorization: Role github-ci-deployer in namespace jithendar
+```
+
+## 2. Two clouds, two kinds of credential
+
+The same release job talks to two systems, and they authenticate differently.
+
+| Target | How the job proves who it is | What is stored in GitHub |
+|---|---|---|
+| Amazon ECR (image registry) | GitHub OIDC: the job gets a short-lived signed token from GitHub and exchanges it for temporary AWS credentials of role `github-jithendar-com-ci` | Only the role ARN, as a variable. No key. |
+| mk4 (Kubernetes API) | A static ServiceAccount token | The token itself, as a repository secret |
+
+AWS trusts GitHub's OIDC issuer, so nothing secret has to sit in the repository settings. The cluster does not trust GitHub's issuer, so a token has to be copied in by hand. Most of this article is about that second row.
+
+## 3. Making a minikube API server reachable from the internet
+
+By default minikube's API server is only reachable from the machine it runs on. The installer for mk4 (`deploy/minikube/install.sh` in my tools repository) changes three things when `PUBLIC_HOST` is set:
+
+```bash
+NETWORK_ARGS=(--listen-address=0.0.0.0 "--apiserver-names=$PUBLIC_HOST")
+NETWORK_ARGS+=("--ports=0.0.0.0:$API_PORT:8443")
+```
+
+- `--listen-address=0.0.0.0` publishes the node container's ports on every host interface, not just `127.0.0.1`.
+- `--ports=0.0.0.0:<api-port>:8443` fixes the host port for the API (8443 inside the node), so the address does not change when the cluster restarts.
+- `--apiserver-names=jithendar.com` adds the public hostname to the API server's certificate.
+
+The last flag matters more than it looks. You can see its effect from any machine:
+
+```bash
+echo | openssl s_client -connect jithendar.com:<api-port> -servername jithendar.com 2>/dev/null \
+  | openssl x509 -noout -issuer -ext subjectAltName
+```
+
+```text
+issuer=CN=minikubeCA
+X509v3 Subject Alternative Name:
+    DNS:jithendar.com, DNS:minikubeCA, DNS:control-plane.minikube.internal, DNS:mk4, ...
+```
+
+Because `jithendar.com` is in the certificate, `kubectl` can verify the server normally. Without it, the only way to connect would be `insecure-skip-tls-verify: true`, which lets anyone in the middle impersonate the cluster.
+
+> The installer's default port is 32811, but mk4 publishes a different one. Existing Docker port bindings cannot be changed in place, and the installer refuses to change them rather than recreate the cluster. Read the real address from your context instead of assuming the default: `kubectl config view --minify --context mk4 -o jsonpath='{.clusters[0].cluster.server}'`.
+
+## 4. The identity: one ServiceAccount, one Role
+
+The account CI uses is defined in `k8s/80-ci-deployer.yaml`. It has a ServiceAccount, a Role, a RoleBinding and a token Secret, all in namespace `jithendar`.
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: github-ci-deployer
+  namespace: jithendar
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: github-ci-deployer
+  namespace: jithendar
+rules:
+# kubectl rollout status
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+# kubectl rollout restart, plus new image digests for the practice executor
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  resourceNames: ["jithendar-com", "practice-executor-api", "practice-dispatcher"]
+  verbs: ["patch"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["practice-executor-config"]
+  verbs: ["get", "patch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+```
+
+Three details make this Role narrow:
+
+- It is a **Role**, not a ClusterRole, so it grants nothing outside `jithendar`.
+- `patch` is limited with `resourceNames` to three named Deployments and one ConfigMap.
+- There is no rule for `secrets`, no `create` and no `delete`.
+
+`kubectl rollout restart` works with only `patch`, because it does not delete pods. It writes a `kubectl.kubernetes.io/restartedAt` annotation into the pod template, and the Deployment controller replaces the pods. `rollout status` only needs to read Deployments and ReplicaSets.
+
+You can check the result without the token, by impersonating the ServiceAccount as a cluster admin:
+
+```bash
+SA=system:serviceaccount:jithendar:github-ci-deployer
+kubectl --context mk4 auth can-i patch deployment/jithendar-com -n jithendar --as=$SA   # yes
+kubectl --context mk4 auth can-i patch deployment/moks-portal   -n jithendar --as=$SA   # no
+kubectl --context mk4 auth can-i get secrets                    -n jithendar --as=$SA   # no
+kubectl --context mk4 auth can-i create pods                    -n jithendar --as=$SA   # no
+kubectl --context mk4 auth can-i get pods                       -n kube-system --as=$SA # no
+```
+
+Those are the answers mk4 gives today.
+
+## 5. The token
+
+A ServiceAccount has no password. Since Kubernetes 1.24, pods get short-lived tokens through the TokenRequest API, and no long-lived token is created automatically. CI runs outside the cluster and needs a token that survives between runs, so the manifest asks for an old-style one explicitly:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-ci-deployer-token
+  namespace: jithendar
+  annotations:
+    kubernetes.io/service-account.name: github-ci-deployer
+type: kubernetes.io/service-account-token
+```
+
+When this Secret is created, the token controller fills in `data.token` with a JWT signed by the cluster. The token has **no expiry**. It stays valid until the Secret (or the ServiceAccount) is deleted, which is also the way to revoke it.
+
+On mk4 that token was issued on 30 October 2026 and has not been rotated since.
+
+## 6. Getting the values into GitHub
+
+`scripts/setup-ci-deployer.sh` is run once from my Mac, where `kubectl` has admin access to mk4 and `gh` is signed in. It does the whole setup:
+
+1. Reads the API URL and CA certificate from my own `mk4` kubeconfig context.
+2. Applies `k8s/80-ci-deployer.yaml` and waits for the token controller to fill in the token.
+3. Builds a kubeconfig exactly as CI will, in a temporary file, and checks that it can patch `deployment/jithendar-com`.
+4. Stores three values in the repository:
+
+```bash
+gh variable set MK4_API_SERVER --repo "$REPO" --body "$MK4_API_SERVER"
+gh variable set MK4_CA_DATA    --repo "$REPO" --body "$MK4_CA_DATA"
+printf '%s' "$MK4_CI_TOKEN" | gh secret set MK4_CI_TOKEN --repo "$REPO"
+```
+
+The token is piped through standard input, so it never appears in the terminal, the shell history or a process list. The temporary kubeconfig is deleted by a `trap` even if the script fails.
+
+Why are two of the three values plain **variables**? The API URL and the CA certificate are not secret. The CA certificate is public by design: it lets a client verify the server, but it cannot be used to sign in. Only the token is a credential. Keeping the public values as variables makes them visible in logs and settings, which helps debugging, and keeps the secret list down to the one thing that must stay hidden.
+
+`ROTATE=1 scripts/setup-ci-deployer.sh` deletes the token Secret first. The old token stops working immediately, a new one is issued and stored.
+
+## 7. Building the kubeconfig in the job
+
+The repository contains a kubeconfig **template**, `.github/jithendar-ci-deployer.yaml`, with placeholders instead of values:
+
+```yaml
+apiVersion: v1
+kind: Config
+clusters:
+- name: mk4
+  cluster:
+    server: ${MK4_API_SERVER}
+    certificate-authority-data: ${MK4_CA_DATA}
+users:
+- name: github-ci-deployer
+  user:
+    token: ${MK4_CI_TOKEN}
+contexts:
+- name: mk4
+  context:
+    cluster: mk4
+    user: github-ci-deployer
+    namespace: jithendar
+current-context: mk4
+```
+
+The release job in `.github/workflows/ci-jithendar-com.yml` fills it in, uses it, and removes it:
+
+```yaml
+- name: Restart jithendar-com
+  env:
+    MK4_API_SERVER: ${{ vars.MK4_API_SERVER }}
+    MK4_CA_DATA: ${{ vars.MK4_CA_DATA }}
+    MK4_CI_TOKEN: ${{ secrets.MK4_CI_TOKEN }}
+  run: |
+    set -euo pipefail
+    for v in MK4_API_SERVER MK4_CA_DATA MK4_CI_TOKEN; do
+      [[ -n "${!v}" ]] || { echo "::error::$v is not set; run scripts/setup-ci-deployer.sh"; exit 1; }
+    done
+    export KUBECONFIG="$RUNNER_TEMP/kubeconfig"
+    trap 'rm -f "$KUBECONFIG"' EXIT
+    (umask 077; perl -pe 's/\$\{(MK4_[A-Z_]+)\}/$ENV{$1}/g' ../.github/jithendar-ci-deployer.yaml > "$KUBECONFIG")
+    kubectl -n jithendar rollout restart deploy/jithendar-com
+    kubectl -n jithendar rollout status deploy/jithendar-com --timeout=5m
+```
+
+Line by line:
+
+- **The `for` loop** fails fast with a clear message when a value is missing. Without it, an empty token would produce a confusing `Unauthorized` from the API server.
+- **`$RUNNER_TEMP`** is a per-job directory that GitHub cleans up. The `trap` deletes the file earlier, when the step ends.
+- **`umask 077`** makes the new file readable only by the runner user. It runs in a subshell `( … )` so it does not change the rest of the step.
+- **The `perl` one-liner** replaces only placeholders that look like `${MK4_…}` with the matching environment variable. It does the same job as `envsubst`, but it cannot touch any other `$` in the file. The setup script uses the identical command, so what it tested locally is what CI builds.
+- **The secret only enters this one step**, through `env:`. Other steps never see it, and GitHub masks its value in the log.
+
+The practice executor workflow (`ci-practice-executor.yml`) signs in the same way, with the same three values, to patch new image digests into its two Deployments and its ConfigMap. That is why the Role names those objects too.
+
+## 8. A catch: authenticated is not the same as deployed
+
+Authentication works. The last release on 2 November logged:
+
+```text
+deployment.apps/jithendar-com restarted
+deployment "jithendar-com" successfully rolled out
+```
+
+But the restart was designed for a Deployment that runs `jithendar-com:latest` with `imagePullPolicy: Always`, so new pods pull whatever `:latest` points to. That is no longer how the site is deployed. `./deploy.sh` pins an exact image digest in `k8s/kustomization.yaml` and applies it, and the live Deployment now runs:
+
+```text
+jithendar-com@sha256:ab475be7…   (commit a153283)
+```
+
+while `:latest` in ECR points to commit `dc249e8`. A restart re-creates pods from the same pod template, so they pull the pinned digest again. CI reports success, and the site keeps serving `a153283`, which is exactly what `/api/health` returns.
+
+There are two consistent ways out, and the Role already allows the first:
+
+- Let CI set the digest it just pushed: `kubectl set image deploy/jithendar-com web=<registry>/jithendar-com@sha256:…` (this is a `patch`, the same permission as `restart`). This is what the practice executor workflow already does.
+- Or remove the restart from CI and leave every site deploy to `./deploy.sh`.
+
+The general lesson: a green `rollout status` only proves the pods are ready. To prove the right code is running, check the version the app reports, as the smoke test before the push already does.
+
+## 9. Security boundaries and weak spots
+
+This setup is deliberately small, but it has real limits.
+
+**The Kubernetes API is open to the internet.** GitHub-hosted runners do not have fixed IP addresses, so the port cannot be limited to them with a simple firewall rule. Anyone can reach the API and read its version (`/version` is public by default); everything else needs a valid token. The cluster's safety rests on the token staying secret and on the API server staying patched.
+
+**The token never expires.** If it leaks, it works until someone runs `ROTATE=1 scripts/setup-ci-deployer.sh`. There is no automatic rotation.
+
+**`patch` on a Deployment is more than restart.** The Role cannot read Secrets or create pods directly, but whoever can patch `deployment/jithendar-com` can change its image or its pod template. The Deployment controller would then run that code with every Secret the site's pods already receive, such as the database URL. The namespace has no Pod Security labels and the admission policies on mk4 cover the practice sandbox, not the site. Treat this token as close to "can run code as the website".
+
+**The secret is repository-wide.** `MK4_CI_TOKEN` is a repository secret, so a workflow running on any branch pushed to this repository can read it. The `if:` on the release job does not protect it; a changed workflow file on another branch could print or use it. Forks do not get repository secrets. The AWS side is stricter: its role only trusts the default branch, and the Terraform role only trusts the GitHub environment `aws-infra`.
+
+**Comments have drifted.** The header of `k8s/80-ci-deployer.yaml` still says the script stores a secret named `KUBECONFIG_MK4`, the template says it is filled in "with envsubst", and the workflow says the live Deployment runs `:latest`. None of these is true any more.
+
+## 10. What I would change next
+
+In order of effort:
+
+1. **Fix the deploy step** so CI either sets the pushed digest or stops restarting (section 8).
+2. **Move `MK4_CI_TOKEN` into a GitHub environment** restricted to the default branch, like `aws-infra`. Then only jobs that declare that environment can read the token.
+3. **Rotate the token on a schedule** with `ROTATE=1`, and after any change of who has write access to the repository.
+4. **Add Pod Security `restricted` labels** to the `jithendar` namespace, so a patched Deployment cannot ask for privileged pods or host paths.
+5. **Drop the static token entirely.** Kubernetes can be configured to accept JWTs from an external OIDC issuer with the API server's structured authentication configuration. With GitHub's issuer trusted, a job would sign in with the same kind of short-lived token it already uses for AWS, and the `sub` claim could be limited to this repository's default branch. On minikube that means passing an authentication config file to the API server, which I have not tried on mk4.
+
+## 11. Recap
+
+- The cluster is reachable because minikube publishes the API on a fixed host port and puts the public hostname in its certificate.
+- CI trusts the server through the CA certificate (`MK4_CA_DATA`), not by skipping TLS checks.
+- The server trusts CI through a long-lived ServiceAccount token (`MK4_CI_TOKEN`), the only real secret.
+- RBAC limits that token to a few named objects in one namespace; `kubectl auth can-i --as` proves it.
+- The kubeconfig exists only for one step: built from a template, readable only by the runner user, deleted on exit.
+- Authentication is not deployment: check the version that is actually running.
+
+### Checklist
+
+- [ ] Start minikube with `--listen-address`, a fixed `--ports` mapping and `--apiserver-names` for the public hostname.
+- [ ] Create a ServiceAccount with a namespaced Role; limit `patch` with `resourceNames`; grant no Secrets.
+- [ ] Verify the Role with `kubectl auth can-i --as=system:serviceaccount:<ns>:<name>`.
+- [ ] Request a token with a `kubernetes.io/service-account-token` Secret; know that it does not expire.
+- [ ] Store the API URL and CA as variables and only the token as a secret; pipe the token into `gh secret set`.
+- [ ] Build the kubeconfig in the job with `umask 077`, delete it with a `trap`.
+- [ ] Never use `insecure-skip-tls-verify`.
+- [ ] Prefer an environment-scoped secret, and plan for short-lived OIDC tokens.
