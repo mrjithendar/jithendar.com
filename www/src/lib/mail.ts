@@ -9,6 +9,7 @@ import { recordMail } from "./metrics";
 import type { Actor } from "./posts";
 import { PostError } from "./posts";
 import { seal, unseal, type Sealed } from "./secrets";
+import { traceAwsClient, withSpan } from "./trace";
 
 /**
  * Outgoing email (verification, password reset, contact-form notifications).
@@ -219,7 +220,7 @@ async function sendSes(c: SesConfig, m: Message) {
     c.auth === "keys" && c.secretAccessKey
       ? { accessKeyId: c.accessKeyId, secretAccessKey: unseal(c.secretAccessKey), ...(c.sessionToken ? { sessionToken: unseal(c.sessionToken) } : {}) }
       : undefined;
-  const ses = new SESv2Client({ region: c.region, ...(credentials ? { credentials } : {}) });
+  const ses = traceAwsClient(new SESv2Client({ region: c.region, ...(credentials ? { credentials } : {}) }), "ses");
   await ses.send(
     new SendEmailCommand({
       FromEmailAddress: fromHeader(c),
@@ -262,7 +263,15 @@ function redact(message: string, config: EmailConfig | null): string {
  * Send a transactional email with the active provider. Returns false (and logs) when email is disabled,
  * not configured or the provider fails; callers never break because mail is down. No failover.
  */
-export async function sendMail(to: string, subject: string, text: string): Promise<boolean> {
+export function sendMail(to: string, subject: string, text: string): Promise<boolean> {
+  return withSpan("mail.send", {}, async (span) => {
+    const sent = await deliver(to, subject, text);
+    span.setAttribute("mail.outcome", sent ? "sent" : "not_sent");
+    return sent;
+  });
+}
+
+async function deliver(to: string, subject: string, text: string): Promise<boolean> {
   const config = await readEmailConfig();
   try {
     if (!config) {

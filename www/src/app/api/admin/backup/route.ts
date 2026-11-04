@@ -1,13 +1,14 @@
 import { actorOf } from "@/lib/admin";
 import { audit } from "@/lib/audit";
 import { buildBackup, readStoredBackup } from "@/lib/backups";
+import { handleErrors } from "@/lib/http-errors";
 import { PostError } from "@/lib/posts";
 import { getSessionUser } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
 /** Download a fresh encrypted backup, or `?file=` one already stored in R2 (admins only). */
-export async function GET(request?: Request) {
+export const GET = handleErrors("backup download", async (request?: Request) => {
   const user = await getSessionUser();
   if (!user || user.role !== "admin") return new Response("Forbidden", { status: 403 });
   try {
@@ -25,4 +26,4 @@ export async function GET(request?: Request) {
     if (error instanceof PostError) return new Response(error.message, { status: error.status ?? 400 });
     throw error;
   }
-}
+});

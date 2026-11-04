@@ -25,8 +25,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ post
     return Response.json({ ...page, signedIn: !!user }, { headers: NO_STORE });
   } catch (error) {
     if (error instanceof PostError) return Response.json({ error: error.message }, { status: error.status ?? 400, headers: NO_STORE });
-    const { log } = await import("@/lib/log");
-    log.error("comments list failed", { err: error });
-    return Response.json({ error: "Comments could not be loaded." }, { status: 500, headers: NO_STORE });
+    const { reportError, routeFields } = await import("@/lib/http-errors");
+    const ref = reportError("comments list failed", error, routeFields(request));
+    return Response.json({ error: "Comments could not be loaded.", code: "internal", reference: ref.reference }, { status: 500, headers: NO_STORE });
   }
 }

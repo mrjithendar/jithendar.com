@@ -5,6 +5,7 @@ import { getDb, schema } from "@/db";
 import { rowsOf } from "@/db/rows";
 import { audit } from "./audit";
 import { log } from "./log";
+import { withSpan } from "./trace";
 import type { Actor } from "./posts";
 import { PostError } from "./posts";
 import { decryptWithPassphrase, encryptWithPassphrase, seal, unseal, type Sealed } from "./secrets";
@@ -197,7 +198,11 @@ export async function buildBackup(): Promise<{ filename: string; data: Buffer }>
   return { filename: `${PREFIX}${stamp}.json.gz.enc`, data };
 }
 
-export async function runBackup(trigger: "manual" | "scheduled", actor?: Actor) {
+export function runBackup(trigger: "manual" | "scheduled", actor?: Actor) {
+  return withSpan("backup.run", { "backup.trigger": trigger }, () => runBackupNow(trigger, actor));
+}
+
+async function runBackupNow(trigger: "manual" | "scheduled", actor?: Actor) {
   const db = await getDb();
   const [run] = await db.insert(schema.backupRun).values({ trigger, status: "running", triggeredBy: actor?.label ?? "scheduler" }).returning();
   const results: { destination: string; ok: boolean; detail: string }[] = [];

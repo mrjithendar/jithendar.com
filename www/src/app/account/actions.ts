@@ -5,7 +5,7 @@ import { headers } from "next/headers";
 import { APIError } from "better-auth/api";
 import { getAuth } from "@/lib/auth";
 import { authErrorMessage } from "@/lib/auth-errors";
-import { log } from "@/lib/log";
+import { currentRequestId, reportError, withReference } from "@/lib/http-errors";
 import { PostError } from "@/lib/posts";
 import { profileInput, removeAvatar, setAvatar, SOCIAL_FIELDS, updateAccountProfile } from "@/lib/profile";
 import { hit } from "@/lib/rate-limit";
@@ -25,8 +25,8 @@ async function guarded(fn: () => Promise<string>): Promise<AccountResult> {
     return { ok: true, message };
   } catch (error) {
     if (error instanceof PostError) return { ok: false, error: error.message, issues: error.issues.length ? error.issues : undefined };
-    log.error("account action failed", { err: error });
-    return { ok: false, error: "Something went wrong. Please try again later." };
+    const ref = reportError("account action failed", error, { requestId: await currentRequestId() });
+    return { ok: false, error: withReference("Something went wrong. Please try again later.", ref) };
   }
 }
 
@@ -89,8 +89,8 @@ export async function unlinkAccountAction(accountId: string): Promise<AccountRes
       const code = String((error.body as { code?: string } | undefined)?.code ?? "");
       return { ok: false, error: authErrorMessage(code) ?? "Could not disconnect that account.", code };
     }
-    log.error("unlink failed", { err: error });
-    return { ok: false, error: "Something went wrong. Please try again later." };
+    const ref = reportError("unlink failed", error, { requestId: await currentRequestId() });
+    return { ok: false, error: withReference("Something went wrong. Please try again later.", ref) };
   }
 }
 
@@ -103,7 +103,7 @@ export async function signOutEverywhereAction(): Promise<AccountResult> {
     await auth.api.revokeSessions({ headers: await headers() });
     return { ok: true, message: "Signed out everywhere." };
   } catch (error) {
-    log.error("revoke sessions failed", { err: error });
-    return { ok: false, error: "Something went wrong. Please try again later." };
+    const ref = reportError("revoke sessions failed", error, { requestId: await currentRequestId() });
+    return { ok: false, error: withReference("Something went wrong. Please try again later.", ref) };
   }
 }

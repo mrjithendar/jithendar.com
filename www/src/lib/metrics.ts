@@ -1,4 +1,5 @@
 import { monitorEventLoopDelay } from "node:perf_hooks";
+import { isProxyPass } from "./request-log";
 
 /**
  * Prometheus metrics for the site, without extra dependencies.
@@ -105,6 +106,7 @@ const statusClass = (code: unknown) => (typeof code === "number" && code >= 100 
 
 /** Route patterns only; anything else (e.g. static files without a route) is grouped. */
 function routeLabel(route: unknown): string {
+  if (route === "proxy") return route; // answered by src/proxy.ts (redirects, 410, maintenance 503)
   if (typeof route !== "string" || !route.startsWith("/") || route.length > 120) return "other";
   return route;
 }
@@ -130,7 +132,7 @@ type EndedSpan = { attributes: Record<string, unknown>; duration: [number, numbe
 export const metricsSpanProcessor = {
   onStart() {},
   onEnd(span: EndedSpan) {
-    if (span.attributes["next.span_type"] !== "BaseServer.handleRequest") return;
+    if (span.attributes["next.span_type"] !== "BaseServer.handleRequest" || isProxyPass(span.attributes)) return;
     const [s, ns] = span.duration;
     recordRequest(String(span.attributes["http.method"] ?? "OTHER"), span.attributes["next.route"] ?? span.attributes["http.route"], span.attributes["http.status_code"], s + ns / 1e9);
   },

@@ -40,6 +40,42 @@ The collector stores only allowlisted fields with strict formats and drops every
 Log lines in Grafana show `trace_id`; the line details link to Jaeger (needs the port-forward above). Grafana has no
 Jaeger data source: Jaeger 2.x no longer serves the legacy query API that data source uses.
 
+## Errors, request lines and traces (2026-11-04)
+
+**One trace id per request ties everything together.** The proxy runs inside Next's request span, so the access
+line (`event=http_request`), the app's own lines, the completion line and the Jaeger trace share `traceId`.
+
+| Line | `event` | Carries |
+|---|---|---|
+| Access (proxy) | `http_request` | `requestId`, `traceId`, path, IP, user agent; `status` only when the proxy answered (redirect, 410, 503) |
+| Completion (span processor, `src/lib/request-log.ts`) | `http_request_completed` | `method`, `route` (pattern), `status`, `durationMs`, `outcome` (`success`/`redirect`/`client_error`/`server_error`), `traceId`; level `error` for 5xx. Health probes skipped; `REQUEST_LOG=false` turns it off |
+| Unhandled render/route error (`onRequestError`) | `request_failed` | `digest` (also as `errorCode`, so Loki can find it), `route`, `requestId`, stack |
+| Handled unexpected error (`reportError`, `src/lib/http-errors.ts`) | `<name>_failed` | `status`, `outcome=error`, `errorType`, stack, `requestId` |
+| Plain console output from Next and libraries | `console_error`, `console_warn`, `console_info` | rewritten as JSON in production (`jsonConsole()` in `log.ts`; `LOG_FORMAT=text` keeps plain output) |
+| Uncaught exception | `uncaught_exception` | stack (observed only; Node/Next behaviour unchanged) |
+
+Next.js runs the proxy in a `handleRequest` pass of its own (`next.bubble`) that always reports 200. That pass is
+not a request line and not a request metric; answers decided by the proxy are counted as `route="proxy"` with
+their real status. (Before this change every rendered request was counted twice, once as a ~1 ms 200.)
+
+**Error responses.** Expected failures (`PostError`, `PracticeError`, any error with a 4xx `status`) answer with
+their own message. Unexpected ones are logged once and answer without internals:
+
+- `/api/*` JSON: `{ "error": "Something went wrong…", "code": "internal", "reference": "<trace id>" }`
+  (`/api/v1` keeps its envelope: `{ "error": { "message", "code", "reference" } }`). Routes without their own
+  handling are wrapped in `handleErrors(name, handler)`.
+- Server actions (admin `flash`, account, comments, contact): the message ends with `Reference: <trace id>`.
+- Pages: `error.tsx` / `global-error.tsx` show the digest; search Loki for `errorCode="<digest>"`.
+
+The reference is the trace id (kept by the collector); without tracing it falls back to the request id. The
+proxy forwards `x-request-id` to the app (an upstream value is kept only if it matches `[A-Za-z0-9._:-]{8,128}`).
+Errors logged at level `error` also mark the active span failed.
+
+**Custom spans** (`src/lib/trace.ts`): `r2.*`, `s3.*` (legacy), `ses.*`, `bedrock.*` per AWS SDK call;
+`mail.send`; `job <kind>` per queued job; `backup.run`; `startup.migrate`. `fetch` (Gemini, Turnstile, IndexNow)
+is traced by `@vercel/otel`. Database queries are not traced: Drizzle's built-in tracing would put SQL and
+parameters on spans, and postgres.js has no safe hook.
+
 ## Alerts (Prometheus, `tools/observability/prometheus/files/alerts.yml`)
 
 `JithendarComDown` (no pod scraped for 5 min), `JithendarComHighErrorRatio` (> 5 % 5xx for 5 min),

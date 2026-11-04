@@ -3,10 +3,15 @@ import { isGone } from "@/config/gone";
 import { isIndexableHost } from "@/config/site";
 import { indexNowKey, INDEXNOW_KEY_PATTERN } from "@/lib/indexnow-key";
 import { MAINTENANCE_EXEMPT, maintenancePage, maintenanceState } from "@/lib/site-config/maintenance";
+import { recordRequest } from "@/lib/metrics";
+import { currentTraceId } from "@/lib/trace";
 
 const PREVIEW_COOKIE = "site_preview";
 
 const NOINDEX = "noindex, nofollow";
+
+/** An upstream request id is kept only if it is short and plain (it is echoed into logs and headers). */
+const REQUEST_ID = /^[A-Za-z0-9._:-]{8,128}$/;
 
 /** One JSON access-log line per request (static assets excluded by the matcher). */
 function accessLog(request: NextRequest, response: NextResponse, requestId: string) {
@@ -22,6 +27,9 @@ function accessLog(request: NextRequest, response: NextResponse, requestId: stri
       event: "http_request",
       service: "jithendar-com",
       requestId,
+      // The proxy runs inside Next's request span: the same trace id is on the app's log lines and the
+      // `http_request_completed` line, which has the final status and duration.
+      traceId: currentTraceId(),
       method: request.method,
       route: request.nextUrl.pathname,
       ...decided,
@@ -41,14 +49,18 @@ async function indexNowKeyFile(request: NextRequest): Promise<NextResponse | nul
 }
 
 export async function proxy(request: NextRequest) {
-  const response = (await indexNowKeyFile(request)) ?? (await maintenance(request)) ?? route(request);
-  const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
+  const started = performance.now();
+  const incoming = request.headers.get("x-request-id");
+  const requestId = incoming && REQUEST_ID.test(incoming) ? incoming : crypto.randomUUID();
+  const response = (await indexNowKeyFile(request)) ?? (await maintenance(request)) ?? route(request, requestId);
   response.headers.set("x-request-id", requestId);
+  // Next's span for the proxy pass always says 200, so answers decided here (redirects, 410, 503) are counted here.
+  if (!response.headers.has("x-middleware-next")) recordRequest(request.method, "proxy", response.status, (performance.now() - started) / 1000);
   if (process.env.ACCESS_LOG !== "false" && process.env.NODE_ENV !== "test") accessLog(request, response, requestId);
   return response;
 }
 
-function route(request: NextRequest): NextResponse {
+function route(request: NextRequest, requestId: string): NextResponse {
   const indexable = isIndexableHost(request.headers.get("host"));
 
   if (isGone(request.nextUrl.pathname)) {
@@ -66,7 +78,10 @@ function route(request: NextRequest): NextResponse {
     return NextResponse.redirect(url, 308);
   }
 
-  const response = NextResponse.next();
+  // Forward the request id to the app (route handlers, server actions, onRequestError read x-request-id).
+  const headers = new Headers(request.headers);
+  headers.set("x-request-id", requestId);
+  const response = NextResponse.next({ request: { headers } });
   if (!indexable) response.headers.set("X-Robots-Tag", NOINDEX);
   // Draft previews (admin-only, see lib/site-config): never cached by anyone, never indexed.
   if (request.cookies.has(PREVIEW_COOKIE)) {

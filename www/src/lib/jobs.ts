@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { rowsOf } from "@/db/rows";
 import { log } from "./log";
+import { withSpan } from "./trace";
 
 /**
  * A small Postgres-backed job queue (no extra service): jobs survive restarts, run once across
@@ -44,19 +45,22 @@ export async function runDueJobs(handlers: Record<string, JobHandler>, now = new
     const handler = handlers[job.kind];
     try {
       if (!handler) throw new PermanentJobError(`no handler for ${job.kind}`);
-      await handler(typeof job.payload === "string" ? JSON.parse(job.payload) : job.payload);
+      // One trace per job run (background work has no request span to belong to).
+      await withSpan(`job ${job.kind}`, { "job.kind": job.kind, "job.attempt": job.attempts }, () =>
+        handler(typeof job.payload === "string" ? JSON.parse(job.payload) : job.payload),
+      );
       await db.execute(sql`update job set status = 'done', finished_at = ${new Date().toISOString()}, last_error = null where id = ${job.id}`);
       result.done++;
     } catch (error) {
       const message = (error as Error).message.slice(0, 500);
       if (error instanceof PermanentJobError || job.attempts >= job.max_attempts) {
         await db.execute(sql`update job set status = 'failed', finished_at = ${new Date().toISOString()}, last_error = ${message} where id = ${job.id}`);
-        log.error("job failed", { jobId: job.id, kind: job.kind, attempts: job.attempts, error: message });
+        log.error("job failed", { jobId: job.id, kind: job.kind, attempts: job.attempts, operation: job.kind, err: error });
         result.failed++;
       } else {
         const retryAt = new Date(now.getTime() + backoffMs(job.attempts)).toISOString();
         await db.execute(sql`update job set status = 'queued', run_at = ${retryAt}, last_error = ${message} where id = ${job.id}`);
-        log.warn("job will retry", { jobId: job.id, kind: job.kind, attempts: job.attempts, error: message });
+        log.warn("job will retry", { jobId: job.id, kind: job.kind, attempts: job.attempts, operation: job.kind, err: error });
         result.retried++;
       }
     }

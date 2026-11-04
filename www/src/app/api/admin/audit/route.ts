@@ -1,6 +1,7 @@
 import { actorOf } from "@/lib/admin";
 import { audit } from "@/lib/audit";
 import { exportAudit, parseAuditFilter } from "@/lib/audit-query";
+import { handleErrors } from "@/lib/http-errors";
 import { getSessionUser } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +14,7 @@ function cell(v: unknown): string {
 }
 
 /** GET /api/admin/audit?{filters} → CSV of matching audit entries (admins only; the export itself is audited). */
-export async function GET(request: Request) {
+export const GET = handleErrors("audit export", async (request: Request) => {
   const user = await getSessionUser();
   if (!user || user.role !== "admin") return new Response("Forbidden", { status: 403 });
   const filter = parseAuditFilter(Object.fromEntries(new URL(request.url).searchParams));
@@ -29,4 +30,4 @@ export async function GET(request: Request) {
       "Cache-Control": "no-store",
     },
   });
-}
+});

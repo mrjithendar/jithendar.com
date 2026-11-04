@@ -22,6 +22,8 @@ describe("request metrics from Next.js server spans", () => {
     // Child spans and unknown methods/routes are not request metrics / are grouped.
     metricsSpanProcessor.onEnd(span({ "next.span_type": "AppRender.getBodyResult", "http.method": "GET" }, 5));
     metricsSpanProcessor.onEnd(span({ "next.span_type": "BaseServer.handleRequest", "http.method": "BREW", "http.status_code": 404 }, 0.01));
+    // The proxy's pass of the same request is not a second request.
+    metricsSpanProcessor.onEnd(span({ ...root, "next.route": undefined, "next.bubble": true, "http.status_code": 200 }, 0.001));
 
     const text = await renderMetrics();
     expect(text).toContain('http_server_requests_total{method="GET",route="/blog/[slug]",status="2xx"} 2');

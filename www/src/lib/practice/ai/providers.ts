@@ -1,5 +1,6 @@
 import "server-only";
 import type { PracticeSettings } from "../settings";
+import { traceAwsClient } from "../../trace";
 
 /**
  * Model providers for the tutor. Each takes a system prompt, a user prompt and a JSON schema, and returns raw
@@ -92,7 +93,7 @@ export async function callModel(settings: PracticeSettings["ai"], apiKey: string
   }
   // Bedrock Converse.
   const { BedrockRuntimeClient, ConverseCommand } = await import("@aws-sdk/client-bedrock-runtime");
-  const client = new BedrockRuntimeClient({ region: settings.region, maxAttempts: 1 });
+  const client = traceAwsClient(new BedrockRuntimeClient({ region: settings.region, maxAttempts: 1 }), "bedrock");
   try {
     const out = await client.send(
       new ConverseCommand({

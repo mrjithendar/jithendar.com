@@ -16,9 +16,9 @@ async function guard(fn: () => Promise<string>): Promise<PublicResult> {
     return { ok: true, message: await fn() };
   } catch (error) {
     if (error instanceof PostError) return { ok: false, error: error.message, issues: error.issues };
-    const { log } = await import("@/lib/log");
-    log.error("public form failed", { err: error });
-    return { ok: false, error: "Something went wrong. Please try again later." };
+    const { currentRequestId, reportError, withReference } = await import("@/lib/http-errors");
+    const ref = reportError("public form failed", error, { requestId: await currentRequestId() });
+    return { ok: false, error: withReference("Something went wrong. Please try again later.", ref) };
   }
 }
 

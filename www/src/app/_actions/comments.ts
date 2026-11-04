@@ -30,9 +30,9 @@ async function signedIn<T extends object>(fn: (user: SessionUser) => Promise<T &
     return { ok: true, ...(await fn(user)) };
   } catch (error) {
     if (error instanceof PostError) return { ok: false, error: error.message };
-    const { log } = await import("@/lib/log");
-    log.error("comment action failed", { err: error });
-    return { ok: false, error: "Something went wrong. Please try again." };
+    const { currentRequestId, reportError, withReference } = await import("@/lib/http-errors");
+    const ref = reportError("comment action failed", error, { requestId: await currentRequestId() });
+    return { ok: false, error: withReference("Something went wrong. Please try again.", ref) };
   }
 }
 

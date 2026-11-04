@@ -1,5 +1,6 @@
 import "server-only";
-import { log } from "../log";
+import { reportError, routeFields } from "../http-errors";
+import { isNextControlFlow } from "../trace";
 import { getSessionUser, type SessionUser } from "../session";
 import { PracticeError } from "./errors";
 
@@ -47,8 +48,8 @@ export async function withUser(req: Request, fn: (user: SessionUser) => Promise<
     if (error instanceof PracticeError) {
       return json({ error: error.message, code: error.code }, error.status, error.retryAfter ? { "Retry-After": String(error.retryAfter) } : {});
     }
-    if ((error as { digest?: string })?.digest?.startsWith("NEXT_")) throw error;
-    log.error("practice api failed", { err: error, path: new URL(req.url).pathname });
-    return json({ error: "Something went wrong. The error has been logged.", code: "internal" }, 500);
+    if (isNextControlFlow(error)) throw error;
+    const ref = reportError("practice api failed", error, routeFields(req));
+    return json({ error: "Something went wrong. The error has been logged.", code: "internal", reference: ref.reference }, 500);
   }
 }

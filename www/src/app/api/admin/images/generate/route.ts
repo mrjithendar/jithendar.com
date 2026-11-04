@@ -1,4 +1,5 @@
 import { actorOf } from "@/lib/admin";
+import { reportError, routeFields } from "@/lib/http-errors";
 import { startGeneration } from "@/lib/image-generation";
 import { PostError } from "@/lib/posts";
 import { getSessionUser } from "@/lib/session";
@@ -36,6 +37,7 @@ export async function POST(req: Request) {
     return json(await startGeneration(actorOf(user), body, { signal: req.signal }));
   } catch (e) {
     if (e instanceof PostError) return json({ error: e.message }, e.status);
-    return json({ error: "Image generation failed. The error has been logged." }, 500);
+    const ref = reportError("image generation request failed", e, routeFields(req));
+    return json({ error: "Image generation failed. The error has been logged.", code: "internal", reference: ref.reference }, 500);
   }
 }

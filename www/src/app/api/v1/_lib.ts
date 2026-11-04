@@ -1,6 +1,6 @@
 import { authenticateApiKey, type ApiAuth, type Scope } from "@/lib/api-keys";
 import { toIsoOffset } from "@/lib/dates-iso";
-import { log } from "@/lib/log";
+import { reportError, routeFields } from "@/lib/http-errors";
 import { PostError, type PostRow } from "@/lib/posts";
 
 /** JSON responses and errors for /api/v1. Unknown errors are logged and never leak details. */
@@ -15,8 +15,8 @@ export async function api(request: Request, scope: Scope, fn: (auth: ApiAuth) =>
       const code = error.message.startsWith("Rate limit") ? 429 : error.status;
       return Response.json({ error: { message: error.message, issues: error.issues } }, { status: code });
     }
-    log.error("api request failed", { err: error, path: new URL(request.url).pathname });
-    return Response.json({ error: { message: "Internal error." } }, { status: 500 });
+    const ref = reportError("api request failed", error, routeFields(request));
+    return Response.json({ error: { message: "Internal error.", code: "internal", reference: ref.reference } }, { status: 500, headers: { "Cache-Control": "no-store" } });
   }
 }
 

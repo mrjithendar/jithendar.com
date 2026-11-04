@@ -15,6 +15,7 @@ import { audit } from "./audit";
 import type { Actor } from "./posts";
 import { PostError } from "./posts";
 import { seal, unseal, type Sealed } from "./secrets";
+import { traceAwsClient } from "./trace";
 
 /**
  * Media storage: one Cloudflare R2 bucket through its S3-compatible API.
@@ -154,7 +155,7 @@ function clientFor(c: R2Config): S3Client {
   const secret = c.secretAccessKey();
   const key = JSON.stringify([c.endpoint, c.accessKeyId, secret]);
   if (cached?.key === key) return cached.s3;
-  const s3 = new S3Client({
+  const s3 = traceAwsClient(new S3Client({
     region: "auto", // required by the SDK, ignored by R2
     endpoint: c.endpoint,
     forcePathStyle: true,
@@ -162,7 +163,7 @@ function clientFor(c: R2Config): S3Client {
     // Send checksums only where an operation requires them; we send Content-MD5 ourselves on uploads.
     requestChecksumCalculation: "WHEN_REQUIRED",
     responseChecksumValidation: "WHEN_REQUIRED",
-  });
+  }), "r2");
   cached = { key, s3 };
   return s3;
 }

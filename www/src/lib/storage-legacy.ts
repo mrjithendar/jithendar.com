@@ -2,6 +2,7 @@ import { GetObjectCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { unseal, type Sealed } from "./secrets";
+import { traceAwsClient } from "./trace";
 
 /**
  * The S3 bucket media used before the move to Cloudflare R2 (setting "storage"). Read-only: it serves
@@ -31,12 +32,12 @@ let client: { key: string; s3: S3Client } | undefined;
 function s3For(c: LegacyStorageConfig): S3Client {
   const key = JSON.stringify([c.endpoint, c.region, c.bucket, c.accessKeyId, c.secretAccessKey.data, c.forcePathStyle]);
   if (client?.key === key) return client.s3;
-  const s3 = new S3Client({
+  const s3 = traceAwsClient(new S3Client({
     region: c.region,
     ...(c.endpoint ? { endpoint: c.endpoint } : {}),
     forcePathStyle: c.forcePathStyle,
     credentials: { accessKeyId: c.accessKeyId, secretAccessKey: unseal(c.secretAccessKey) },
-  });
+  }), "s3");
   client = { key, s3 };
   return s3;
 }

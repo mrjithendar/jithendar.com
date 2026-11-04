@@ -8,13 +8,15 @@ export async function flash(path: string, fn: () => Promise<string | void>): Pro
     const message = (await fn()) || "Saved.";
     target = `${path}${path.includes("?") ? "&" : "?"}ok=${encodeURIComponent(message)}`;
   } catch (error) {
-    if ((error as { digest?: string })?.digest?.startsWith("NEXT_REDIRECT")) throw error;
-    const known = error instanceof PostError;
-    if (!known) {
-      const { log } = await import("./log");
-      log.error("admin action failed", { err: error, path });
+    const { isNextControlFlow } = await import("./trace");
+    if (isNextControlFlow(error)) throw error;
+    let text: string;
+    if (error instanceof PostError) text = [error.message, ...error.issues].join(" · ");
+    else {
+      const { currentRequestId, reportError, withReference } = await import("./http-errors");
+      const ref = reportError("admin action failed", error, { route: path.split("?")[0], requestId: await currentRequestId() });
+      text = withReference("Something went wrong. The error has been logged.", ref);
     }
-    const text = known ? [error.message, ...error.issues].join(" · ") : "Something went wrong. The error has been logged.";
     target = `${path}${path.includes("?") ? "&" : "?"}error=${encodeURIComponent(text)}`;
   }
   redirect(target);

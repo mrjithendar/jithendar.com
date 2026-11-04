@@ -1,10 +1,11 @@
 import { migrationManifest } from "@/lib/media-migration";
+import { handleErrors } from "@/lib/http-errors";
 import { getSessionUser } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
 /** Download the S3 → R2 manifest (old key, new key, site URL, public URL) as JSON. Admins only. */
-export async function GET() {
+export const GET = handleErrors("media migration manifest", async () => {
   const user = await getSessionUser();
   if (user?.role !== "admin") return new Response("Not found", { status: 404 });
   return new Response(JSON.stringify(await migrationManifest(), null, 2), {
@@ -14,4 +15,4 @@ export async function GET() {
       "Cache-Control": "no-store",
     },
   });
-}
+});
