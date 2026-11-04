@@ -53,7 +53,11 @@ seen_ip() {
 }
 ip="$(seen_ip)"
 if [[ -z "$ip" || "$ip" == 192.168.49.* ]]; then
-  host_cmd="cd $HOST_TOOLS_DIR && git pull --ff-only && bash deploy/minikube/expose-ingress.sh"
+  # The host pulls tools from GitHub, so the HAProxy change must be pushed, not only committed here.
+  git -C "$TOOLS_DIR" fetch -q origin master
+  git -C "$TOOLS_DIR" show origin/master:deploy/minikube/expose-ingress.sh | grep -q 'send-proxy-v2' \
+    || fail "tools on GitHub (origin/master) has no send-proxy-v2 in deploy/minikube/expose-ingress.sh: commit and push tools first."
+  host_cmd="cd $HOST_TOOLS_DIR && git pull --ff-only && grep -q send-proxy-v2 deploy/minikube/expose-ingress.sh && bash deploy/minikube/expose-ingress.sh"
   if [[ -n "${HOST_SSH:-}" ]]; then
     # shellcheck disable=SC2029  # expanded here on purpose: the command is built from local settings
     ssh "$HOST_SSH" "$host_cmd"
