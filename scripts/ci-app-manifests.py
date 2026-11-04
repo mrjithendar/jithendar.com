@@ -27,6 +27,9 @@ APPLY = {
     ("networking.k8s.io", "NetworkPolicy"),
     ("policy", "PodDisruptionBudget"),
     ("traefik.io", "Middleware"),
+    ("traefik.io", "MiddlewareTCP"),
+    ("traefik.io", "IngressRouteTCP"),
+    ("traefik.io", "TLSOption"),
     ("cert-manager.io", "Certificate"),
 }
 

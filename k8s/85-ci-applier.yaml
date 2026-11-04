@@ -1,10 +1,10 @@
-# GitHub Actions (.github/workflows/deploy-minikube.yml) applies the application manifests of k8s/ and
-# k8s/practice-executor/ after a push to master. This ServiceAccount may only create and update the kinds that
-# scripts/ci-app-manifests.py lets through, in namespace jithendar: Deployments, StatefulSets, Services, ConfigMaps,
-# Ingresses, NetworkPolicies, PodDisruptionBudgets, Traefik Middlewares and cert-manager Certificates. It cannot
-# delete anything, read Secrets, create pods directly, or touch RBAC, ServiceAccounts, quotas or anything
-# cluster-wide, so a commit cannot widen its own access. Separate from github-ci-deployer (80-ci-deployer.yaml),
-# which only restarts Deployments.
+# GitHub Actions (.github/workflows/deploy-minikube.yml) applies the application manifests of k8s/,
+# k8s/practice-executor/ and k8s/db-access/ after a push to master. This ServiceAccount may only create and update
+# the kinds that scripts/ci-app-manifests.py lets through, in namespace jithendar: Deployments, StatefulSets,
+# Services, ConfigMaps, Ingresses, NetworkPolicies, PodDisruptionBudgets, Traefik Middlewares, TCP routes and TLS
+# options, and cert-manager Certificates. It cannot delete anything, read Secrets, create pods directly, or touch
+# RBAC, ServiceAccounts, quotas or anything cluster-wide, so a commit cannot widen its own access (a person applies
+# this file). Separate from github-ci-deployer (80-ci-deployer.yaml), which only restarts Deployments.
 # scripts/setup-ci-applier.sh applies this file and stores its token as the repository secret MK4_CI_APPLY_TOKEN.
 apiVersion: v1
 kind: ServiceAccount
@@ -31,7 +31,7 @@ rules:
   resources: ["poddisruptionbudgets"]
   verbs: ["get", "list", "watch", "create", "patch", "update"]
 - apiGroups: ["traefik.io"]
-  resources: ["middlewares"]
+  resources: ["middlewares", "middlewaretcps", "ingressroutetcps", "tlsoptions"]
   verbs: ["get", "list", "watch", "create", "patch", "update"]
 - apiGroups: ["cert-manager.io"]
   resources: ["certificates"]

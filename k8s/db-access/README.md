@@ -22,21 +22,23 @@ rate limits, which today all see the same address.
 
 ## Rollout
 
-1. **Traefik accepts the PROXY protocol** (`tools`, from the repository root, Mac or host):
-   `bash deploy/minikube/deploy-traefik.sh`. Connections without the header still work, so nothing changes yet.
-   Check: `kubectl --context mk4 -n traefik get deploy traefik -o yaml | grep proxyProtocol` shows both entrypoints,
-   and https://jithendar.com still loads.
-2. **HAProxy sends it** (on the Hetzner host, `tools` checkout): `bash deploy/minikube/expose-ingress.sh`. The
-   script refuses to run if step 1 is missing. Check: load https://jithendar.com from the Mac, then
-   `kubectl --context mk4 -n jithendar logs deploy/jithendar-com | grep '"route":"/"' | tail -3`: `ip` must be
-   `122.177.247.138`, not `192.168.49.x`. From the host: `curl -s -o /dev/null https://jithendar.com/` and look
-   for `46.224.38.14`. **If the host shows up as another address (for example `192.168.49.1`), add that address to
-   both lists in `allowlist.yaml`, and only if it is not also what other visitors show up as.**
-3. **DNS:** an A record `db.jithendar.com → 46.224.38.14`, DNS only (no proxy), where jithendar.com's records are
-   managed.
-4. **Login:** `bash scripts/create-db-remote-user.sh` (prints the password once).
-5. **Apply:** `kubectl --context mk4 apply -k k8s/db-access`. Wait for the certificate:
-   `kubectl --context mk4 -n jithendar get certificate db-jithendar-com` → `READY True` (HTTP-01 over port 80).
+Most of it is code that CI runs: `.github/workflows/deploy-minikube.yml` applies this folder on every push to
+`master` that touches `k8s/`, and creates the DNS record `db.jithendar.com` (DNS only, same address as the apex)
+through `scripts/cloudflare-dns-record.sh` when the secret `CLOUDFLARE_DNS_TOKEN` is set. Until Traefik sees real
+client IPs, the allowlists refuse everyone, so deploying this folder early is safe.
+
+What CI must not be able to do (change the shared Traefik, the host's HAProxy, create database logins, change its
+own permissions) is one script, run once from the Mac after the code is pushed:
+
+```bash
+# Cloudflare → My Profile → API Tokens: "Edit zone DNS", zone jithendar.com only
+gh secret set CLOUDFLARE_DNS_TOKEN --repo mrjithendar/jithendar.com
+HOST_SSH=root@jithendar.com scripts/enable-db-access.sh   # without HOST_SSH it prints the host command and waits
+```
+
+It upgrades Traefik (PROXY protocol), runs `tools/deploy/minikube/expose-ingress.sh` on the host, checks that the
+site now logs this Mac's public IP, creates the `jithendar_remote` login (password printed once), re-applies CI's
+Role with the db-access kinds and starts the deploy workflow. Each step is skipped when already done.
 
 ## Verify
 

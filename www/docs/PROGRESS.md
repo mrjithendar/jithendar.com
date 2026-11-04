@@ -1,5 +1,17 @@
 # Progress log — jithendar.com
 
+## Database access through code (2026-11-04, owner request)
+
+`deploy-minikube.yml` now also applies `k8s/db-access/` (skipped with a notice until CI's Role has the TCP-route
+kinds) and upserts the DNS-only record `db.jithendar.com` via `scripts/cloudflare-dns-record.sh` when secret
+`CLOUDFLARE_DNS_TOKEN` exists. Privileged one-time steps (Traefik PROXY protocol, host HAProxy, `jithendar_remote`
+login, CI Role update, first run) are `scripts/enable-db-access.sh`, run once from the Mac.
+
+- **Checked:** actionlint, shellcheck on all new scripts; render of all three folders; server dry-run as
+  `github-ci-applier` (k8s/ and practice-executor pass; db-access is forbidden for MiddlewareTCP/IngressRouteTCP/
+  TLSOption until the Role is re-applied, as designed).
+- **Not checked:** the Cloudflare script against the real API (no token here); `enable-db-access.sh` end to end.
+
 ## CI deploy of manifests to minikube (2026-11-04, owner request)
 
 New `.github/workflows/deploy-minikube.yml` (existing workflows unchanged): plan on PRs, apply on `master` when

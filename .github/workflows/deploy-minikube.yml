@@ -4,16 +4,19 @@ name: deploy to minikube
 # images and restart Deployments on :latest (ci-jithendar-com.yml, ci-practice-executor.yml); this one handles
 # changes to the manifests themselves.
 #
-# plan   → pull requests and pushes touching the manifests: render k8s/ and k8s/practice-executor/, keep the
-#          objects CI may apply (scripts/ci-app-manifests.py), list the rest. No cluster access.
+# plan   → pull requests and pushes touching the manifests: render k8s/, k8s/practice-executor/ and
+#          k8s/db-access/, keep the objects CI may apply (scripts/ci-app-manifests.py), list the rest. No cluster
+#          access.
 # deploy → default branch (push or manual run), only when repository variable MINIKUBE_DEPLOY is "true":
-#          server-side dry run, diff, apply, wait for every Deployment and StatefulSet, smoke-test the site.
+#          DNS record db.jithendar.com (Cloudflare, when secret CLOUDFLARE_DNS_TOKEN is set), server-side dry run,
+#          diff, apply, wait for every Deployment and StatefulSet, smoke-test the site.
 #
 # CI applies only Deployments, StatefulSets, Services, ConfigMaps, Ingresses, NetworkPolicies,
 # PodDisruptionBudgets, Traefik Middlewares and cert-manager Certificates in namespace jithendar. The Namespace,
 # ClusterIssuers, TLSStore, RBAC, ServiceAccounts, Secrets, quotas, RuntimeClass and admission policies stay with a
 # person (./deploy.sh, kubectl apply -k k8s/practice-executor), so a commit cannot widen CI's own access. Nothing
-# is ever deleted (no --prune). k8s/db-access/ is not deployed by CI.
+# is ever deleted (no --prune). k8s/db-access/ (Adminer at /db/, PostgreSQL at db.jithendar.com) is deployed too;
+# its IP allowlists refuse everyone until Traefik sees real client IPs (scripts/enable-db-access.sh, once).
 #
 # Cluster access: ServiceAccount jithendar/github-ci-applier (k8s/85-ci-applier.yaml), kubeconfig template
 # .github/jithendar-ci-applier.yaml, values MK4_API_SERVER, MK4_CA_DATA (variables, shared with the deployer) and
@@ -25,12 +28,14 @@ on:
     paths:
       - 'k8s/**'
       - 'scripts/ci-app-manifests.py'
+      - 'scripts/cloudflare-dns-record.sh'
       - '.github/jithendar-ci-applier.yaml'
       - '.github/workflows/deploy-minikube.yml'
   push:
     paths:
       - 'k8s/**'
       - 'scripts/ci-app-manifests.py'
+      - 'scripts/cloudflare-dns-record.sh'
       - '.github/jithendar-ci-applier.yaml'
       - '.github/workflows/deploy-minikube.yml'
 
@@ -61,7 +66,7 @@ jobs:
       - name: Render and select application objects
         run: |
           set -euo pipefail
-          for dir in k8s k8s/practice-executor; do
+          for dir in k8s k8s/practice-executor k8s/db-access; do
             echo "::group::$dir"
             kubectl kustomize "$dir" | python scripts/ci-app-manifests.py > /dev/null
             echo "::endgroup::"
@@ -92,11 +97,21 @@ jobs:
         run: |
           set -euo pipefail
           : > "$RUNNER_TEMP/rollouts.txt"
-          for dir in k8s k8s/practice-executor; do
+          for dir in k8s k8s/practice-executor k8s/db-access; do
             name="${dir//\//-}"
             kubectl kustomize "$dir" | python scripts/ci-app-manifests.py --rollouts "$RUNNER_TEMP/$name.rollouts" > "$RUNNER_TEMP/$name.yaml"
-            cat "$RUNNER_TEMP/$name.rollouts" >> "$RUNNER_TEMP/rollouts.txt"
+            [[ "$dir" == k8s/db-access ]] || cat "$RUNNER_TEMP/$name.rollouts" >> "$RUNNER_TEMP/rollouts.txt"
           done
+      # Before the apply, so cert-manager's HTTP-01 check for db.jithendar.com can resolve the name.
+      - name: DNS record db.jithendar.com
+        env:
+          CLOUDFLARE_DNS_TOKEN: ${{ secrets.CLOUDFLARE_DNS_TOKEN }}
+        run: |
+          if [[ -z "$CLOUDFLARE_DNS_TOKEN" ]]; then
+            echo "::notice::Secret CLOUDFLARE_DNS_TOKEN is not set; db.jithendar.com is not managed by CI (scripts/cloudflare-dns-record.sh)"
+            exit 0
+          fi
+          scripts/cloudflare-dns-record.sh db.jithendar.com
       - name: Apply to mk4
         env:
           MK4_API_SERVER: ${{ vars.MK4_API_SERVER }}
@@ -111,6 +126,14 @@ jobs:
           trap 'rm -f "$KUBECONFIG"' EXIT
           (umask 077; perl -pe 's/\$\{(MK4_[A-Z_]+)\}/$ENV{$1}/g' .github/jithendar-ci-applier.yaml > "$KUBECONFIG")
           files=("$RUNNER_TEMP/k8s.yaml" "$RUNNER_TEMP/k8s-practice-executor.yaml")
+          # k8s/db-access needs the TCP-route kinds in CI's Role, which only a person can grant
+          # (scripts/enable-db-access.sh re-applies k8s/85-ci-applier.yaml). Until then, skip it instead of failing.
+          if [[ "$(kubectl auth can-i create ingressroutetcps.traefik.io)" == yes ]]; then
+            files+=("$RUNNER_TEMP/k8s-db-access.yaml")
+            cat "$RUNNER_TEMP/k8s-db-access.rollouts" >> "$RUNNER_TEMP/rollouts.txt"
+          else
+            echo "::notice::k8s/db-access skipped: CI's Role cannot manage TCP routes yet (run scripts/enable-db-access.sh)"
+          fi
 
           # Every object must pass the API server's validation and admission before anything changes.
           for f in "${files[@]}"; do kubectl apply --dry-run=server -f "$f" > /dev/null; done
