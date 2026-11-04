@@ -27,6 +27,14 @@ A ```` ```mermaid ```` fence in a post or page now shows as a diagram. Uncommitt
 - **Commands:** `verify_article.py` passes (29 verbatim excerpts, 45 example outputs matched, Python 3.11.9). MOKS tests for the quoted code: 51 passed on a throwaway PostgreSQL. `content`, `editor-workflow` and `links` tests pass alone, after two fixes: an indented code line under a list item broke the editor round trip, and `/python-practice` is now plain text because the link checker does not know the route. Full `npm test` had one 30 s timeout in a different unrelated test on each of three runs, while another session was editing `CodeBlock.tsx` and `package.json`. `lint`, `typecheck` and `build` not run: no application code changed.
 - **Open:** category is a `devops-sre` placeholder; tracebacks not checked on Python 3.12; gaps listed in the package README.
 
+## Draft article: Advantages of TypeScript over Python and Go (2026-11-04, owner request)
+
+`content/blog/typescript-advantages-over-python-and-go.mdx`, `status: review`, written against jithendar.com `be1287a`. Nothing published or committed. No application code changed.
+
+- **Files:** the article; `docs/knowledge-sharing/typescript-advantages/` (README with SEO metadata, FAQs, internal links, files used, validation, author checks; `examples/`; `verify_examples.py`).
+- **Commands:** `verify_examples.py` passes 29 checks (identical output in TypeScript on Node 26.13.0, Python 3.15.2 with Pydantic 2.14.2 and Go 1.27.3; `tsc` 6.0.3 and mypy 2.4.1 `--strict` errors match the article; TypeScript route streams from a FastAPI service; all 12 code blocks match their sources). Front matter passes `collectionSchema("blog")`, editor round trip lossless, `links` test passes, 23 source URLs return 200. Lint, typecheck and build not run: no application code changed.
+- **Open:** category `ai-engineering` is a placeholder; FAQs are in the README, not the article body; no Go article exists to link to.
+
 ## Draft article: Python vs Go vs TypeScript (2026-11-03, owner request)
 
 `content/blog/python-vs-go-vs-typescript.mdx`, `status: review`, written against roboshop-ai `c81e85a`, jithendar.com `f12f8cc`, moks `74a097d` and tools `387bd30`. Nothing published or committed. No application code changed.
