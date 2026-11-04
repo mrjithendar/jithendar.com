@@ -1,5 +1,31 @@
 # Progress log — jithendar.com
 
+## Observability review + draft article (2026-11-04, owner request)
+
+Reviewed logs, traces and metrics against the live mk4 cluster (read-only), fixed what was verified, and drafted
+`content/blog/logging-tracing-observability-jithendar-com.mdx` (`status: review`). Nothing committed or deployed.
+Details and runbooks: `docs/OBSERVABILITY.md` ("Review fixes", "Runbooks").
+
+- **App:** `src/lib/tracing-config.ts` (new: sampler without health probes or remote sampling flags, outgoing span
+  names `<kind> <METHOD> <host>`, `traceparent` to the practice executor only), `src/instrumentation.ts`,
+  `src/lib/request-log.ts` (`isHealthProbe`, `loggedPath`), `src/proxy.ts`; `tests/tracing-config.test.ts`.
+- **Cluster manifests:** `k8s/40-middlewares.yaml` (`strip-trace-headers`), `k8s/60-ingress.yaml`, `k8s/README.md`.
+- **Executor:** `executor/app/main.py` (trace id on audit lines), `executor/tests/test_executor.py`.
+- **tools repo:** Alloy route/outcome patterns (mk4 + EKS copy), collector metrics listener, Jaeger config
+  (`jaeger/jaeger.yaml`, `kustomization.yaml`, `max_traces: 5000`, 384Mi), Prometheus jobs and alerts, dashboards,
+  observability README runbooks.
+- **Figure:** `docs/knowledge-sharing/jithendar-com-observability/diagrams/` (`.drawio`, builder, PNG script) →
+  `public/images/jithendar-com-observability/`.
+- **Commands:** `lint`, `typecheck` pass; `npm test` 449 passed; `npm run build` passes (after deleting
+  `.next/cache/turbopack`); executor pytest 19 passed; tools pytest 241 passed, 4 skipped (the real-collector test
+  needs an `otelcol` binary, not run); all alert expressions evaluated on live Prometheus; `kubectl diff -k k8s`
+  shows only the middleware and annotation. Local `next start` checks: no spans for `/api/health`, a `-00`
+  traceparent still traced, 20/20 requests 200 with the trace endpoint unreachable, reset token redacted.
+- **Not validated:** the collector, Jaeger and Alloy configs were not run with their real binaries (running
+  downloaded binaries was not permitted); NetworkPolicy enforcement on 9464 was not tested from a denied pod.
+- **Open:** `tests/error-handling.test.ts` prints an unhandled PGlite `ENOENT` (`.data/pglite`) when run alone; it
+  predates this change. `METRICS_TOKEN` is in the Secret and DEPLOYMENT.md but unused.
+
 ## Draft article: Mermaid diagrams on jithendar.com (2026-11-03, owner request)
 
 `content/blog/mermaid-diagrams-on-jithendar-com.mdx`, `status: review`. Explains what Mermaid is, why it suits a technical blog, and how the Mermaid change below was built, with 5 Mermaid diagrams. Nothing published or committed. **Publish only after the Mermaid change is deployed.**

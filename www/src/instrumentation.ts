@@ -14,10 +14,14 @@ export async function register() {
   const { registerOTel } = await import("@vercel/otel");
   const { metricsSpanProcessor, startMetricsServer } = await import("./lib/metrics");
   const { requestLogSpanProcessor } = await import("./lib/request-log");
+  const { fetchInstrumentationConfig, outboundSpanNames, requestSampler } = await import("./lib/tracing-config");
   registerOTel({
     serviceName: process.env.OTEL_SERVICE_NAME ?? "jithendar-com",
     attributes: { "service.version": process.env.GIT_SHA ?? "dev", "deployment.environment": process.env.APP_ENV ?? process.env.NODE_ENV ?? "development" },
-    spanProcessors: ["auto", metricsSpanProcessor, requestLogSpanProcessor],
+    // Health probes are not traced; a visitor's traceparent cannot switch tracing off (lib/tracing-config.ts).
+    traceSampler: requestSampler,
+    instrumentationConfig: { fetch: fetchInstrumentationConfig() },
+    spanProcessors: [outboundSpanNames, "auto", metricsSpanProcessor, requestLogSpanProcessor],
   });
   if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT) log.info("tracing enabled", { event: "tracing_enabled", endpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT });
 
@@ -62,6 +66,7 @@ export async function register() {
  */
 export const onRequestError: Instrumentation.onRequestError = async (error, request, context) => {
   const { log } = await import("./lib/log");
+  const { loggedPath } = await import("./lib/request-log");
   const digest = (error as { digest?: string }).digest;
   const requestId = request.headers["x-request-id"];
   log.error("request failed", {
@@ -69,7 +74,7 @@ export const onRequestError: Instrumentation.onRequestError = async (error, requ
     errorCode: digest && /^[A-Za-z0-9_.]{1,80}$/.test(digest) ? digest : undefined,
     digest,
     method: request.method,
-    path: request.path.split("?")[0],
+    path: loggedPath(request.path.split("?")[0] ?? ""),
     route: context.routePath,
     status: 500,
     outcome: "error",

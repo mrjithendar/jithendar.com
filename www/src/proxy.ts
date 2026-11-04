@@ -4,6 +4,7 @@ import { isIndexableHost } from "@/config/site";
 import { indexNowKey, INDEXNOW_KEY_PATTERN } from "@/lib/indexnow-key";
 import { MAINTENANCE_EXEMPT, maintenancePage, maintenanceState } from "@/lib/site-config/maintenance";
 import { recordRequest } from "@/lib/metrics";
+import { isHealthProbe, loggedPath } from "@/lib/request-log";
 import { currentTraceId } from "@/lib/trace";
 
 const PREVIEW_COOKIE = "site_preview";
@@ -13,7 +14,7 @@ const NOINDEX = "noindex, nofollow";
 /** An upstream request id is kept only if it is short and plain (it is echoed into logs and headers). */
 const REQUEST_ID = /^[A-Za-z0-9._:-]{8,128}$/;
 
-/** One JSON access-log line per request (static assets excluded by the matcher). */
+/** One JSON access-log line per request (static assets excluded by the matcher, health probes skipped). */
 function accessLog(request: NextRequest, response: NextResponse, requestId: string) {
   // NextResponse.next() means the app renders it; only proxy-decided responses have a final status here.
   const decided = response.headers.has("x-middleware-next") ? {} : { status: response.status };
@@ -31,7 +32,7 @@ function accessLog(request: NextRequest, response: NextResponse, requestId: stri
       // `http_request_completed` line, which has the final status and duration.
       traceId: currentTraceId(),
       method: request.method,
-      route: request.nextUrl.pathname,
+      route: loggedPath(request.nextUrl.pathname),
       ...decided,
       ip: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
       userAgent: request.headers.get("user-agent")?.slice(0, 200) ?? null,
@@ -56,7 +57,7 @@ export async function proxy(request: NextRequest) {
   response.headers.set("x-request-id", requestId);
   // Next's span for the proxy pass always says 200, so answers decided here (redirects, 410, 503) are counted here.
   if (!response.headers.has("x-middleware-next")) recordRequest(request.method, "proxy", response.status, (performance.now() - started) / 1000);
-  if (process.env.ACCESS_LOG !== "false" && process.env.NODE_ENV !== "test") accessLog(request, response, requestId);
+  if (process.env.ACCESS_LOG !== "false" && process.env.NODE_ENV !== "test" && !isHealthProbe(request.nextUrl.pathname)) accessLog(request, response, requestId);
   return response;
 }
 

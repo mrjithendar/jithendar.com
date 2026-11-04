@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 704" width="620" height="704" role="img" aria-labelledby="jithendar-com-telemetry-flow-title jithendar-com-telemetry-flow-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="jithendar-com-telemetry-flow-title">Logs, traces and metrics of jithendar.com on the mk4 cluster</title>
+<desc id="jithendar-com-telemetry-flow-desc">A visitor reaches the Traefik ingress, which strips incoming trace headers and forwards to two Next.js pods in namespace jithendar. The pods send spans over OTLP/HTTP to the OpenTelemetry Collector, which removes URLs, SQL and exception text and forwards to Jaeger, which keeps the newest 5000 traces in memory. They write JSON log lines to stdout; Alloy reads them through the Kubernetes API, keeps only allowlisted fields and pushes logfmt lines with trace_id to Loki. Prometheus scrapes request and runtime metrics from port 9464. Grafana reads Prometheus and Loki and links a log line&#x27;s trace_id to the Jaeger UI through a port-forward. The site sends traceparent only to the practice executor, whose audit lines carry the same trace_id.</desc>
+<rect width="620" height="704" fill="#ffffff"/>
+<defs>
+<marker id="jithendar-com-telemetry-flow-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+<marker id="jithendar-com-telemetry-flow-write" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b45309"/></marker>
+<marker id="jithendar-com-telemetry-flow-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#be123c"/></marker>
+<marker id="jithendar-com-telemetry-flow-reject" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b91c1c"/></marker>
+<marker id="jithendar-com-telemetry-flow-dashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+<marker id="jithendar-com-telemetry-flow-life" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#cbd5e1"/></marker>
+</defs>
+<rect x="15" y="12" width="590" height="92" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="28" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Internet and ingress</text>
+<rect x="15" y="116" width="590" height="120" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="132" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Namespace jithendar</text>
+<rect x="15" y="248" width="280" height="236" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="287" y="477" text-anchor="end" font-size="12" font-weight="600" fill="#475569">Namespace observability</text>
+<rect x="310" y="248" width="295" height="444" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="597" y="685" text-anchor="end" font-size="12" font-weight="600" fill="#475569">Namespace monitoring</text>
+<polyline points="200,64.0 225,64.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#jithendar-com-telemetry-flow-sync)"/>
+<polyline points="298.0,92 297.90999999999997,140" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#jithendar-com-telemetry-flow-sync)"/>
+<polyline points="395,182.0 420,182.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#jithendar-com-telemetry-flow-sync)"/>
+<polyline points="154.83,224 155.0,284" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#jithendar-com-telemetry-flow-sync)"/>
+<polyline points="155.0,348 155.0,384" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#jithendar-com-telemetry-flow-sync)"/>
+<polyline points="380.03499999999997,224 380.12,268" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#jithendar-com-telemetry-flow-sync)"/>
+<polyline points="505.0,224 504.935,268" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#jithendar-com-telemetry-flow-sync)"/>
+<polyline points="457.5,332 457.5,360" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#jithendar-com-telemetry-flow-sync)"/>
+<polyline points="301.925,224 302,528 325,528.0" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#jithendar-com-telemetry-flow-dashed)"/>
+<polyline points="457.5,560 457.5,592" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#jithendar-com-telemetry-flow-sync)"/>
+<polyline points="590,392.0 598,388 598,624 590,624.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#jithendar-com-telemetry-flow-sync)"/>
+<polyline points="325,624.0 155,624 155.0,448" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#jithendar-com-telemetry-flow-dashed)"/>
+<rect x="30" y="36" width="170" height="56" rx="7" fill="#f8fafc" stroke="#334155" stroke-width="1.4"/>
+<text x="115.0" y="63.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Visitor</text>
+<text x="115.0" y="79.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">browser or crawler, HTTPS</text>
+<rect x="225" y="36" width="365" height="56" rx="7" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+<text x="407.5" y="63.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e1b4b">Traefik ingress</text>
+<text x="407.5" y="79.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">strips traceparent, tracestate, baggage</text>
+<rect x="30" y="140" width="365" height="84" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="212.5" y="165.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">jithendar-com, 2 pods</text>
+<text x="212.5" y="181.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Next.js 16 + @vercel/otel</text>
+<text x="212.5" y="197.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">JSON logs on stdout</text>
+<text x="212.5" y="213.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">metrics on :9464 (cluster only)</text>
+<rect x="420" y="140" width="170" height="84" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="505.0" y="165.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">practice-executor</text>
+<text x="505.0" y="181.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">FastAPI</text>
+<text x="505.0" y="197.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">gets traceparent</text>
+<text x="505.0" y="213.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">audit lines: trace_id</text>
+<rect x="30" y="284" width="250" height="64" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="155.0" y="307.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">OTel Collector 0.162</text>
+<text x="155.0" y="323.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">receives OTLP/HTTP on :4318</text>
+<text x="155.0" y="339.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">removes URLs, SQL, exception text</text>
+<rect x="30" y="384" width="250" height="64" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="155.0" y="407.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">Jaeger 2.22</text>
+<text x="155.0" y="423.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">in memory, newest 5000 traces</text>
+<text x="155.0" y="439.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">UI by port-forward only</text>
+<rect x="325" y="268" width="265" height="64" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="457.5" y="291.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">Alloy</text>
+<text x="457.5" y="307.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">reads pod stdout via the API</text>
+<text x="457.5" y="323.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">keeps allowlisted fields only</text>
+<rect x="325" y="360" width="265" height="64" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="457.5" y="383.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">Loki</text>
+<text x="457.5" y="399.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">logfmt lines, 7 days</text>
+<text x="457.5" y="415.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">trace_id in the line, not a label</text>
+<rect x="325" y="496" width="265" height="64" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="457.5" y="519.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">Prometheus</text>
+<text x="457.5" y="535.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">scrapes the pods on :9464</text>
+<text x="457.5" y="551.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">alert rules, 7 days</text>
+<rect x="325" y="592" width="265" height="64" rx="7" fill="#f8fafc" stroke="#334155" stroke-width="1.4"/>
+<text x="457.5" y="615.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Grafana</text>
+<text x="457.5" y="631.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Overview and Logs dashboards</text>
+<text x="457.5" y="647.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">trace_id opens Jaeger</text>
+<rect x="305.7" y="107.5" width="176.5" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="394.0" y="119.5" text-anchor="middle" font-size="12" fill="#0f172a">x-request-id added by proxy</text>
+<rect x="159.3" y="357.5" width="95.4" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="207.0" y="369.5" text-anchor="middle" font-size="12" fill="#0f172a">filtered spans</text>
+<rect x="203.3" y="605.5" width="70.4" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="238.5" y="617.5" text-anchor="middle" font-size="12" fill="#0f172a">trace link</text>
+</svg>

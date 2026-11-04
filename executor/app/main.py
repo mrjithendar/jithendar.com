@@ -8,7 +8,9 @@ Executor API (FastAPI). Callers: the jithendar.com web app only, authenticated w
   GET    /healthz        process is up;  GET /readyz  Redis answers
 
 This process never runs code and holds no Kubernetes credentials; the dispatcher (app/dispatcher.py) does the work.
-Audit lines (JSON on stdout) record who ran what, by code hash and size, never the code itself.
+Audit lines (JSON on stdout) record who ran what, by code hash and size, never the code itself. They carry the
+caller's W3C trace id (the site sends `traceparent` to this service only), so Loki finds them next to the site's
+lines for the same request.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -33,6 +36,15 @@ from .queue import JobQueue, Rejected
 def audit(event: str, **fields: Any) -> None:
     sys.stdout.write(json.dumps({"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "level": "info", "service": "practice-executor", "event": event, **fields}) + "\n")
     sys.stdout.flush()
+
+
+TRACEPARENT = re.compile(r"^00-([0-9a-f]{32})-[0-9a-f]{16}-[0-9a-f]{2}$")
+
+
+def trace_id_of(request: Request) -> str | None:
+    """The trace id from a well-formed `traceparent` header (never an all-zero id), else None."""
+    m = TRACEPARENT.match(request.headers.get("traceparent", ""))
+    return m.group(1) if m and m.group(1) != "0" * 32 else None
 
 
 def create_app(settings: config.Settings | None = None, redis: Redis | None = None) -> FastAPI:
@@ -91,6 +103,7 @@ def create_app(settings: config.Settings | None = None, redis: Redis | None = No
                 tests=len(req.tests),
                 code_sha256=hashlib.sha256(req.code.encode()).hexdigest(),
                 code_bytes=len(req.code.encode()),
+                trace_id=trace_id_of(request),
             )
         return view
 
@@ -106,7 +119,7 @@ def create_app(settings: config.Settings | None = None, redis: Redis | None = No
         view = await q(request).cancel(job_id)
         if not view:
             raise HTTPException(status_code=404, detail="not found")
-        audit("job.cancel_requested", job=job_id)
+        audit("job.cancel_requested", job=job_id, trace_id=trace_id_of(request))
         return view
 
     @app.get("/v1/status", dependencies=[Depends(require_token)])

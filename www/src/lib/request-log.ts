@@ -17,7 +17,18 @@ type EndedSpan = {
   parentSpanContext?: { spanId: string; isRemote?: boolean };
 };
 
-const SKIP = /^\/api\/health(?:$|\?)/;
+const HEALTH = /^\/api\/health(?:$|\?)/;
+
+/**
+ * Paths that carry a secret in a segment are logged without it: Better Auth's password-reset link
+ * (/api/auth/reset-password/<token>, a bearer credential until used) and draft previews (/preview/<token>).
+ * Used by the proxy's access line and onRequestError; the log collector keeps `route` as it is.
+ */
+const SECRET_SEGMENT = /^(\/api\/auth\/reset-password|\/preview)\/[^/?]+/;
+export const loggedPath = (pathname: string) => pathname.replace(SECRET_SEGMENT, "$1/:token");
+
+/** Kubelet probes (/api/health): no trace, no request line, no access line, no request metric. */
+export const isHealthProbe = (target: unknown) => typeof target === "string" && HEALTH.test(target);
 
 /**
  * Next.js runs the proxy in a handleRequest pass of its own (`next.bubble`), before the render pass of the same
@@ -52,7 +63,7 @@ export const requestLogSpanProcessor = {
     const a = span.attributes;
     if (a["next.span_type"] !== "BaseServer.handleRequest" || isProxyPass(a)) return;
     const target = typeof a["http.target"] === "string" ? a["http.target"] : "";
-    if (SKIP.test(target)) return;
+    if (isHealthProbe(target)) return;
     const status = Number(a["http.status_code"] ?? 0);
     const [s, ns] = span.duration;
     const { traceId, spanId } = span.spanContext();
@@ -60,7 +71,7 @@ export const requestLogSpanProcessor = {
       event: "http_request_completed",
       method: String(a["http.method"] ?? "OTHER"),
       // The pattern (/blog/[slug]) when Next matched a route, else the path without its query.
-      route: String(a["next.route"] ?? a["http.route"] ?? (target.split("?")[0] || "unknown")),
+      route: String(a["next.route"] ?? a["http.route"] ?? (loggedPath(target.split("?")[0] ?? "") || "unknown")),
       status,
       durationMs: Math.round(s * 1000 + ns / 1e6),
       outcome: outcomeOf(status),

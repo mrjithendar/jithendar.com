@@ -1,4 +1,4 @@
-# Traefik middlewares: compression, HTTP to HTTPS and www to apex redirects
+# Traefik middlewares: compression, HTTP to HTTPS and www to apex redirects, stripping client trace headers
 # Exported from the live mk4 cluster (namespace jithendar) on 2026-10-29; cluster-generated fields removed.
 ---
 apiVersion: traefik.io/v1alpha1
@@ -46,3 +46,18 @@ spec:
     permanent: true
     regex: "^https?://www\\.jithendar\\.com/(.*)"
     replacement: https://jithendar.com/${1}
+---
+# Tracing headers from the internet are dropped: Next.js continues any incoming W3C trace context, so a visitor
+# could pick the trace id that becomes their error reference, or send "-00" to switch off the trace, request
+# metrics and request log line for their own requests. An empty value removes the header.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-trace-headers
+  namespace: jithendar
+spec:
+  headers:
+    customRequestHeaders:
+      traceparent: ""
+      tracestate: ""
+      baggage: ""

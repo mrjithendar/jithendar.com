@@ -10,7 +10,7 @@ with cluster-generated fields removed. Deployed with `kubectl apply -k k8s` (nor
 | `10-postgres.yaml` | StatefulSet, Service, NetworkPolicy `jithendar-postgres` (10 Gi volume, pinned to node `mk4-m03`) |
 | `20-redis.yaml` | Deployment, Service, NetworkPolicy `jithendar-redis` |
 | `30-jithendar-com.yaml` | Deployment (2 replicas), Service, PodDisruptionBudget, NetworkPolicy `jithendar-com` |
-| `40-middlewares.yaml` | Traefik middlewares `compress`, `https-redirect`, `www-redirect` |
+| `40-middlewares.yaml` | Traefik middlewares `compress`, `https-redirect`, `www-redirect`, `strip-trace-headers` |
 | `45-jithendar-letsencrypt.yaml` | ClusterIssuers `letsencrypt-prod` and `letsencrypt-staging` (cluster-wide; formerly the `roboshop-letsencrypt` Argo CD app) |
 | `50-certificate.yaml` | Certificate `jithendar-com` (apex + www) → Secret `jithendar-com-tls` |
 | `55-tlsstore.yaml` | Traefik `TLSStore default`: `jithendar-com-tls` is the default certificate for every namespace, so `/argocd`, `/grafana`, `/prometheus` and `/roboshop` share it |

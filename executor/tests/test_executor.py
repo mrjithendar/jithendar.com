@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from app import config
 from app.backends import KubernetesBackend, LocalBackend, pod_spec
 from app.dispatcher import run_one
-from app.main import create_app
+from app.main import create_app, trace_id_of
 from app.models import JobRequest
 from app.protocol import InfraError, PayloadTooLarge, build_payload, parse_output
 from app.queue import JobQueue, Rejected
@@ -250,3 +250,23 @@ def test_runner_calls_the_prelude_harness_with_the_submitted_function():
     payload = {"nonce": "n", "code": "def solve(client, n):\n    return client.get() * n\n", "entrypoint": "solve", "prelude": prelude, "tests": [{"id": "a", "args": [3]}], "limits": {"per_test_seconds": 1, "total_seconds": 5, "memory_mb": 256, "output_bytes": 4096}}
     out = subprocess.run([sys.executable, "-I", str(RUNNER)], env={"JOB_PAYLOAD": base64.b64encode(json.dumps(payload).encode()).decode()}, capture_output=True, text=True, timeout=60).stdout
     assert parse_output(out, "n")["tests"][0]["output"] == {"result": 15, "calls": 1}
+
+
+def test_audit_lines_carry_the_callers_trace_id(redis, capsys):
+    app = create_app(settings(), redis=redis)
+    trace = "4bf92f3577b34da6a3ce929d0e0e4736"
+    with TestClient(app) as client:
+        auth = {"Authorization": f"Bearer {TOKEN}", "traceparent": f"00-{trace}-00f067aa0ba902b7-01"}
+        assert client.post("/v1/jobs", json=req().model_dump(), headers=auth).status_code == 202
+    line = next(json.loads(l) for l in capsys.readouterr().out.splitlines() if '"job.submitted"' in l)
+    assert line["trace_id"] == trace
+
+
+def test_malformed_traceparent_is_ignored():
+    class R:
+        def __init__(self, value):
+            self.headers = {"traceparent": value}
+
+    assert trace_id_of(R("00-" + "0" * 32 + "-00f067aa0ba902b7-01")) is None
+    assert trace_id_of(R('00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01","level":"error')) is None
+    assert trace_id_of(R("garbage")) is None

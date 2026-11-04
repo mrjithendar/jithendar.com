@@ -76,14 +76,83 @@ Errors logged at level `error` also mark the active span failed.
 is traced by `@vercel/otel`. Database queries are not traced: Drizzle's built-in tracing would put SQL and
 parameters on spans, and postgres.js has no safe hook.
 
-## Alerts (Prometheus, `tools/observability/prometheus/files/alerts.yml`)
+## Alerts (Prometheus, `tools/deploy/minikube/observability/prometheus/files/alerts.yml`)
 
-`JithendarComDown` (no pod scraped for 5 min), `JithendarComHighErrorRatio` (> 5 % 5xx for 5 min),
-`JithendarComSlow` (p95 > 2 s for 10 min). They show in Prometheus → Alerts; no Alertmanager delivers them.
+Site: `JithendarComDown` (no pod scraped for 5 min), `JithendarComHighErrorRatio` (> 5 % 5xx for 5 min **and** at
+least 3 failures), `JithendarComSlow` (p95 > 2 s for 10 min). `/api/health` is excluded from both ratios.
+Pipeline: `ObservabilityTargetDown` (Loki, Alloy, collector or Jaeger not scraped), `LogShippingDropped` (Alloy gave
+up on log lines), `TraceSpansLost` (collector or Jaeger refusing/failing spans), `JaegerMemoryNearLimit` (> 90 %).
+They show in Prometheus → Alerts; no Alertmanager delivers them. Each has a `runbook_url` pointing at a section below.
+
+## Runbooks
+
+### Site down
+
+1. `kubectl --context mk4 -n jithendar get pods -l app=jithendar-com` — `ImagePullBackOff` with ECR 403 means the
+   `ecr-pull` Secret expired (see `docs/DEPLOYMENT.md`); `OOMKilled` means memory (limit 1Gi).
+2. `curl -s https://jithendar.com/api/health` — answers `{status, version}`; `version` is the running commit.
+3. If pods are up but the alert fires, the metrics port is the problem: Prometheus → Status → Targets, job
+   `jithendar-com`; the NetworkPolicy admits only `monitoring/app=roboshop-prometheus` on 9464.
+
+### 5xx errors
+
+1. Dashboard **Jithendar.com · Overview** → *5xx by route* shows which route pattern fails.
+2. Loki: `{namespace="jithendar", container="web", level="error"} | logfmt` — `error_type`, `error_code` (the
+   digest a visitor sees) and `trace_id`. A visitor's "Reference: <id>" is the trace id:
+   `{namespace="jithendar"} |= "trace_id=<id>"`.
+3. The full line with `msg` and the stack is only in the pod: `kubectl --context mk4 -n jithendar logs
+   deploy/jithendar-com | grep <trace id>` (try both pods: `-l app=jithendar-com --max-log-requests=4`).
+4. The trace: `kubectl --context mk4 -n observability port-forward svc/jaeger 16686`, then
+   http://localhost:16686/trace/<id>. Exception text is removed by the collector; the failing span has
+   `error.type` and status ERROR. Jaeger keeps the newest 5000 traces in memory, so look soon.
+
+### Slow responses
+
+1. Overview → *Slowest routes (p95)*; Logs → *Failed or slow requests* lists completion lines over 2 s with their
+   `trace_id`.
+2. Open the trace: the long child spans say where the time went (`r2.*`, `fetch POST <host>`, `job …`,
+   `render route (app) …`). Database queries have no spans, so time inside a render span with no children is often
+   SQL; compare with `jithendar_database_up` and the Postgres pod's CPU.
+3. Check the pod: *Event-loop delay (p99)* and *CPU throttling* panels.
 
 ## Rolling it out
 
-1. Deploy the site (`./deploy.sh`: new image + `k8s/` metrics port, NetworkPolicy rule, `70-observability.yaml`).
-2. Push the `tools` repo: Argo CD then updates Alloy (namespace `jithendar`), Prometheus (scrape job, alerts) and
-   Grafana (folder, dashboards, Loki trace links).
-3. Check: Prometheus → Status → Targets shows `jithendar-com` (2 up); Grafana → Jithendar.com dashboards.
+1. Deploy the site: `./deploy.sh` (new image + `k8s/`, including the `strip-trace-headers` middleware on the
+   `jithendar-com` Ingress).
+2. Push the `tools` repo, then sync `loki`, `prometheus` and `grafana` in Argo CD (Alloy patterns, scrape jobs,
+   alerts, dashboards).
+3. The collector and Jaeger have no Argo CD Application: `kubectl --context mk4 apply -k
+   deploy/minikube/observability/otel-collector` and `… -k deploy/minikube/observability/jaeger` from `tools`.
+   Jaeger restarts with an empty store (it is in memory).
+4. Check: Prometheus → Targets shows `jithendar-com` (2 up), `otel-collector` and `jaeger` up; Jaeger has no new
+   `GET /api/health` traces; `{namespace="jithendar"} |= "route=/api/health"` returns nothing new; completion lines
+   for `/blog/[slug]` carry `route=`.
+
+## Review fixes (2026-11-04, second round)
+
+Found on mk4 and fixed in code (the site fixes need a deploy; the `tools` ones a push/sync, see "Rolling it out"):
+
+- **Health probes were most of the telemetry.** About 1,080 of ~2,300 requests an hour were kubelet probes: one
+  8-span trace each in Jaeger, one access line each in Loki, and half of every request-rate and p95 figure. Now
+  `requestSampler` (`src/lib/tracing-config.ts`) does not trace `/api/health`, so it has no spans, metrics or
+  completion line, and the proxy writes no access line for it.
+- **Visitors could steer tracing.** Next.js continues any incoming `traceparent`: a request with
+  `traceparent: 00-<id>-…-01` got that trace id (and it became the visitor's error reference); `…-00` would have
+  turned off the trace, the request metric and the completion line. The ingress now strips
+  `traceparent`/`tracestate`/`baggage` (`k8s/40-middlewares.yaml`, `strip-trace-headers`), and the sampler ignores
+  remote sampling flags.
+- **Outgoing span names held full URLs:** `http GET https://<account>.r2.cloudflarestorage.com/<bucket>/<key>?…`,
+  and a ~95 kB `fetch GET data:…base64` name from the OG image renderer. Names are now `<kind> <METHOD> <host>`
+  (`outboundSpanNames`), `resource.name` is the host, `data:` URLs are not traced.
+- **Trace context to the practice executor.** Only `PRACTICE_EXECUTOR_URL` receives `traceparent`; the executor
+  writes its `trace_id` on `job.submitted`/`job.cancel_requested` audit lines, so one Loki search covers both.
+- **Password-reset tokens in logs.** `/api/auth/reset-password/<token>` was logged as the access line's `route`
+  (which reaches Loki) and as `path` in `request_failed`. Both, and draft preview tokens, are now `…/:token`
+  (`loggedPath`). None were found in the last 72 h of pod logs.
+- **Collector side (`tools`):** Alloy dropped `route` for every pattern with brackets (`/blog/[slug]`) and every
+  `outcome` except `success`; Jaeger was OOMKilled 11 times at 256Mi with no trace cap (now `max_traces: 5000`,
+  384Mi); the collector's own metrics were unreachable; Alloy dropped 541,189 log lines on 2026-11-02 (Loki: "Ingester
+  is shutting down") with no alert. See the alerts above.
+
+`route="other"` is mostly static files and the image optimizer: `/_next/image` fetches `/media/[id]/[name]` inside
+the same process, so one image is one `other` request plus one `/media/[id]/[name]` request in the same trace.
