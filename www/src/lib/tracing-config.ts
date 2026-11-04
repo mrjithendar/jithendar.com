@@ -17,7 +17,7 @@ const RECORD_AND_SAMPLED = 2 as SamplingDecision;
  *
  * A remote parent never decides: Next.js continues any `traceparent` it receives, so a visitor sending
  * `…-00` would otherwise switch off the trace, the request metrics and the completion line for their own
- * request. (The ingress also strips those headers: k8s/40-middlewares.yaml.) The render pass after the proxy
+ * request. (The ingress also strips those headers: minikube/40-middlewares.yaml.) The render pass after the proxy
  * reaches here with the proxy pass as a remote parent too; both are sampled, so the trace stays whole.
  */
 export const requestSampler = {

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# One-time: applies k8s/85-ci-applier.yaml (a ServiceAccount that may create and update the application objects in
+# One-time: applies minikube/85-ci-applier.yaml (a ServiceAccount that may create and update the application objects in
 # namespace jithendar, nothing else) and stores what .github/workflows/deploy-minikube.yml needs:
 #   MK4_CI_APPLY_TOKEN       repository secret    ServiceAccount token (from Secret jithendar/github-ci-applier-token)
 #   MINIKUBE_DEPLOY = true   repository variable  turns the workflow's deploy job on
 # MK4_API_SERVER and MK4_CA_DATA are shared with the restart-only deployer: run scripts/setup-ci-deployer.sh first
-# if they are not set yet. ./deploy.sh also applies the manifest (it is in k8s/kustomization.yaml).
+# if they are not set yet. ./deploy.sh also applies the manifest (it is in minikube/kustomization.yaml).
 #
 #   scripts/setup-ci-applier.sh            # apply SA + Role + token, test the kubeconfig, store the values
 #   SKIP_GH=1 scripts/setup-ci-applier.sh  # only apply and test; set the values in GitHub yourself
@@ -35,8 +35,8 @@ if [[ "${ROTATE:-0}" == "1" ]]; then
   k -n "$NS" delete secret "$SA-token" --ignore-not-found
 fi
 
-echo "→ Applying k8s/85-ci-applier.yaml"
-k apply -f k8s/85-ci-applier.yaml
+echo "→ Applying minikube/85-ci-applier.yaml"
+k apply -f minikube/85-ci-applier.yaml
 
 echo "→ Waiting for the token"
 MK4_CI_APPLY_TOKEN=""
@@ -61,8 +61,8 @@ for denied in "get secrets" "create roles.rbac.authorization.k8s.io" "delete dep
   [[ "$(can $denied || true)" == no ]] || { echo "The ServiceAccount may '$denied'; it must not." >&2; exit 1; }
 done
 echo "→ Dry run of every application object as $SA"
-for dir in k8s k8s/practice-executor; do
-  kubectl kustomize "$dir" | python3 scripts/ci-app-manifests.py 2>/dev/null \
+for group in site practice-executor; do
+  scripts/manifests.sh "$group" | python3 scripts/ci-app-manifests.py 2>/dev/null \
     | kubectl --kubeconfig "$KCFG" apply --dry-run=server -f - >/dev/null
 done
 
@@ -79,4 +79,4 @@ echo "→ Storing secret MK4_CI_APPLY_TOKEN and variable MINIKUBE_DEPLOY"
 printf '%s' "$MK4_CI_APPLY_TOKEN" | gh secret set MK4_CI_APPLY_TOKEN --repo "$REPO"
 unset MK4_CI_APPLY_TOKEN
 gh variable set MINIKUBE_DEPLOY --repo "$REPO" --body true
-echo "Done: pushes to master that change k8s/ now apply the application manifests to mk4."
+echo "Done: pushes to master that change minikube/ now apply the application manifests to mk4."

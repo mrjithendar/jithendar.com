@@ -1,0 +1,48 @@
+name: grafana dashboards
+
+# check → pull requests and pushes touching grafana/: the dashboards are valid JSON, listed in
+#         grafana/kustomization.yaml, use only provisioned data sources and defined variables
+#         (scripts/check-dashboards.py), and the folder renders as the ConfigMap grafana-dashboards-jithendar.
+#
+# No deploy job: Argo CD's `grafana` Application (tools repo) reads grafana/ from master and is synced by a person.
+# This workflow has no cluster access.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'grafana/**'
+      - 'scripts/check-dashboards.py'
+      - '.github/workflows/grafana-dashboards.yml'
+  push:
+    paths:
+      - 'grafana/**'
+      - 'scripts/check-dashboards.py'
+      - '.github/workflows/grafana-dashboards.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
+        with:
+          version: v1.35.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Check dashboards
+        run: python scripts/check-dashboards.py
+      - name: Render the ConfigMap
+        run: |
+          set -euo pipefail
+          kubectl kustomize grafana > "$RUNNER_TEMP/dashboards.yaml"
+          grep -q '^  name: grafana-dashboards-jithendar$' "$RUNNER_TEMP/dashboards.yaml"
+          echo "ConfigMap size: $(wc -c < "$RUNNER_TEMP/dashboards.yaml") bytes (limit 1 MiB)"

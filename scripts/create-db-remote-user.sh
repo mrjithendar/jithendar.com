@@ -7,7 +7,7 @@
 #   bash scripts/create-db-remote-user.sh          # create or rotate, prints the password once
 #
 # The password is also kept in Secret jithendar/jithendar-db-remote (keys username, password), never in Git.
-# To remove access: kubectl delete -k k8s/db-access, then  DROP ROLE jithendar_remote;  as the jithendar user.
+# To remove access: scripts/manifests.sh db-access | kubectl delete -f -, then  DROP ROLE jithendar_remote;  as the jithendar user.
 set -euo pipefail
 CONTEXT=${KUBE_CONTEXT:-mk4}
 ROLE=${ROLE:-jithendar_remote}

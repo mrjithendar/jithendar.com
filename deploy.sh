@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy jithendar.com to the mk4 cluster: apply k8s/, restart the site so it pulls jithendar-com:latest,
+# Deploy jithendar.com to the mk4 cluster: apply minikube/ (the site group), restart the site so it pulls jithendar-com:latest,
 # wait and smoke-test. CI already restarts the site after every push to master; run this for manifest
 # changes or a manual redeploy.
 #
@@ -25,10 +25,10 @@ for s in jithendar-postgres jithendar-redis jithendar-com-env; do
 done
 
 echo "→ Validating against the cluster"
-k apply -k k8s --dry-run=server >/dev/null
+k apply -k minikube --dry-run=server >/dev/null
 
 echo "→ Applying"
-k apply -k k8s
+k apply -k minikube
 
 echo "→ Waiting for Postgres and Redis"
 k -n jithendar rollout status statefulset/jithendar-postgres --timeout=5m

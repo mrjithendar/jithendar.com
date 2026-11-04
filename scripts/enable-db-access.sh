@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-time, from the owner's Mac: the privileged steps behind database access through the ingress
-# (Adminer at https://jithendar.com/db/, PostgreSQL at db.jithendar.com:443; see k8s/db-access/README.md).
-# Everything else (the k8s/db-access objects, the DNS record) is deployed by .github/workflows/deploy-minikube.yml.
+# (Adminer at https://jithendar.com/db/, PostgreSQL at db.jithendar.com:443; see minikube/DB_ACCESS.md).
+# Everything else (the minikube/db-access-*.yaml objects, the DNS record) is deployed by .github/workflows/deploy-minikube.yml.
 #
 #   HOST_SSH=root@jithendar.com scripts/enable-db-access.sh    # also runs the HAProxy step on the host over SSH
 #   scripts/enable-db-access.sh                                 # prints the host command instead and waits
@@ -11,11 +11,11 @@
 #   2. The host's HAProxy sends it (tools deploy/minikube/expose-ingress.sh, on the host).
 #   3. Check: the site now logs this Mac's real IP, not a node's.
 #   4. The PostgreSQL login jithendar_remote (scripts/create-db-remote-user.sh, prints the password once).
-#   5. CI's applier Role gets the db-access kinds (k8s/85-ci-applier.yaml; CI cannot change its own Role).
+#   5. CI's applier Role gets the db-access kinds (minikube/85-ci-applier.yaml; CI cannot change its own Role).
 #   6. Run the deploy workflow (gh), unless NO_DEPLOY=1.
 #
 # Needs: kubectl and helm with admin on context mk4, a tools checkout (TOOLS_DIR, default ../tools), gh signed in.
-# Undo: k8s/db-access/README.md → Rollback.
+# Undo: minikube/DB_ACCESS.md → Rollback.
 set -euo pipefail
 
 CONTEXT="${KUBE_CONTEXT:-mk4}"
@@ -70,8 +70,8 @@ if [[ -z "$ip" || "$ip" == 192.168.49.* ]]; then
 fi
 [[ -n "$ip" && "$ip" != 192.168.49.* ]] || fail "The site still sees '${ip:-nothing}' instead of a public IP; check HAProxy on the host."
 echo "   the site sees this Mac as $ip"
-grep -q -- "- $ip/32" k8s/db-access/allowlist.yaml \
-  || echo "   NOTE: $ip is not in k8s/db-access/allowlist.yaml. Add it to both lists and push, or /db stays closed to this Mac."
+grep -q -- "- $ip/32" minikube/db-access-10-allowlist.yaml \
+  || echo "   NOTE: $ip is not in minikube/db-access-10-allowlist.yaml. Add it to both lists and push, or /db stays closed to this Mac."
 
 echo "→ 4. PostgreSQL login"
 if k -n jithendar get secret jithendar-db-remote >/dev/null 2>&1; then
@@ -81,8 +81,8 @@ else
 fi
 
 echo "→ 5. CI applier permissions"
-k apply -f k8s/85-ci-applier.yaml >/dev/null
-echo "   k8s/85-ci-applier.yaml applied"
+k apply -f minikube/85-ci-applier.yaml >/dev/null
+echo "   minikube/85-ci-applier.yaml applied"
 
 if [[ "${NO_DEPLOY:-0}" != 1 ]]; then
   echo "→ 6. Deploy workflow"

@@ -8,7 +8,7 @@
 A path such as `jithendar.com/db` works only for the web UI. Database clients (psql, DBeaver, TablePlus) speak
 PostgreSQL's own protocol, which has no URL path, so they use the hostname `db.jithendar.com` on port 443 instead.
 
-Allowed sources (`allowlist.yaml`): `122.177.247.138` (the Mac on 2026-11-04) and `46.224.38.14` (the Hetzner
+Allowed sources (`db-access-10-allowlist.yaml`): `122.177.247.138` (the Mac on 2026-11-04) and `46.224.38.14` (the Hetzner
 host). Both routes also need the login from `scripts/create-db-remote-user.sh`: it can read and write table data, but
 cannot change the schema or roles. The app's own `jithendar` login is never used from outside.
 
@@ -22,10 +22,10 @@ rate limits, which today all see the same address.
 
 ## Rollout
 
-Most of it is code that CI runs: `.github/workflows/deploy-minikube.yml` applies this folder on every push to
-`master` that touches `k8s/`, and creates the DNS record `db.jithendar.com` (DNS only, same address as the apex)
+Most of it is code that CI runs: `.github/workflows/deploy-minikube.yml` applies the `db-access-*.yaml` files on every push to
+`master` that touches `minikube/`, and creates the DNS record `db.jithendar.com` (DNS only, same address as the apex)
 through `scripts/cloudflare-dns-record.sh` when the secret `CLOUDFLARE_DNS_TOKEN` is set. Until Traefik sees real
-client IPs, the allowlists refuse everyone, so deploying this folder early is safe.
+client IPs, the allowlists refuse everyone, so deploying them early is safe.
 
 What CI must not be able to do (change the shared Traefik, the host's HAProxy, create database logins, change its
 own permissions) is one script, run once from the Mac after the code is pushed:
@@ -56,11 +56,11 @@ From any other network (a phone off Wi-Fi): `https://jithendar.com/db/` must ans
 ## When the Mac's IP changes
 
 Home connections often get a new address. Find it (`curl -s https://cloudflare.com/cdn-cgi/trace | grep ip=`),
-replace it in both lists in `allowlist.yaml`, then `kubectl --context mk4 apply -k k8s/db-access`.
+replace it in both lists in `db-access-10-allowlist.yaml`, then `scripts/manifests.sh db-access | kubectl --context mk4 apply -f -`.
 
 ## Rollback
 
-- Remove access: `kubectl --context mk4 delete -k k8s/db-access` (the login stays; to drop it:
+- Remove access: `scripts/manifests.sh db-access | kubectl --context mk4 delete -f -` (the login stays; to drop it:
   `kubectl --context mk4 -n jithendar exec -it jithendar-postgres-0 -c postgres -- psql -U jithendar -c 'DROP ROLE jithendar_remote'`).
 - Undo the PROXY protocol, **in this order**: remove `send-proxy-v2` from `deploy/minikube/expose-ingress.sh` and
   rerun it on the host, then remove `proxyProtocol` from `deploy/minikube/traefik/values.yaml` and rerun

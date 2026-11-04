@@ -7,16 +7,16 @@
 | Image | `881026659929.dkr.ecr.us-east-1.amazonaws.com/jithendar-com` (arm64, immutable tags = commit SHA except `latest`, scan on push, last 30 kept; created by Terraform in `infra/`, CI pushes as OIDC role `github-jithendar-com-ci`) |
 | Pipeline | `.github/workflows/ci-jithendar-com.yml`: `check` on pull requests; on `master`, `release` pushes `jithendar-com:latest` (and `:<commit-sha>` for history) and runs `kubectl rollout restart` |
 | Deploy | Automatic on push to `master`. `./deploy.sh` for manifest changes, run by a person with the `mk4` kubeconfig |
-| Manifests | `k8s/` at the repository root, one file per component (see `k8s/README.md`); the image is `jithendar-com:latest` |
+| Manifests | `minikube/` at the repository root, one file per component (see `minikube/README.md`); the image is `jithendar-com:latest` |
 | Image pulls | Secret `jithendar/ecr-pull`, refreshed every 6 h by CronJob `roboshop-ai/ecr-refresh` |
-| TLS | ClusterIssuers `letsencrypt-prod`/`-staging` (`k8s/45-jithendar-letsencrypt.yaml`) → Certificate `jithendar/jithendar-com` (apex + www, `k8s/50-certificate.yaml`) → Secret `jithendar-com-tls`. `TLSStore default` (`k8s/55-tlsstore.yaml`) makes it Traefik's default certificate, which also serves `/argocd`, `/grafana`, `/prometheus` and `/roboshop`. **Do not delete it.** |
+| TLS | ClusterIssuers `letsencrypt-prod`/`-staging` (`minikube/45-jithendar-letsencrypt.yaml`) → Certificate `jithendar/jithendar-com` (apex + www, `minikube/50-certificate.yaml`) → Secret `jithendar-com-tls`. `TLSStore default` (`minikube/55-tlsstore.yaml`) makes it Traefik's default certificate, which also serves `/argocd`, `/grafana`, `/prometheus` and `/roboshop`. **Do not delete it.** |
 
 ## Data services (namespace `jithendar`, deployed by the same `kubectl apply -k`)
 
 | Service | Manifest | Notes |
 |---|---|---|
-| PostgreSQL 18 | `k8s/10-postgres.yaml` | StatefulSet `jithendar-postgres`, 10 GiB volume, **pinned to node `mk4-m03`** (Minikube hostpath data lives on that node; moving the pod means moving `/tmp/hostpath-provisioner/jithendar/data-jithendar-postgres-0` too). Runs as uid 70; a one-shot init container fixes volume ownership. Reachable only from the site's pods. |
-| Redis 7.4 | `k8s/20-redis.yaml` | Deployment `jithendar-redis`, cache only (no persistence, 64 MB LRU), password-protected, reachable only from the site's pods. Losing it is harmless: the site falls back to Postgres. |
+| PostgreSQL 18 | `minikube/10-postgres.yaml` | StatefulSet `jithendar-postgres`, 10 GiB volume, **pinned to node `mk4-m03`** (Minikube hostpath data lives on that node; moving the pod means moving `/tmp/hostpath-provisioner/jithendar/data-jithendar-postgres-0` too). Runs as uid 70; a one-shot init container fixes volume ownership. Reachable only from the site's pods. |
+| Redis 7.4 | `minikube/20-redis.yaml` | Deployment `jithendar-redis`, cache only (no persistence, 64 MB LRU), password-protected, reachable only from the site's pods. Losing it is harmless: the site falls back to Postgres. |
 
 Secrets (never in Git), created once by `scripts/create-secrets.sh`:
 
@@ -27,7 +27,7 @@ Secrets (never in Git), created once by `scripts/create-secrets.sh`:
 | `jithendar-com-env` | `DATABASE_URL`, `REDIS_URL`, `BETTER_AUTH_SECRET`, `SETTINGS_ENCRYPTION_KEY`, `ADMIN_BOOTSTRAP_TOKEN`, `METRICS_TOKEN`, `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`, optional `SMTP_URL`, `MAIL_FROM` (fallback until email is configured in the admin, see `docs/EMAIL.md`); media: `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, optional `R2_PUBLIC_BASE_URL`; optional `GEMINI_API_KEY`, `GEMINI_IMAGE_MODEL` (added with `scripts/set-media-config.sh`) |
 
 Back up `SETTINGS_ENCRYPTION_KEY` with your database backups: it decrypts the stored storage, email, social sign-in and Gemini credentials.
-Gemini limits (`GEMINI_IMAGE_*`) are plain env values in `k8s/30-jithendar-com.yaml`.
+Gemini limits (`GEMINI_IMAGE_*`) are plain env values in `minikube/30-jithendar-com.yaml`.
 Public identifiers for search engines, GA4, AdSense, ads.txt and IndexNow live in the optional ConfigMap
 `jithendar-com-public` (`scripts/set-public-config.sh`; see `docs/SEO_ANALYTICS_ADS.md`). The site runs without it.
 Scheduled publishing and IndexNow retries run inside the site pods (no extra workload; `docs/EDITOR.md`). Media architecture,
@@ -52,23 +52,23 @@ R2 bucket setup (CORS, lifecycle) and the S3 → R2 migration: see `docs/MEDIA.m
 
 Push to `master`. CI's `release` job lints, tests, builds `linux/arm64` with `GIT_SHA` baked in, pushes `jithendar-com:latest` and restarts `deploy/jithendar-com`, which pulls the new `:latest`. Nothing else to do.
 
-After changing `k8s/`, from an up-to-date checkout at the repository root:
+After changing `minikube/`, from an up-to-date checkout at the repository root:
 ```bash
 ./deploy.sh
 ```
-It server dry-runs, applies `k8s/`, restarts the site on `:latest`, waits for the rollout and runs the smoke test.
+It server dry-runs, applies `minikube/`, restarts the site on `:latest`, waits for the rollout and runs the smoke test.
 
 ### Manifest changes from CI (`.github/workflows/deploy-minikube.yml`)
 
-A push to `master` that changes `k8s/` (including `k8s/practice-executor/`) also applies the **application
+A push to `master` that changes `minikube/` (including `minikube/practice-executor-*.yaml`) also applies the **application
 objects** to mk4 from GitHub Actions: Deployments, StatefulSets, Services, ConfigMaps, Ingresses, NetworkPolicies,
 PodDisruptionBudgets, Traefik Middlewares and cert-manager Certificates in namespace `jithendar`
 (`scripts/ci-app-manifests.py` decides). It dry-runs on the server, prints the diff, applies, waits for every
 Deployment and StatefulSet and runs the smoke test. It never deletes anything.
 
-Not applied by CI, still `./deploy.sh` (or `kubectl apply -k k8s/practice-executor`): the Namespace,
+Not applied by CI, still `./deploy.sh` (or `scripts/manifests.sh practice-executor | kubectl apply -f -`): the Namespace,
 ClusterIssuers, TLSStore, RBAC, ServiceAccounts, Secrets, quotas, the RuntimeClass and admission policies, and
-`k8s/db-access/`. CI signs in as `jithendar/github-ci-applier` (`k8s/85-ci-applier.yaml`), which can only create and
+`minikube/db-access-*.yaml`. CI signs in as `jithendar/github-ci-applier` (`minikube/85-ci-applier.yaml`), which can only create and
 update those application kinds, so a commit cannot widen its access. Pull requests get the same selection as a
 plan, without cluster access.
 

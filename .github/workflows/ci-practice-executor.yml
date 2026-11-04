@@ -23,7 +23,8 @@ on:
     paths:
       - 'executor/**'
       - 'www/content/python-practice/**'
-      - 'k8s/practice-executor/**'
+      - 'minikube/practice-executor-*.yaml'
+      - 'scripts/manifests.sh'
       - '.github/workflows/ci-practice-executor.yml'
   push:
     paths:
@@ -62,7 +63,7 @@ jobs:
           git diff --exit-code -- www/content/python-practice/catalog.generated.json || {
             echo "::error::catalog.generated.json is stale: run python executor/tools/build_problems.py and commit it"; exit 1; }
       - name: Render manifests
-        run: kubectl kustomize k8s/practice-executor > /dev/null
+        run: scripts/manifests.sh practice-executor | python scripts/ci-app-manifests.py > /dev/null
 
   release:
     needs: check
@@ -123,7 +124,7 @@ jobs:
             echo "- practice-sandbox:latest = practice-sandbox:$sandbox_tag"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # Signs in as ServiceAccount jithendar/github-ci-deployer (k8s/80-ci-deployer.yaml), the same one that restarts the
+  # Signs in as ServiceAccount jithendar/github-ci-deployer (minikube/80-ci-deployer.yaml), the same one that restarts the
   # site: it may only restart the two executor Deployments here, cannot read Secrets or create pods, so it cannot
   # weaken the sandbox.
   # Roll back: revert the commit on the default branch (CI rebuilds and redeploys), or switch execution off in

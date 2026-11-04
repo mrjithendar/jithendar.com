@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# One-time: applies k8s/80-ci-deployer.yaml (a ServiceAccount that can only restart deployment/jithendar-com in
+# One-time: applies minikube/80-ci-deployer.yaml (a ServiceAccount that can only restart deployment/jithendar-com in
 # namespace jithendar) and stores the values CI fills into the kubeconfig template .github/jithendar-ci-deployer.yaml:
 #   MK4_API_SERVER  repository variable  cluster API URL         (from the mk4 context)
 #   MK4_CA_DATA     repository variable  base64 CA certificate   (from the mk4 context)
 #   MK4_CI_TOKEN    repository secret    ServiceAccount token    (from Secret jithendar/github-ci-deployer-token)
-# ./deploy.sh also applies the manifest (it is in k8s/kustomization.yaml).
+# ./deploy.sh also applies the manifest (it is in minikube/kustomization.yaml).
 #
 #   scripts/setup-ci-deployer.sh            # apply SA + Role + token, test the kubeconfig, store the values
 #   SKIP_GH=1 scripts/setup-ci-deployer.sh  # only apply and test; set the values in GitHub yourself
@@ -40,8 +40,8 @@ if [[ "${ROTATE:-0}" == "1" ]]; then
   k -n "$NS" delete secret "$SA-token" --ignore-not-found
 fi
 
-echo "→ Applying k8s/80-ci-deployer.yaml"
-k apply -f k8s/80-ci-deployer.yaml
+echo "→ Applying minikube/80-ci-deployer.yaml"
+k apply -f minikube/80-ci-deployer.yaml
 
 echo "→ Waiting for the token"
 MK4_CI_TOKEN=""

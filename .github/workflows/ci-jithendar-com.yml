@@ -8,7 +8,7 @@ name: jithendar.com
 #
 # CI's only cluster access is that restart (kubeconfig template .github/jithendar-ci-deployer.yaml, filled
 # from variables MK4_API_SERVER, MK4_CA_DATA and secret MK4_CI_TOKEN set by scripts/setup-ci-deployer.sh); it
-# never applies manifests. ./deploy.sh applies k8s/ for manifest changes (see k8s/README.md). The site always
+# never applies manifests. ./deploy.sh applies minikube/ for manifest changes (see minikube/README.md). The site always
 # runs :latest; there is no digest pinning.
 #
 # Both jobs run on GitHub-hosted runners, never on the mk4 server: builds there competed with the cluster
@@ -21,7 +21,7 @@ on:
   pull_request:
     paths:
       - 'www/**'
-      - 'k8s/**'
+      - 'minikube/**'
       - '.github/workflows/ci-jithendar-com.yml'
   push:
     paths:
@@ -67,7 +67,7 @@ jobs:
         env:
           APP_ENV: production
       - name: Render production manifests
-        run: kubectl kustomize ../k8s > /dev/null
+        run: kubectl kustomize ../minikube > /dev/null
 
   release:
     if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -110,7 +110,7 @@ jobs:
           sudo dmesg --ctime 2>/dev/null | grep -iE "oom|killed process|out of memory" | tail -20 || true
           journalctl --no-pager -u systemd-oomd --since "-30 min" 2>/dev/null | tail -20 || true
       - name: Render production manifests
-        run: kubectl kustomize ../k8s > /dev/null
+        run: kubectl kustomize ../minikube > /dev/null
       - name: Sign in to AWS
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:

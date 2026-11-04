@@ -4,9 +4,9 @@ name: deploy to minikube
 # images and restart Deployments on :latest (ci-jithendar-com.yml, ci-practice-executor.yml); this one handles
 # changes to the manifests themselves.
 #
-# plan   → pull requests and pushes touching the manifests: render k8s/, k8s/practice-executor/ and
-#          k8s/db-access/, keep the objects CI may apply (scripts/ci-app-manifests.py), list the rest. No cluster
-#          access.
+# plan   → pull requests and pushes touching the manifests: render the three groups of minikube/ (site,
+#          practice-executor, db-access; scripts/manifests.sh), keep the objects CI may apply
+#          (scripts/ci-app-manifests.py), list the rest. No cluster access.
 # deploy → default branch (push or manual run), only when repository variable MINIKUBE_DEPLOY is "true":
 #          DNS record db.jithendar.com (Cloudflare, when secret CLOUDFLARE_DNS_TOKEN is set), server-side dry run,
 #          diff, apply, wait for every Deployment and StatefulSet, smoke-test the site.
@@ -14,11 +14,11 @@ name: deploy to minikube
 # CI applies only Deployments, StatefulSets, Services, ConfigMaps, Ingresses, NetworkPolicies,
 # PodDisruptionBudgets, Traefik Middlewares and cert-manager Certificates in namespace jithendar. The Namespace,
 # ClusterIssuers, TLSStore, RBAC, ServiceAccounts, Secrets, quotas, RuntimeClass and admission policies stay with a
-# person (./deploy.sh, kubectl apply -k k8s/practice-executor), so a commit cannot widen CI's own access. Nothing
-# is ever deleted (no --prune). k8s/db-access/ (Adminer at /db/, PostgreSQL at db.jithendar.com) is deployed too;
-# its IP allowlists refuse everyone until Traefik sees real client IPs (scripts/enable-db-access.sh, once).
+# person (./deploy.sh, scripts/manifests.sh practice-executor | kubectl apply -f -), so a commit cannot widen CI's
+# own access. Nothing is ever deleted (no --prune). The db-access group (Adminer at /db/, PostgreSQL at
+# db.jithendar.com) is deployed too; its IP allowlists refuse everyone until Traefik sees real client IPs (scripts/enable-db-access.sh, once).
 #
-# Cluster access: ServiceAccount jithendar/github-ci-applier (k8s/85-ci-applier.yaml), kubeconfig template
+# Cluster access: ServiceAccount jithendar/github-ci-applier (minikube/85-ci-applier.yaml), kubeconfig template
 # .github/jithendar-ci-applier.yaml, values MK4_API_SERVER, MK4_CA_DATA (variables, shared with the deployer) and
 # MK4_CI_APPLY_TOKEN (secret), set by scripts/setup-ci-applier.sh, which also sets MINIKUBE_DEPLOY.
 
@@ -26,14 +26,16 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - 'k8s/**'
+      - 'minikube/**'
+      - 'scripts/manifests.sh'
       - 'scripts/ci-app-manifests.py'
       - 'scripts/cloudflare-dns-record.sh'
       - '.github/jithendar-ci-applier.yaml'
       - '.github/workflows/deploy-minikube.yml'
   push:
     paths:
-      - 'k8s/**'
+      - 'minikube/**'
+      - 'scripts/manifests.sh'
       - 'scripts/ci-app-manifests.py'
       - 'scripts/cloudflare-dns-record.sh'
       - '.github/jithendar-ci-applier.yaml'
@@ -66,9 +68,9 @@ jobs:
       - name: Render and select application objects
         run: |
           set -euo pipefail
-          for dir in k8s k8s/practice-executor k8s/db-access; do
-            echo "::group::$dir"
-            kubectl kustomize "$dir" | python scripts/ci-app-manifests.py > /dev/null
+          for group in site practice-executor db-access; do
+            echo "::group::$group"
+            scripts/manifests.sh "$group" | python scripts/ci-app-manifests.py > /dev/null
             echo "::endgroup::"
           done
 
@@ -97,10 +99,9 @@ jobs:
         run: |
           set -euo pipefail
           : > "$RUNNER_TEMP/rollouts.txt"
-          for dir in k8s k8s/practice-executor k8s/db-access; do
-            name="${dir//\//-}"
-            kubectl kustomize "$dir" | python scripts/ci-app-manifests.py --rollouts "$RUNNER_TEMP/$name.rollouts" > "$RUNNER_TEMP/$name.yaml"
-            [[ "$dir" == k8s/db-access ]] || cat "$RUNNER_TEMP/$name.rollouts" >> "$RUNNER_TEMP/rollouts.txt"
+          for group in site practice-executor db-access; do
+            scripts/manifests.sh "$group" | python scripts/ci-app-manifests.py --rollouts "$RUNNER_TEMP/$group.rollouts" > "$RUNNER_TEMP/$group.yaml"
+            [[ "$group" == db-access ]] || cat "$RUNNER_TEMP/$group.rollouts" >> "$RUNNER_TEMP/rollouts.txt"
           done
       # Before the apply, so cert-manager's HTTP-01 check for db.jithendar.com can resolve the name.
       - name: DNS record db.jithendar.com
@@ -125,14 +126,14 @@ jobs:
           export KUBECONFIG="$RUNNER_TEMP/kubeconfig"
           trap 'rm -f "$KUBECONFIG"' EXIT
           (umask 077; perl -pe 's/\$\{(MK4_[A-Z_]+)\}/$ENV{$1}/g' .github/jithendar-ci-applier.yaml > "$KUBECONFIG")
-          files=("$RUNNER_TEMP/k8s.yaml" "$RUNNER_TEMP/k8s-practice-executor.yaml")
-          # k8s/db-access needs the TCP-route kinds in CI's Role, which only a person can grant
-          # (scripts/enable-db-access.sh re-applies k8s/85-ci-applier.yaml). Until then, skip it instead of failing.
+          files=("$RUNNER_TEMP/site.yaml" "$RUNNER_TEMP/practice-executor.yaml")
+          # The db-access group needs the TCP-route kinds in CI's Role, which only a person can grant
+          # (scripts/enable-db-access.sh re-applies minikube/85-ci-applier.yaml). Until then, skip it instead of failing.
           if [[ "$(kubectl auth can-i create ingressroutetcps.traefik.io)" == yes ]]; then
-            files+=("$RUNNER_TEMP/k8s-db-access.yaml")
-            cat "$RUNNER_TEMP/k8s-db-access.rollouts" >> "$RUNNER_TEMP/rollouts.txt"
+            files+=("$RUNNER_TEMP/db-access.yaml")
+            cat "$RUNNER_TEMP/db-access.rollouts" >> "$RUNNER_TEMP/rollouts.txt"
           else
-            echo "::notice::k8s/db-access skipped: CI's Role cannot manage TCP routes yet (run scripts/enable-db-access.sh)"
+            echo "::notice::db-access manifests skipped: CI's Role cannot manage TCP routes yet (run scripts/enable-db-access.sh)"
           fi
 
           # Every object must pass the API server's validation and admission before anything changes.

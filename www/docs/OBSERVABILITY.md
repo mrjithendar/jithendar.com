@@ -2,13 +2,15 @@
 
 jithendar.com uses the cluster's shared monitoring stack (configured in the `tools` repo, synced by Argo CD from
 `roboshop-ai/argocd`): OpenTelemetry collector + Jaeger (traces), Alloy + Loki (logs), Prometheus (metrics) and
-Grafana at `https://jithendar.com/grafana/` (folder **Jithendar.com**).
+Grafana at `https://jithendar.com/grafana/` (folder **Jithendar.com**). The dashboards are kept in this repository,
+[`grafana/`](../../grafana/README.md); start with **Jithendar.com · Observability**, which puts all three signals on
+one page.
 
 | Signal | From the site | Collected by | Where to look |
 |---|---|---|---|
-| Traces | Next.js spans via `@vercel/otel` (`src/instrumentation.ts`), OTLP/HTTP to `otel-collector.observability:4318` | collector → Jaeger (privacy filter drops URLs, queries, SQL, exception text, health checks) | Jaeger UI (not public): `kubectl -n observability port-forward svc/jaeger 16686`, then http://localhost:16686, service `jithendar-com` |
-| Logs | JSON lines on stdout (`src/lib/log.ts`, access log in `src/proxy.ts`) | Alloy reads namespace `jithendar` (Role `alloy-logs`, `k8s/70-observability.yaml`) → Loki | Dashboard **Jithendar.com · Logs** |
-| Metrics | `src/lib/metrics.ts` on port **9464** `/metrics` (cluster-internal) | Prometheus job `jithendar-com` (headless Service `jithendar-com-metrics`) | Dashboard **Jithendar.com · Overview**; alerts `JithendarCom*` |
+| Traces | Next.js spans via `@vercel/otel` (`src/instrumentation.ts`), OTLP/HTTP to `otel-collector.observability:4318` | collector → Jaeger (privacy filter drops URLs, queries, SQL, exception text, health checks) | Dashboard **Jithendar.com · Observability** (Grafana's Jaeger data source, by trace id); Jaeger's own UI is not public: `kubectl -n observability port-forward svc/jaeger 16686`, then http://localhost:16686, service `jithendar-com` |
+| Logs | JSON lines on stdout (`src/lib/log.ts`, access log in `src/proxy.ts`) | Alloy reads namespace `jithendar` (Role `alloy-logs`, `minikube/70-observability.yaml`) → Loki | Dashboards **Jithendar.com · Logs** and **· Observability** |
+| Metrics | `src/lib/metrics.ts` on port **9464** `/metrics` (cluster-internal) | Prometheus job `jithendar-com` (headless Service `jithendar-com-metrics`) | Dashboards **Jithendar.com · Overview** and **· Observability**; alerts `JithendarCom*` |
 
 ## Metrics
 
@@ -37,8 +39,12 @@ The collector stores only allowlisted fields with strict formats and drops every
 - the proxy's access log is `event=http_request` with `route` (the path) and `method`;
 - full JSON (with `msg`, stack traces) is still in `kubectl -n jithendar logs deploy/jithendar-com`.
 
-Log lines in Grafana show `trace_id`; the line details link to Jaeger (needs the port-forward above). Grafana has no
-Jaeger data source: Jaeger 2.x no longer serves the legacy query API that data source uses.
+Log lines in Grafana show `trace_id`; in the line details, **TraceID** opens the trace in Grafana and **TraceID
+(Jaeger UI)** opens Jaeger's own UI (needs the port-forward above). Jaeger 2.x serves only its `/api/v3` query API,
+so Grafana's Jaeger data source runs with feature toggle `jaegerEnableGrpcEndpoint` (tools, grafana `values.yaml`).
+That covers trace-by-id, services and operations. Jaeger **Search** and the dependency graph in Grafana still call
+the removed API and fail. To find traces, use the requests table on the Observability dashboard: it lists completion
+lines from Loki with their `trace_id`.
 
 ## Errors, request lines and traces (2026-11-04)
 
@@ -84,6 +90,10 @@ Pipeline: `ObservabilityTargetDown` (Loki, Alloy, collector or Jaeger not scrape
 up on log lines), `TraceSpansLost` (collector or Jaeger refusing/failing spans), `JaegerMemoryNearLimit` (> 90 %).
 They show in Prometheus → Alerts; no Alertmanager delivers them. Each has a `runbook_url` pointing at a section below.
 
+Until the 2026-11-04 fix in tools, `TraceSpansLost` never evaluated: Jaeger's refused and failed counters have
+identical labels, so one `rate()` over both failed with "vector cannot contain metrics with the same labelset"
+(Prometheus → Rules showed it as `err`). It now takes one rate per counter, labelled `reason`.
+
 ## Runbooks
 
 ### Site down
@@ -96,20 +106,23 @@ They show in Prometheus → Alerts; no Alertmanager delivers them. Each has a `r
 
 ### 5xx errors
 
-1. Dashboard **Jithendar.com · Overview** → *5xx by route* shows which route pattern fails.
+1. Dashboard **Jithendar.com · Observability** → *5xx by route* shows which route pattern fails. Set **Route** to it
+   and **Status** to `5xx`: the requests table lists the failing requests; click a trace id for the trace and its log
+   lines.
 2. Loki: `{namespace="jithendar", container="web", level="error"} | logfmt` — `error_type`, `error_code` (the
    digest a visitor sees) and `trace_id`. A visitor's "Reference: <id>" is the trace id:
    `{namespace="jithendar"} |= "trace_id=<id>"`.
 3. The full line with `msg` and the stack is only in the pod: `kubectl --context mk4 -n jithendar logs
    deploy/jithendar-com | grep <trace id>` (try both pods: `-l app=jithendar-com --max-log-requests=4`).
-4. The trace: `kubectl --context mk4 -n observability port-forward svc/jaeger 16686`, then
-   http://localhost:16686/trace/<id>. Exception text is removed by the collector; the failing span has
+4. The trace: paste the id into **Trace id** on the Observability dashboard (or, in Jaeger's own UI,
+   `kubectl --context mk4 -n observability port-forward svc/jaeger 16686`, then http://localhost:16686/trace/<id>).
+   Exception text is removed by the collector; the failing span has
    `error.type` and status ERROR. Jaeger keeps the newest 5000 traces in memory, so look soon.
 
 ### Slow responses
 
-1. Overview → *Slowest routes (p95)*; Logs → *Failed or slow requests* lists completion lines over 2 s with their
-   `trace_id`.
+1. Observability → *Slowest routes (p95)*, then **Min duration (ms)** `2000`: the requests table lists the slow
+   requests with their trace ids (Logs → *Failed or slow requests* shows the same lines raw).
 2. Open the trace: the long child spans say where the time went (`r2.*`, `fetch POST <host>`, `job …`,
    `render route (app) …`). Database queries have no spans, so time inside a render span with no children is often
    SQL; compare with `jithendar_database_up` and the Postgres pod's CPU.
@@ -117,10 +130,11 @@ They show in Prometheus → Alerts; no Alertmanager delivers them. Each has a `r
 
 ## Rolling it out
 
-1. Deploy the site: `./deploy.sh` (new image + `k8s/`, including the `strip-trace-headers` middleware on the
+1. Deploy the site: `./deploy.sh` (new image + `minikube/`, including the `strip-trace-headers` middleware on the
    `jithendar-com` Ingress).
-2. Push the `tools` repo, then sync `loki`, `prometheus` and `grafana` in Argo CD (Alloy patterns, scrape jobs,
-   alerts, dashboards).
+2. Push this repository (dashboards in `grafana/`) and the `tools` repo, then sync `loki`, `prometheus` and
+   `grafana` in Argo CD (Alloy patterns, scrape jobs, alerts, the Jaeger data source and the dashboards; the
+   `grafana` app reads `grafana/` from this repository's `master`).
 3. The collector and Jaeger have no Argo CD Application: `kubectl --context mk4 apply -k
    deploy/minikube/observability/otel-collector` and `… -k deploy/minikube/observability/jaeger` from `tools`.
    Jaeger restarts with an empty store (it is in memory).
@@ -139,7 +153,7 @@ Found on mk4 and fixed in code (the site fixes need a deploy; the `tools` ones a
 - **Visitors could steer tracing.** Next.js continues any incoming `traceparent`: a request with
   `traceparent: 00-<id>-…-01` got that trace id (and it became the visitor's error reference); `…-00` would have
   turned off the trace, the request metric and the completion line. The ingress now strips
-  `traceparent`/`tracestate`/`baggage` (`k8s/40-middlewares.yaml`, `strip-trace-headers`), and the sampler ignores
+  `traceparent`/`tracestate`/`baggage` (`minikube/40-middlewares.yaml`, `strip-trace-headers`), and the sampler ignores
   remote sampling flags.
 - **Outgoing span names held full URLs:** `http GET https://<account>.r2.cloudflarestorage.com/<bucket>/<key>?…`,
   and a ~95 kB `fetch GET data:…base64` name from the OG image renderer. Names are now `<kind> <METHOD> <host>`

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install gVisor (runsc) on every node of the mk4 minikube cluster and register the containerd runtime
 # handler `runsc-nonet` (gVisor with networking disabled) used by RuntimeClass gvisor-nonet
-# (k8s/practice-executor/05-runtimeclass.yaml). Run ON THE mk4 HOST, by a person:
+# (minikube/practice-executor-05-runtimeclass.yaml). Run ON THE mk4 HOST, by a person:
 #
 #   bash scripts/install-gvisor-mk4.sh            # dry run: shows what would change on each node
 #   bash scripts/install-gvisor-mk4.sh --apply    # install, then restart containerd node by node

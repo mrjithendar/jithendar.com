@@ -1,5 +1,29 @@
 # Progress log — jithendar.com
 
+## Grafana dashboards in this repo; k8s/ is now minikube/ (2026-11-04, owner request)
+
+**Dashboards.** New top-level `grafana/` (README, kustomization → ConfigMap `monitoring/grafana-dashboards-jithendar`)
+holds the new **Jithendar.com · Observability** dashboard (metrics, logs and traces on one page; requests table from
+Loki completion lines → trace panel and trace log lines by trace id) plus Overview and Logs, moved from tools. In
+tools: the `grafana` Argo app reads `jithendar.com.git` `grafana/` as a fourth source (project `mk-observability`
+allows the repo); Jaeger data source `jaeger` with toggle `jaegerEnableGrpcEndpoint` (Jaeger 2.22 serves only
+`/api/v3`; checked live); Loki `TraceID` now opens traces in Grafana; alert `TraceSpansLost` fixed (it errored on
+every evaluation, see OBSERVABILITY.md). Check: `scripts/check-dashboards.py`, workflow `grafana-dashboards.yml`.
+
+**Layout.** `k8s/` → `minikube/`, flat: `practice-executor/NN-*.yaml` → `minikube/practice-executor-NN-*.yaml`,
+`db-access/*` → `minikube/db-access-NN-*.yaml` + `DB_ACCESS.md`; their kustomizations are gone (one per folder), so
+`scripts/manifests.sh site|practice-executor|db-access` prints a group for `kubectl … -f -`. Updated: `deploy.sh`,
+all three workflows, setup/enable scripts, dependabot (`/minikube`), docs. Dated entries below keep the old paths.
+
+- **Checked:** every query of the three dashboards against live Prometheus/Loki/Jaeger on mk4 (all parse; empty
+  only where the value is really zero), including the escaped route `/blog/[slug]` and an empty trace id; the three
+  groups render the same objects as before (34/21/12); `kubectl diff` against mk4: only one blank line in a CEL
+  expression of `practice-sandbox-pods` (kustomize had folded it differently); filter script on all groups;
+  actionlint, shellcheck; tools `validate.py --external-charts` and pytest (242 passed).
+- **Not checked:** the dashboards inside a running Grafana (table transformations, links, trace panel through the
+  plugin's `/api/v3` path; the plugin's response types match Jaeger's JSON on reading, but running its code was
+  blocked); nothing deployed or synced.
+
 ## Database access through code (2026-11-04, owner request)
 
 `deploy-minikube.yml` now also applies `k8s/db-access/` (skipped with a notice until CI's Role has the TCP-route

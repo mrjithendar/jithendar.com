@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Pick the application objects CI may apply to mk4 from rendered manifests (kubectl kustomize output).
+"""Pick the application objects CI may apply to mk4 from rendered manifests (scripts/manifests.sh output).
 
-  kubectl kustomize k8s | python3 scripts/ci-app-manifests.py --rollouts rollouts.txt > apps.yaml
+  scripts/manifests.sh site | python3 scripts/ci-app-manifests.py --rollouts rollouts.txt > apps.yaml
 
 CI (.github/workflows/deploy-minikube.yml) applies only workloads and their routing in namespace jithendar. Anything
 cluster-wide, or that grants identity or permissions, stays with a person (./deploy.sh and friends): the Namespace,
@@ -17,7 +17,7 @@ import yaml
 
 NAMESPACE = "jithendar"
 
-# (API group, kind) CI applies. Keep in step with the Role in k8s/85-ci-applier.yaml.
+# (API group, kind) CI applies. Keep in step with the Role in minikube/85-ci-applier.yaml.
 APPLY = {
     ("apps", "Deployment"),
     ("apps", "StatefulSet"),
@@ -33,7 +33,7 @@ APPLY = {
     ("cert-manager.io", "Certificate"),
 }
 
-# Applied by a person (./deploy.sh; kubectl apply -k k8s/practice-executor; setup scripts), never by CI.
+# Applied by a person (./deploy.sh; scripts/manifests.sh practice-executor | kubectl apply -f -; setup scripts), never by CI.
 MANUAL = {
     ("", "Namespace"),
     ("", "Secret"),
