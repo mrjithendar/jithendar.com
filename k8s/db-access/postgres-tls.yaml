@@ -1,0 +1,72 @@
+# PostgreSQL at db.jithendar.com:443. Traefik matches the TLS server name (SNI), terminates TLS with a Let's
+# Encrypt certificate and forwards plain TCP to jithendar-postgres:5432 inside the cluster. A URL path cannot work
+# for this: database clients speak PostgreSQL's protocol, not HTTP. Clients:
+#   psql "host=db.jithendar.com port=443 dbname=jithendar user=jithendar_remote sslmode=verify-full sslrootcert=system"
+# (libpq 17+ may add sslnegotiation=direct; the TLS option below answers its ALPN "postgresql").
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: db-jithendar-com
+  namespace: jithendar
+spec:
+  secretName: db-jithendar-com-tls
+  dnsNames:
+  - db.jithendar.com
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt-prod
+---
+apiVersion: traefik.io/v1alpha1
+kind: TLSOption
+metadata:
+  name: db-postgres
+  namespace: jithendar
+spec:
+  minVersion: VersionTLS12
+  alpnProtocols:
+  - postgresql
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: jithendar-db
+  namespace: jithendar
+spec:
+  entryPoints:
+  - websecure
+  routes:
+  - match: HostSNI(`db.jithendar.com`)
+    middlewares:
+    - name: db-allowlist
+    services:
+    - name: jithendar-postgres
+      port: 5432
+  tls:
+    secretName: db-jithendar-com-tls
+    options:
+      name: db-postgres
+---
+# Adds to the jithendar-postgres policy in ../10-postgres.yaml (policies are additive): Traefik (the TCP route)
+# and Adminer may connect too.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jithendar-postgres-remote
+  namespace: jithendar
+spec:
+  podSelector:
+    matchLabels:
+      app: jithendar-postgres
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: traefik
+    - podSelector:
+        matchLabels:
+          app: jithendar-db-ui
+    ports:
+    - port: 5432
+      protocol: TCP

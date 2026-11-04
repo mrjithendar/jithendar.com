@@ -48,3 +48,9 @@ kubectl --context mk4 apply -k k8s
 ```
 
 Never `kubectl apply -f k8s/`: it would try to apply `kustomization.yaml` itself.
+
+`db-access/` (not in `kustomization.yaml`, applied on its own): Adminer at `/db/` and PostgreSQL at
+`db.jithendar.com:443`, both limited to two client IPs. Read `db-access/README.md` first: the order matters.
+
+`85-ci-applier.yaml`: ServiceAccount `github-ci-applier` used by `.github/workflows/deploy-minikube.yml` to apply the
+application objects (not RBAC, Secrets or anything cluster-wide). Set up with `scripts/setup-ci-applier.sh`.

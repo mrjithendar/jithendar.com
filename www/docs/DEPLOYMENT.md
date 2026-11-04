@@ -1,6 +1,6 @@
 # Deployment — jithendar.com on mk4
 
-**CI builds, pushes `jithendar-com:latest` and restarts the site**; `./deploy.sh` (repository root) applies manifest changes with `kubectl apply -k`. Argo CD is not used for this site. The site always runs `:latest` with `imagePullPolicy: Always`, never a pinned digest (owner decision, 2026-11-03). CI's only cluster access is restarting the Deployment.
+**CI builds, pushes `jithendar-com:latest` and restarts the site**; `./deploy.sh` (repository root) applies manifest changes with `kubectl apply -k`. Argo CD is not used for this site. The site always runs `:latest` with `imagePullPolicy: Always`, never a pinned digest (owner decision, 2026-11-03). CI restarts the Deployment after each image build and, from `deploy-minikube.yml`, applies the application manifests (see Release).
 
 | Piece | Where |
 |---|---|
@@ -57,6 +57,24 @@ After changing `k8s/`, from an up-to-date checkout at the repository root:
 ./deploy.sh
 ```
 It server dry-runs, applies `k8s/`, restarts the site on `:latest`, waits for the rollout and runs the smoke test.
+
+### Manifest changes from CI (`.github/workflows/deploy-minikube.yml`)
+
+A push to `master` that changes `k8s/` (including `k8s/practice-executor/`) also applies the **application
+objects** to mk4 from GitHub Actions: Deployments, StatefulSets, Services, ConfigMaps, Ingresses, NetworkPolicies,
+PodDisruptionBudgets, Traefik Middlewares and cert-manager Certificates in namespace `jithendar`
+(`scripts/ci-app-manifests.py` decides). It dry-runs on the server, prints the diff, applies, waits for every
+Deployment and StatefulSet and runs the smoke test. It never deletes anything.
+
+Not applied by CI, still `./deploy.sh` (or `kubectl apply -k k8s/practice-executor`): the Namespace,
+ClusterIssuers, TLSStore, RBAC, ServiceAccounts, Secrets, quotas, the RuntimeClass and admission policies, and
+`k8s/db-access/`. CI signs in as `jithendar/github-ci-applier` (`k8s/85-ci-applier.yaml`), which can only create and
+update those application kinds, so a commit cannot widen its access. Pull requests get the same selection as a
+plan, without cluster access.
+
+One-time setup: `scripts/setup-ci-applier.sh` (applies the ServiceAccount, stores secret `MK4_CI_APPLY_TOKEN` and
+sets variable `MINIKUBE_DEPLOY=true`; until then the deploy job is skipped). Turn it off with
+`gh variable set MINIKUBE_DEPLOY --body false`; revoke with `kubectl -n jithendar delete secret github-ci-applier-token`.
 
 ## Smoke test
 

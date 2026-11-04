@@ -1,5 +1,36 @@
 # Progress log — jithendar.com
 
+## CI deploy of manifests to minikube (2026-11-04, owner request)
+
+New `.github/workflows/deploy-minikube.yml` (existing workflows unchanged): plan on PRs, apply on `master` when
+`k8s/**` changes and `MINIKUBE_DEPLOY=true`. Only application kinds in namespace `jithendar`
+(`scripts/ci-app-manifests.py`); RBAC, Secrets, ServiceAccounts, quotas and cluster-scoped objects stay manual. New
+ServiceAccount `github-ci-applier` (`k8s/85-ci-applier.yaml`, in the kustomization), kubeconfig template
+`.github/jithendar-ci-applier.yaml`, setup `scripts/setup-ci-applier.sh`; docs in DEPLOYMENT.md.
+
+- **Checked:** filter on both renders (30 applied, 21 held back, unknown kinds and other namespaces exit 2); server
+  dry-run and diff of the exact files with the owner's context (only pending change: `strip-trace-headers`);
+  applier RBAC server dry-run; workflow YAML parses; `bash -n` on the setup script.
+- **Not checked:** the workflow on GitHub, and the Role as the ServiceAccount itself (it does not exist until
+  `scripts/setup-ci-applier.sh` runs; the script dry-runs every object as the ServiceAccount before storing the
+  token). actionlint and shellcheck pass on the workflow and setup script.
+
+## Database access from the Mac and the Hetzner host (2026-11-04, owner request)
+
+Adminer at `https://jithendar.com/db/` and PostgreSQL at `db.jithendar.com:443` (a path cannot carry the PostgreSQL
+protocol), both IP-allowlisted to 122.177.247.138 and 46.224.38.14. Not applied; order and checks in
+`k8s/db-access/README.md`.
+
+- **Found:** Traefik saw every client as `192.168.49.2` (HAProxy TCP forwarding + kube-proxy NodePort SNAT), so IP
+  allowlists, site logs and per-IP rate limits all saw one address. Fix in `tools`: Traefik
+  `proxyProtocol.trustedIPs: 192.168.49.0/24`, HAProxy `send-proxy-v2` (script refuses to run before Traefik).
+- **Files:** `k8s/db-access/` (kustomization, allowlist, adminer, postgres-tls, README), `scripts/create-db-remote-user.sh`,
+  `k8s/README.md`; `tools/deploy/minikube/traefik/values.yaml`, `README.md`, `deploy/minikube/expose-ingress.sh`.
+- **Checked:** server dry-run of `k8s/db-access` (12 objects); Traefik chart 42.0.0 renders the proxyProtocol flags;
+  `bash -n` on both scripts; the role SQL on a throwaway PostgreSQL 17 (create, rotate, read/write, no DDL).
+- **Not checked:** PROXY protocol on the live host (no SSH key for root@jithendar.com from this Mac), Traefik's
+  PostgreSQL STARTTLS/ALPN handling, Adminer under `/db/` on the real image.
+
 ## Observability review + draft article (2026-11-04, owner request)
 
 Reviewed logs, traces and metrics against the live mk4 cluster (read-only), fixed what was verified, and drafted

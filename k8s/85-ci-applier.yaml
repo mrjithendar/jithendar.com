@@ -1,0 +1,70 @@
+# GitHub Actions (.github/workflows/deploy-minikube.yml) applies the application manifests of k8s/ and
+# k8s/practice-executor/ after a push to master. This ServiceAccount may only create and update the kinds that
+# scripts/ci-app-manifests.py lets through, in namespace jithendar: Deployments, StatefulSets, Services, ConfigMaps,
+# Ingresses, NetworkPolicies, PodDisruptionBudgets, Traefik Middlewares and cert-manager Certificates. It cannot
+# delete anything, read Secrets, create pods directly, or touch RBAC, ServiceAccounts, quotas or anything
+# cluster-wide, so a commit cannot widen its own access. Separate from github-ci-deployer (80-ci-deployer.yaml),
+# which only restarts Deployments.
+# scripts/setup-ci-applier.sh applies this file and stores its token as the repository secret MK4_CI_APPLY_TOKEN.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: github-ci-applier
+  namespace: jithendar
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: github-ci-applier
+  namespace: jithendar
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets"]
+  verbs: ["get", "list", "watch", "create", "patch", "update"]
+- apiGroups: [""]
+  resources: ["services", "configmaps"]
+  verbs: ["get", "list", "watch", "create", "patch", "update"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses", "networkpolicies"]
+  verbs: ["get", "list", "watch", "create", "patch", "update"]
+- apiGroups: ["policy"]
+  resources: ["poddisruptionbudgets"]
+  verbs: ["get", "list", "watch", "create", "patch", "update"]
+- apiGroups: ["traefik.io"]
+  resources: ["middlewares"]
+  verbs: ["get", "list", "watch", "create", "patch", "update"]
+- apiGroups: ["cert-manager.io"]
+  resources: ["certificates"]
+  verbs: ["get", "list", "watch", "create", "patch", "update"]
+# kubectl rollout status and diagnostics
+- apiGroups: ["apps"]
+  resources: ["replicasets", "controllerrevisions"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods", "events"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: github-ci-applier
+  namespace: jithendar
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: github-ci-applier
+subjects:
+- kind: ServiceAccount
+  name: github-ci-applier
+  namespace: jithendar
+---
+# Long-lived token for the kubeconfig; the token controller fills in data.token. Delete this Secret to revoke it
+# (ROTATE=1 scripts/setup-ci-applier.sh does that and issues a new one).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-ci-applier-token
+  namespace: jithendar
+  annotations:
+    kubernetes.io/service-account.name: github-ci-applier
+type: kubernetes.io/service-account-token
