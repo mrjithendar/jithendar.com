@@ -1,7 +1,14 @@
 # Let's Encrypt ClusterIssuers (cert-manager), owned by this repository ("jithendar-letsencrypt").
 # Previously deployed by the roboshop-letsencrypt Argo CD app (chart tools/minikube/cert-manager/issuers).
 # Names are unchanged on purpose: 50-certificate.yaml uses letsencrypt-prod, and the ACME account keys
-# (Secrets letsencrypt-{prod,staging}-account-key in cert-manager) keep working. HTTP-01 through Traefik.
+# (Secrets letsencrypt-{prod,staging}-account-key in cert-manager) keep working.
+#
+# DNS-01 through Cloudflare (the jithendar.com zone is on Cloudflare, DNS only), not HTTP-01: HTTP-01 made
+# cert-manager create Traefik Ingresses for the challenge, and Kong Gateway (tools repo, docs/kong) runs without an
+# ingress controller, so nothing would serve them. DNS-01 does not depend on the gateway at all, so renewals keep
+# working through the Kong cutover and a Traefik rollback alike.
+# Needs Secret cert-manager/cloudflare-api-token (key api-token) BEFORE this is applied: scripts/create-dns01-secret.sh.
+# Applied by a person (./deploy.sh), never by CI.
 ---
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
@@ -16,9 +23,13 @@ spec:
     privateKeySecretRef:
       name: letsencrypt-prod-account-key
     solvers:
-    - http01:
-        ingress:
-          ingressClassName: traefik
+    - selector:
+        dnsZones: [jithendar.com]
+      dns01:
+        cloudflare:
+          apiTokenSecretRef:
+            name: cloudflare-api-token
+            key: api-token
 ---
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
@@ -33,6 +44,10 @@ spec:
     privateKeySecretRef:
       name: letsencrypt-staging-account-key
     solvers:
-    - http01:
-        ingress:
-          ingressClassName: traefik
+    - selector:
+        dnsZones: [jithendar.com]
+      dns01:
+        cloudflare:
+          apiTokenSecretRef:
+            name: cloudflare-api-token
+            key: api-token

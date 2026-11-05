@@ -1,5 +1,14 @@
 # jithendar.com manifests for the mk4 minikube cluster
 
+> **Routing is in Kong Gateway** (branch `feat/kong-db-migration`; tools repository `docs/kong/`). Kong runs in
+> database mode without an ingress controller: the routes for `jithendar.com`, `www`, `/db/` and
+> `db.jithendar.com` are Kong entities, created once from `kong-config/seed/kong.yaml` and managed in Kong Manager.
+> `40-middlewares.yaml`, `55-tlsstore.yaml`, `60-ingress.yaml`, `db-access-10-allowlist.yaml` and the Traefik
+> objects in `db-access-20/30` left this folder; verbatim copies are in `traefik-backup-conf/` for rollback.
+> The NetworkPolicies admit both `kong` and `traefik` until the cutover is accepted. The ClusterIssuers solve
+> DNS-01 through Cloudflare (`scripts/create-dns01-secret.sh` first). Tables below that mention Traefik describe
+> the state before the move.
+
 Everything jithendar.com runs on the mk4 cluster, in one flat folder. Exported from the live cluster on 2026-10-29
 with cluster-generated fields removed, not deployed by Argo CD. The file name says which of three groups a manifest
 belongs to; each group is applied on its own, and `scripts/manifests.sh <group>` prints it for `kubectl … -f -`.

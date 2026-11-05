@@ -1,5 +1,11 @@
 # Database access from the owner's Mac and the Hetzner host
 
+> **Routing moved to Kong (branch `feat/kong-db-migration`).** The `/db/` route, the `db.jithendar.com` TLS route
+> and both IP allowlists are Kong entities now (tools repository: `kong-config/seed/kong.yaml`, services
+> `jithendar-db-ui` and `jithendar-postgres`; `docs/kong/`). Where this page says Traefik, read Kong; the
+> Traefik objects it names are in `traefik-backup-conf/` for rollback. The allowlists are the plugins
+> `db-ui-allowlist` (HTTP) and `db-tcp-allowlist` (TCP) in Kong Manager.
+
 | What | Where | How it is reached |
 |---|---|---|
 | Adminer web UI | `https://jithendar.com/db/` | Traefik HTTP route, IP allowlist, then a PostgreSQL login |
@@ -56,7 +62,9 @@ From any other network (a phone off Wi-Fi): `https://jithendar.com/db/` must ans
 ## When the Mac's IP changes
 
 Home connections often get a new address. Find it (`curl -s https://cloudflare.com/cdn-cgi/trace | grep ip=`),
-replace it in both lists in `db-access-10-allowlist.yaml`, then `scripts/manifests.sh db-access | kubectl --context mk4 apply -f -`.
+replace it in both Kong plugins, `db-ui-allowlist` and `db-tcp-allowlist` (Kong Manager → Plugins, or the Admin API:
+`docs/kong/04-kong-manager-guide.md` in the tools repository). Until the Kong cutover, Traefik's lists were in
+`db-access-10-allowlist.yaml` (now in `traefik-backup-conf/minikube/`).
 
 ## Rollback
 

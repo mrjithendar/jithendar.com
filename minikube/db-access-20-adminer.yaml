@@ -1,3 +1,5 @@
+# Routing (/db → /db/, IP allowlist, response headers) is in Kong: tools repo, kong-config/seed/kong.yaml, service
+# jithendar-db-ui. The Traefik Middlewares and Ingress are in traefik-backup-conf/.
 # Adminer (Docker Official Image) at https://jithendar.com/db/: a login form, then the usual table browser and SQL
 # window. It holds no credentials: sign in with System "PostgreSQL", server jithendar-postgres, the login from
 # scripts/create-db-remote-user.sh, database jithendar. Its NetworkPolicy lets it reach only PostgreSQL, so the
@@ -103,6 +105,9 @@ spec:
   - from:
     - namespaceSelector:
         matchLabels:
+          kubernetes.io/metadata.name: kong
+    - namespaceSelector:
+        matchLabels:
           kubernetes.io/metadata.name: traefik
     ports:
     - port: 8080
@@ -127,57 +132,3 @@ spec:
     ports:
     - port: 5432
       protocol: TCP
----
-# /db → /db/ (Adminer's links are relative to the folder), then the IP allowlist decides.
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: db-slash
-  namespace: jithendar
-spec:
-  redirectRegex:
-    regex: "^https://jithendar\\.com/db$"
-    replacement: https://jithendar.com/db/
-    permanent: false
----
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: db-headers
-  namespace: jithendar
-spec:
-  headers:
-    customResponseHeaders:
-      X-Robots-Tag: "noindex, nofollow"
-      Cache-Control: "no-store"
-    frameDeny: true
-    contentTypeNosniff: true
-    referrerPolicy: no-referrer
----
-# Longer than the site's "/" rule, so Traefik routes /db here first. The allowlist runs before anything else.
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: jithendar-db-ui
-  namespace: jithendar
-  annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: 'true'
-    traefik.ingress.kubernetes.io/router.middlewares: jithendar-db-allowlist@kubernetescrd,jithendar-db-slash@kubernetescrd,jithendar-db-headers@kubernetescrd
-spec:
-  ingressClassName: traefik
-  rules:
-  - host: jithendar.com
-    http:
-      paths:
-      - path: /db
-        pathType: Prefix
-        backend:
-          service:
-            name: jithendar-db-ui
-            port:
-              name: http
-  tls:
-  - hosts:
-    - jithendar.com
-    secretName: jithendar-com-tls

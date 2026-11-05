@@ -1,0 +1,25 @@
+# jithendar.com site on mk4: kubectl --context mk4 apply -k minikube (or ./deploy.sh). Only the 00-…85- files are
+# listed; practice-executor-*.yaml and db-access-*.yaml are separate groups (README.md, scripts/manifests.sh).
+# Secrets (jithendar-com-env, jithendar-postgres, jithendar-redis, ecr-pull) are created separately and never committed.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# No `namespace:` here: every namespaced manifest sets namespace jithendar itself, and a kustomization-wide
+# namespace would also be stamped onto the cluster-scoped ClusterIssuers (kustomize does not know that CRD).
+
+
+resources:
+- 00-namespace.yaml
+- 10-postgres.yaml
+- 20-redis.yaml
+- 30-jithendar-com.yaml
+- 40-middlewares.yaml
+- 45-jithendar-letsencrypt.yaml
+- 50-certificate.yaml
+- 55-tlsstore.yaml
+- 60-ingress.yaml
+- 70-observability.yaml
+- 80-ci-deployer.yaml
+- 85-ci-applier.yaml
+
+# The site always runs jithendar-com:latest (imagePullPolicy Always, set in 30-jithendar-com.yaml): CI pushes
+# :latest and restarts the Deployment. No digest pinning.

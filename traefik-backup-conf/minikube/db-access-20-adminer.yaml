@@ -1,0 +1,183 @@
+# Adminer (Docker Official Image) at https://jithendar.com/db/: a login form, then the usual table browser and SQL
+# window. It holds no credentials: sign in with System "PostgreSQL", server jithendar-postgres, the login from
+# scripts/create-db-remote-user.sh, database jithendar. Its NetworkPolicy lets it reach only PostgreSQL, so the
+# form's "server" field cannot be used to probe anything else in the cluster.
+# The image serves /var/www/html at "/"; the files are copied to /tmp/www/db so the app lives at /db/ and its
+# session cookies stay scoped to /db/ (no prefix stripping, nothing sent to the rest of the site).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jithendar-db-ui
+  namespace: jithendar
+  labels:
+    app: jithendar-db-ui
+    app.kubernetes.io/part-of: jithendar-com
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jithendar-db-ui
+  template:
+    metadata:
+      labels:
+        app: jithendar-db-ui
+        app.kubernetes.io/part-of: jithendar-com
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: adminer
+        image: adminer:6.3.0
+        imagePullPolicy: IfNotPresent
+        command:
+        - sh
+        - -c
+        - rm -rf /tmp/www && mkdir -p /tmp/www && cp -R /var/www/html /tmp/www/db && cd /tmp/www/db && exec php -S [::]:8080 -t /tmp/www
+        env:
+        - name: ADMINER_DEFAULT_SERVER
+          value: jithendar-postgres
+        ports:
+        - containerPort: 8080
+          name: http
+        readinessProbe:
+          tcpSocket:
+            port: http
+          periodSeconds: 10
+        livenessProbe:
+          tcpSocket:
+            port: http
+          periodSeconds: 20
+        resources:
+          requests:
+            cpu: 20m
+            memory: 64Mi
+          limits:
+            cpu: 500m
+            memory: 384Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+          readOnlyRootFilesystem: true
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: tmp
+        emptyDir:
+          sizeLimit: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jithendar-db-ui
+  namespace: jithendar
+  labels:
+    app: jithendar-db-ui
+spec:
+  selector:
+    app: jithendar-db-ui
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jithendar-db-ui
+  namespace: jithendar
+spec:
+  podSelector:
+    matchLabels:
+      app: jithendar-db-ui
+  policyTypes: [Ingress, Egress]
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: traefik
+    ports:
+    - port: 8080
+      protocol: TCP
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+  - to:
+    - podSelector:
+        matchLabels:
+          app: jithendar-postgres
+    ports:
+    - port: 5432
+      protocol: TCP
+---
+# /db → /db/ (Adminer's links are relative to the folder), then the IP allowlist decides.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: db-slash
+  namespace: jithendar
+spec:
+  redirectRegex:
+    regex: "^https://jithendar\\.com/db$"
+    replacement: https://jithendar.com/db/
+    permanent: false
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: db-headers
+  namespace: jithendar
+spec:
+  headers:
+    customResponseHeaders:
+      X-Robots-Tag: "noindex, nofollow"
+      Cache-Control: "no-store"
+    frameDeny: true
+    contentTypeNosniff: true
+    referrerPolicy: no-referrer
+---
+# Longer than the site's "/" rule, so Traefik routes /db here first. The allowlist runs before anything else.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jithendar-db-ui
+  namespace: jithendar
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: 'true'
+    traefik.ingress.kubernetes.io/router.middlewares: jithendar-db-allowlist@kubernetescrd,jithendar-db-slash@kubernetescrd,jithendar-db-headers@kubernetescrd
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: jithendar.com
+    http:
+      paths:
+      - path: /db
+        pathType: Prefix
+        backend:
+          service:
+            name: jithendar-db-ui
+            port:
+              name: http
+  tls:
+  - hosts:
+    - jithendar.com
+    secretName: jithendar-com-tls

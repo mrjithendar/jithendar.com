@@ -1,5 +1,7 @@
-# PostgreSQL at db.jithendar.com:443. Traefik matches the TLS server name (SNI), terminates TLS with a Let's
-# Encrypt certificate and forwards plain TCP to jithendar-postgres:5432 inside the cluster. A URL path cannot work
+# PostgreSQL at db.jithendar.com:443. The gateway matches the TLS server name (SNI), terminates TLS with a Let's
+# Encrypt certificate and forwards plain TCP to jithendar-postgres:5432 inside the cluster. Since the move to Kong
+# (tools repo, docs/kong) the route is Kong's stream route jithendar-postgres-tls; the Traefik TLSOption and
+# IngressRouteTCP are in traefik-backup-conf/. This Certificate stays for a Traefik rollback. A URL path cannot work
 # for this: database clients speak PostgreSQL's protocol, not HTTP. Clients:
 #   psql "host=db.jithendar.com port=443 dbname=jithendar user=jithendar_remote sslmode=verify-full sslrootcert=system"
 # (libpq 17+ may add sslnegotiation=direct; the TLS option below answers its ALPN "postgresql").
@@ -17,38 +19,8 @@ spec:
     kind: ClusterIssuer
     name: letsencrypt-prod
 ---
-apiVersion: traefik.io/v1alpha1
-kind: TLSOption
-metadata:
-  name: db-postgres
-  namespace: jithendar
-spec:
-  minVersion: VersionTLS12
-  alpnProtocols:
-  - postgresql
----
-apiVersion: traefik.io/v1alpha1
-kind: IngressRouteTCP
-metadata:
-  name: jithendar-db
-  namespace: jithendar
-spec:
-  entryPoints:
-  - websecure
-  routes:
-  - match: HostSNI(`db.jithendar.com`)
-    middlewares:
-    - name: db-allowlist
-    services:
-    - name: jithendar-postgres
-      port: 5432
-  tls:
-    secretName: db-jithendar-com-tls
-    options:
-      name: db-postgres
----
-# Adds to the jithendar-postgres policy in 10-postgres.yaml (policies are additive): Traefik (the TCP route)
-# and Adminer may connect too.
+# Adds to the jithendar-postgres policy in 10-postgres.yaml (policies are additive): the gateway (Kong; Traefik
+# until the cutover is accepted) and Adminer may connect too.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -61,6 +33,9 @@ spec:
   policyTypes: [Ingress]
   ingress:
   - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kong
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: traefik

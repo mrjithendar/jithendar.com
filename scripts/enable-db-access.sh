@@ -70,8 +70,9 @@ if [[ -z "$ip" || "$ip" == 192.168.49.* ]]; then
 fi
 [[ -n "$ip" && "$ip" != 192.168.49.* ]] || fail "The site still sees '${ip:-nothing}' instead of a public IP; check HAProxy on the host."
 echo "   the site sees this Mac as $ip"
-grep -q -- "- $ip/32" minikube/db-access-10-allowlist.yaml \
-  || echo "   NOTE: $ip is not in minikube/db-access-10-allowlist.yaml. Add it to both lists and push, or /db stays closed to this Mac."
+# The allowlists are Kong ip-restriction plugins since the move to Kong (tools repo, docs/kong); this script
+# predates it and only reminds you where they are.
+echo "   NOTE: make sure $ip is in Kong's ip-restriction plugins db-ui-allowlist and db-tcp-allowlist (Kong Manager), or /db stays closed to this Mac."
 
 echo "→ 4. PostgreSQL login"
 if k -n jithendar get secret jithendar-db-remote >/dev/null 2>&1; then
