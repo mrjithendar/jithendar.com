@@ -95,8 +95,27 @@ export function isSafeUrl(url: string): boolean {
 
 let manager: MarkdownManager | undefined;
 function md(): MarkdownManager {
-  manager ??= new MarkdownManager({ extensions: editorExtensions() });
+  manager ??= withLiteralAmpersands(new MarkdownManager({ extensions: editorExtensions() }));
   return manager;
+}
+
+/** An `&` that the parser would read back as an entity (it decodes only these). */
+const ENTITY_START = /&amp;(?!(?:amp|lt|gt|quot|#\d{1,7}|#[xX][0-9a-fA-F]{1,6});)/g;
+
+/**
+ * @tiptap/markdown writes every `&` in text as `&amp;`, so a title like "History & Community" came back
+ * changed. Keep `&` literal unless it would start an entity the parser decodes. Text it leaves untouched
+ * (code marks and code blocks) is returned as is. Relies on a private method of the pinned version;
+ * tests/editor-workflow.test.ts covers it.
+ */
+function withLiteralAmpersands(m: MarkdownManager): MarkdownManager {
+  const target = m as unknown as { encodeTextForMarkdown: (text: string, ...rest: unknown[]) => string };
+  const encode = target.encodeTextForMarkdown.bind(m);
+  target.encodeTextForMarkdown = (text, ...rest) => {
+    const out = encode(text, ...rest);
+    return out === text ? out : out.replace(ENTITY_START, "&");
+  };
+  return m;
 }
 
 export const parseMarkdown = (source: string): JSONContent => md().parse(source);

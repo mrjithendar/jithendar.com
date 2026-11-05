@@ -73,6 +73,16 @@ describe("content fidelity (Markdown is canonical)", () => {
     expect(serializeMarkdown(parseMarkdown(md))).toContain("```yaml\nkey: value\n```");
   });
 
+  it("keeps a literal & in text, and escapes only what would read back as an entity", () => {
+    const rt = (s: string) => serializeMarkdown(parseMarkdown(s));
+    expect(rt("[History & Community](https://e.com/?a=1&b=2)")).toBe("[History & Community](https://e.com/?a=1&b=2)");
+    expect(rt("Fish &amp;amp; chips")).toBe("Fish &amp;amp; chips");
+    expect(rt("a &amp;lt; b")).toBe("a &amp;lt; b");
+    expect(rt("a &copy; b")).toBe("a &copy; b");
+    expect(rt("`a & b` and `&amp;`")).toBe("`a & b` and `&amp;`");
+    expect(rt("```\na & b &amp;\n```")).toBe("```\na & b &amp;\n```");
+  });
+
   it("keeps shortcodes, comments and raw HTML/JSX byte for byte as protected blocks", () => {
     const protectedSrc = [
       ':::callout{type="warning" title="Careful"}\nDo **not** run this in production.\n:::',
