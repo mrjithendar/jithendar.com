@@ -1,0 +1,108 @@
+<mxfile host="app.diagrams.net" agent="build_diagrams.py" version="24.7.17" type="device">
+  <diagram id="traefik-minikube-config-flow-0" name="Configuration flow">
+    <mxGraphModel dx="800" dy="800" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="590" background="#ffffff" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="z0" value="Git repositories on GitHub" style="rounded=1;arcSize=2;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=left;verticalAlign=top;spacingLeft=8;spacingRight=8;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=wrap;html=0;" vertex="1" parent="1">
+          <mxGeometry x="15" y="12" width="870" height="108" as="geometry" />
+        </mxCell>
+        <mxCell id="z1" value="Who applies it" style="rounded=1;arcSize=2;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=left;verticalAlign=top;spacingLeft=8;spacingRight=8;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=wrap;html=0;" vertex="1" parent="1">
+          <mxGeometry x="15" y="140" width="870" height="116" as="geometry" />
+        </mxCell>
+        <mxCell id="z2" value="Kubernetes API" style="rounded=1;arcSize=2;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=left;verticalAlign=top;spacingLeft=8;spacingRight=8;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=wrap;html=0;" vertex="1" parent="1">
+          <mxGeometry x="15" y="268" width="870" height="78" as="geometry" />
+        </mxCell>
+        <mxCell id="z3" value="namespace traefik" style="rounded=1;arcSize=2;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=right;verticalAlign=bottom;spacingLeft=8;spacingRight=8;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=wrap;html=0;" vertex="1" parent="1">
+          <mxGeometry x="15" y="358" width="870" height="222" as="geometry" />
+        </mxCell>
+        <mxCell id="tools" value="tools&#10;deploy/minikube/traefik/values.yaml&#10;argocd/ Ingress + Middleware&#10;observability/ Ingress + auth" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f1f5f9;strokeColor=#64748b;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="36" width="270" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="moksrepo" value="moks&#10;deploy/helm/moks chart&#10;templates/ingress.yaml&#10;Ingress, IngressRoute, Middleware" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f1f5f9;strokeColor=#64748b;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="315" y="36" width="270" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="siterepo" value="jithendar.com&#10;minikube/40–60: Ingress, Middleware&#10;TLSStore, Certificate, issuers&#10;db-access: IngressRouteTCP" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f1f5f9;strokeColor=#64748b;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="600" y="36" width="270" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="helm" value="Helm, by a person&#10;bootstrap.py or&#10;deploy-traefik.sh&#10;chart 42.0.0 → Deployment" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eef2ff;strokeColor=#4338ca;fontColor=#1e1b4b;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="164" width="200" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="kubectl" value="kubectl apply -k&#10;deploy/minikube/argocd&#10;run by bootstrap.py&#10;Argo CD's own Ingress" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eef2ff;strokeColor=#4338ca;fontColor=#1e1b4b;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="245" y="164" width="200" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="argo" value="Argo CD on mk4&#10;manual sync with deploy.py&#10;grafana, prometheus, loki&#10;moks-routing (moks repo)" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eef2ff;strokeColor=#4338ca;fontColor=#1e1b4b;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="460" y="164" width="200" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ci" value="CI and deploy.sh&#10;deploy-minikube.yml&#10;SA github-ci-applier&#10;deploy.sh: TLSStore, RBAC" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eef2ff;strokeColor=#4338ca;fontColor=#1e1b4b;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="675" y="164" width="200" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="api" value="Kubernetes API server (mk4)&#10;Deployment args (static) · Ingress, Middleware, TLSStore, TLSOption, IngressRouteTCP (dynamic) · Secrets, EndpointSlices" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#fffbeb;strokeColor=#b45309;fontColor=#451a03;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="292" width="845" height="46" as="geometry" />
+        </mxCell>
+        <mxCell id="static" value="Static configuration&#10;CLI arguments rendered from Helm values&#10;entryPoints, providers, PROXY protocol, metrics&#10;a change means a new pod" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e3a8a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="382" width="400" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="dynamic" value="Dynamic configuration&#10;providers list and watch the API&#10;routers, services, middlewares, TLS&#10;applied live, no restart" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e3a8a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="475" y="382" width="400" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="runtime" value="Traefik pod (v3.7.14)&#10;a router whose middleware or Secret is missing is logged and skipped,&#10;e.g. Loki read routes while Secret monitoring/loki-read-auth does not exist" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#ecfdf5;strokeColor=#047857;fontColor=#064e3b;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="490" width="845" height="64" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.37037037037037035;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="tools" target="helm">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.6;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="tools" target="kubectl">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="192" y="130" />
+              <mxPoint x="345" y="130" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e2" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#64748b;strokeWidth=1.4;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.95;exitY=1;exitDx=0;exitDy=0;entryX=0.3;entryY=0;entryDx=0;entryDy=0;dashed=1;dashPattern=6 4;" edge="1" parent="1" source="tools" target="argo">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="286.5" y="122" />
+              <mxPoint x="520" y="122" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e3" value="Argo pulls" style="edgeStyle=none;rounded=0;html=0;strokeColor=#64748b;strokeWidth=1.4;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.9074074074074074;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;dashed=1;dashPattern=6 4;" edge="1" parent="1" source="moksrepo" target="argo">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="40" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e4" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.6481481481481481;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="siterepo" target="ci">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#b45309;strokeWidth=2.2;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.11834319526627218;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="helm" target="api">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#b45309;strokeWidth=2.2;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.3727810650887574;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="kubectl" target="api">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#b45309;strokeWidth=2.2;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.6272189349112426;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="argo" target="api">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#b45309;strokeWidth=2.2;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.8816568047337278;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="ci" target="api">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.23668639053254437;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="api" target="static">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" value="list/watch" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.7633136094674556;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="api" target="dynamic">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="40" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e11" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.23668639053254437;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="static" target="runtime">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e12" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.7633136094674556;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="dynamic" target="runtime">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
