@@ -82,100 +82,88 @@ sources:
     publisher: Kubernetes
 ---
 
-*This roundup covers developments from 1 to 31 October 2026. Availability, pricing and version details are as of 3 November 2026, when the research for this article was done. Benchmark figures are vendor-reported unless the text says otherwise.*
+*This roundup covers 1 to 31 October 2026. Availability, pricing and versions are as of 3 November 2026. Benchmarks are vendor-reported unless stated.*
 
-October had no single headline that changed everything. It had three threads that ran through most of the month's engineering news.
+October had no single headline, but three threads ran through most of the month's engineering news:
 
-**First, the big model vendors competed on price and fit, not only on capability.** Anthropic, Google and OpenAI each shipped a model in October whose launch post leaned hard on cost per task, speed or staged access. Anthropic and OpenAI were also explicit about which of their own models to use instead for harder work.
-
-**Second, agents moved further into the software delivery pipeline.** GitHub made agent-written Actions workflows generally available. Anthropic handed the Agent Skills format to a vendor-neutral foundation. The question is shifting from "can an agent do this?" to "who approved it, with which permissions, and how do we review what it changed?"
-
-**Third, the pipeline itself was the weak point.** The month's most instructive security incident was not a model jailbreak. It was a release pipeline compromise at LiteLLM, a popular Python gateway for model APIs. Stolen CI tokens and relaxed release approvals let an attacker publish a credential-stealing build to PyPI and Docker Hub. Next.js and Node.js also shipped critical or high-severity fixes the same month.
+1. **Model vendors competed on price and fit, not only capability.** Anthropic, Google and OpenAI each shipped a model whose launch leaned on cost per task, speed or staged access, and two of them said plainly which bigger model to use for hard work.
+2. **Agents moved into the delivery pipeline.** GitHub made agent-written Actions workflows generally available, and Anthropic gave the Agent Skills format to a vendor-neutral foundation. The question is now "who approved it?"
+3. **The pipeline itself was the weak point.** The month's most instructive incident was a release-pipeline compromise at LiteLLM, where stolen CI tokens and relaxed approvals published a credential-stealing build. Next.js and Node.js shipped critical or high-severity fixes the same month.
 
 ## October 2026 at a glance
 
-| Development | October date | Main change | Who should care |
-|---|---|---|---|
-| Claude Haiku 5.5 | 7 Oct | New small model with tiered pricing from $0.10/$0.50 per million tokens | Teams running high-volume summarisation, routing or subagent calls |
-| Python 3.15.0 | 9 Oct | Lazy imports, `frozendict`, UTF-8 by default, faster experimental JIT | Python developers and anyone shipping Python images |
-| AWS Lambda Web Functions | 12 Oct | Run an ordinary HTTP server on Lambda without an adapter | Teams with Node.js web apps on AWS |
-| Gemini 4 Argon broadly available | 13 Oct | Google's new frontier model leaves its restricted preview | Teams comparing frontier models for coding and agents |
-| Next.js 16.4.1 / 15.5.28 | 14 Oct | Two critical unauthenticated RCE fixes | Anyone running self-hosted Next.js |
-| Muse Spark Open, Reflection Beam | 15–16 Oct | Two very large open-weight models, with very different licences | Teams that need to self-host |
-| LiteLLM 1.107.0 compromise | 21 Oct | Malicious release on PyPI and container registries for about two hours | Anyone who installs LiteLLM, and anyone who runs a release pipeline |
-| Node.js security release | 21 Oct | Ten CVEs fixed, including a Brotli decoder RCE | Every Node.js 22, 24 and 26 user |
-| Agent Skills donated to AAIF | 22 Oct | The SKILL.md format moves to the Linux Foundation's Agentic AI Foundation | Anyone writing or loading agent skills |
-| Kubernetes 1.34 end of life | 27 Oct | No more patches for 1.34 | Cluster operators still on 1.34 |
-| Node.js 26 becomes LTS | 28 Oct | 26.x enters Long Term Support, supported to April 2029 | Teams planning runtime upgrades |
-| GitHub Universe | 28 Oct | Agentic Workflows and Copilot Fusion GA, Copilot included with GitHub Enterprise | GitHub users, platform and CI owners |
+| Development | October date | Main change |
+|---|---|---|
+| Claude Haiku 5.5 | 7 Oct | New small model with tiered pricing from $0.10/$0.50 per million tokens |
+| Python 3.15.0 | 9 Oct | Lazy imports, `frozendict`, UTF-8 by default, faster experimental JIT |
+| AWS Lambda Web Functions | 12 Oct | Run an ordinary HTTP server on Lambda without an adapter |
+| Gemini 4 Argon broadly available | 13 Oct | Google's new frontier model leaves its restricted preview |
+| Next.js 16.4.1 / 15.5.28 | 14 Oct | Two critical unauthenticated RCE fixes |
+| Muse Spark Open, Reflection Beam | 15–16 Oct | Two very large open-weight models, with very different licences |
+| LiteLLM 1.107.0 compromise | 21 Oct | Malicious release on PyPI and container registries for about two hours |
+| Node.js security release | 21 Oct | Ten CVEs fixed, including a Brotli decoder RCE |
+| Agent Skills donated to AAIF | 22 Oct | The SKILL.md format moves to the Linux Foundation's Agentic AI Foundation |
+| Kubernetes 1.34 end of life | 27 Oct | No more patches for 1.34 |
+| Node.js 26 becomes LTS | 28 Oct | 26.x enters Long Term Support, supported to April 2029 |
+| GitHub Universe | 28 Oct | Agentic Workflows and Copilot Fusion GA, Copilot included with GitHub Enterprise |
 
 ## Models: price and fit became the headline
 
 ### Claude Haiku 5.5 (7 October)
 
-Anthropic released [Claude Haiku 5.5](https://www.anthropic.com/claude-haiku-5-5) on 7 October as `claude-haiku-5-5`. The most concrete change is the price. Requests up to 100,000 tokens cost $0.10 per million input tokens and $0.50 per million output tokens. Larger requests cost $0.50 and $2.50. Haiku 4.5 was $1 and $5 at every size.
+Anthropic released [Claude Haiku 5.5](https://www.anthropic.com/claude-haiku-5-5) as `claude-haiku-5-5`. Requests up to 100,000 tokens cost $0.10 per million input tokens and $0.50 per million output; larger requests cost $0.50 and $2.50. Haiku 4.5 was $1 and $5 at every size. Anthropic's footnote to "around 75% less to run" matters: about 90% cheaper below 100,000 tokens, about 50% above, and slightly more tokens per task.
 
-Anthropic's own summary is that Haiku 5.5 is "around 75% less to run" than Haiku 4.5 on average. The footnote matters: about 90% cheaper below 100,000 tokens, about 50% cheaper above, and the model uses slightly more tokens per task. On Anthropic's published benchmarks it scores far above Haiku 4.5 but below Sonnet 5.5 on every row.
+It scores far above Haiku 4.5 but below Sonnet 5.5 on every benchmark row, and Anthropic says Sonnet 5.5 and Opus 5.5 "remain better choices" for complex agentic coding. Stricter cyber safeguards block penetration-testing requests, so test it if you run security tooling.
 
-Anthropic is unusually direct about where not to use it. The launch post says Sonnet 5.5 and Opus 5.5 "remain better choices" for complex agentic coding, and positions Haiku for compaction, summarisation and subagent work. Its cyber safeguards are also stricter than Haiku 4.5's and block penetration-testing requests. That is worth testing if your workload includes security tooling.
-
-**What this means for engineers:** the tiered price rewards keeping prompts under 100,000 tokens. A retrieval pipeline that trims context before the model call now has a direct cost reason to do so.
+**For engineers:** the tiered price gives a retrieval pipeline that trims context below 100,000 tokens a direct cost reason to do so.
 
 ### Gemini 4 Argon goes broad (13 October)
 
-Google first showed [Gemini 4 Argon](https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-argon/) on 30 September, but only to approved cybersecurity defenders in its Fairwind Program, [according to VentureBeat](https://venturebeat.com/technology/google-makes-gemini-4-argon-broadly-available-with-limited-time-low-api-pricing-of-2-10-per-1m-token). On 13 October Google made it "globally available" through the Gemini API (`gemini-4-argon`), AI Studio and its enterprise platform. In the Gemini app it is limited to paid AI Pro and Ultra subscribers.
+Google first showed [Gemini 4 Argon](https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-argon/) on 30 September to approved cybersecurity defenders only, [according to VentureBeat](https://venturebeat.com/technology/google-makes-gemini-4-argon-broadly-available-with-limited-time-low-api-pricing-of-2-10-per-1m-token). On 13 October it became "globally available" through the Gemini API (`gemini-4-argon`), AI Studio and Google's enterprise platform, and to paid AI Pro and Ultra subscribers in the Gemini app.
 
-The pricing has a deadline built in. Until 30 November it costs $2 input and $10 output per million tokens. After that it costs $4 and $20. Anyone benchmarking Argon for cost this month should model the December price, not the introductory one.
-
-Google's own claims centre on agent safety, such as pausing for human confirmation before irreversible steps. Independent results [reported by VentureBeat](https://venturebeat.com/technology/google-makes-gemini-4-argon-broadly-available-with-limited-time-low-api-pricing-of-2-10-per-1m-token) are mixed: first on the Vals Index as of 12 October, but behind Claude Opus 5.5 and Sonnet 5.5 on the Artificial Analysis Intelligence Index.
+Until 30 November it costs $2 input and $10 output per million tokens, then $4 and $20, so cost benchmarks should use the December price. Independent results [reported by VentureBeat](https://venturebeat.com/technology/google-makes-gemini-4-argon-broadly-available-with-limited-time-low-api-pricing-of-2-10-per-1m-token) are mixed: first on the Vals Index as of 12 October, but behind Claude Opus 5.5 and Sonnet 5.5 on the Artificial Analysis Intelligence Index.
 
 ### GPT-6.1 Terra (26 October)
 
-OpenAI's [GPT-6.1 Terra](https://www.bleepingcomputer.com/news/artificial-intelligence/openai-launches-gpt-61-terra-with-3x-faster-ai-agents-50-percent-lower-pricing/) is a medium-sized model aimed at computer use, visual reasoning and everyday work. It costs $1 input and $5 output per million tokens in the API (`gpt-6.1-terra`) and is rolling out in ChatGPT Work and Codex for paid plans. OpenAI says it completes tasks more than three times faster than GPT-6 Astra and GPT-6.1 Sol, and performs on par with Astra at a tenth of the per-token price.
+OpenAI's [GPT-6.1 Terra](https://www.bleepingcomputer.com/news/artificial-intelligence/openai-launches-gpt-61-terra-with-3x-faster-ai-agents-50-percent-lower-pricing/) is a medium-sized model for computer use and everyday work, at $1 input and $5 output per million tokens (`gpt-6.1-terra`), in ChatGPT Work and Codex for paid plans. OpenAI says it completes tasks more than three times faster than GPT-6 Astra and GPT-6.1 Sol and matches Astra at a tenth of the per-token price, from its own evaluations. It still recommends Sol or Astra for the hardest coding. OpenAI's page refused automated access, so these details come from BleepingComputer's report.
 
-Those claims come from OpenAI's own evaluations. OpenAI still recommends Sol or Astra for the most complex coding tasks. OpenAI's announcement page refused automated access during research, so the details here come from BleepingComputer's report of it.
+### Open weights: two models, two very different licences (15–16 October)
 
-### Open weights: one big licence caveat and one clean licence (15–16 October)
+Meta released **Muse Spark Open** on 15 October: an 816-billion-parameter mixture-of-experts model with about 42 billion parameters active per token, up to one million tokens of context, and text, image, audio and video input. [Hugging Face's launch post](https://huggingface.co/blog/meta-muse-spark-open) is the hardware reality check: the BF16 weights are about 1.5 TB, the NVFP4 build runs on a single NVIDIA B200 node, and the vLLM NVFP4 path needs Blackwell-series GPUs.
 
-Meta released **Muse Spark Open** on 15 October: an 816-billion-parameter mixture-of-experts model with about 42 billion parameters active per token, a context of up to one million tokens, and text, image, audio and video input. (Mixture-of-experts means each token is routed through only a few specialised sub-networks, so only a fraction of the weights do work for any one token.) [Hugging Face's launch post](https://huggingface.co/blog/meta-muse-spark-open) is the most useful reality check on hardware. The BF16 weights are about 1.5 TB. The NVFP4 build runs on a single NVIDIA B200 node, and the vLLM NVFP4 path needs Blackwell-series GPUs.
+"Open weights" here is not open source. [Reported licence terms](https://www.noze.it/en/insights/muse-spark-open-meta-open-weights/) include a mandatory "Built with Muse Spark Open" attribution and a separate agreement for model-as-a-service providers above US$20 million in annual revenue, and downloads are gated behind a form asking for legal name and date of birth. The licence text sits behind a Hugging Face login, so I could not read it; treat these terms as reported, not confirmed.
 
-"Open weights" here does not mean open source. [Reported licence terms](https://www.noze.it/en/insights/muse-spark-open-meta-open-weights/) include a mandatory "Built with Muse Spark Open" attribution, and a separate agreement with Meta for model-as-a-service providers above US$20 million in annual revenue. Downloads are gated behind a form asking for legal name and date of birth. I could not read the licence text itself, because it sits behind a Hugging Face login, so treat these terms as reported rather than confirmed.
+The next day AWS published [Reflection Beam](https://aws.amazon.com/blogs/machine-learning/introducing-reflection-beam-an-open-weight-model-for-agentic-coding-on-aws/), Reflection AI's agentic coding model: 501 billion total parameters, 23 billion active, Apache 2.0 weights, deployable through SageMaker JumpStart or HyperPod.
 
-The next day, AWS published a post on [Reflection Beam](https://aws.amazon.com/blogs/machine-learning/introducing-reflection-beam-an-open-weight-model-for-agentic-coding-on-aws/), Reflection AI's open-weight agentic coding model: 501 billion total parameters, 23 billion active, and weights under Apache 2.0. On AWS it deploys through SageMaker JumpStart in two US regions, or through SGLang or vLLM on SageMaker HyperPod.
-
-**What this means for engineers:** if you need to self-host for data-residency or audit reasons, the licence now matters as much as the benchmark. Apache 2.0 and a custom licence with attribution and revenue clauses are very different things for a product team.
+**For engineers:** if you self-host for data residency or audit, the licence matters as much as the benchmark. Apache 2.0 and a custom licence with attribution and revenue clauses are very different things for a product team.
 
 ## Agents moved into the delivery pipeline
 
 ### GitHub Universe (28 October)
 
-GitHub's [Universe announcements](https://github.blog/news-insights/company-news/github-universe-2026-evolving-every-layer-of-the-stack/) were broad. Two of them change how CI and code review can work today.
+Two of GitHub's [Universe announcements](https://github.blog/news-insights/company-news/github-universe-2026-evolving-every-layer-of-the-stack/) change CI and code review today.
 
-**GitHub Agentic Workflows is generally available.** You describe an automation, such as issue triage, CI failure analysis or test writing, in a Markdown file. The `gh aw` tool compiles it into ordinary GitHub Actions YAML. The [GA changelog](https://github.blog/changelog/2026-10-28-github-agentic-workflows-generally-available/) lists the guardrails: read-only permissions by default, a sandboxed container behind an agent firewall, a "safe outputs" step that mediates writes, and a separate threat-detection job that scans proposed changes before they apply. GA adds support for Actions Runner Controller with Docker-in-Docker on self-hosted runners. The default engine is the Copilot CLI and needs a Copilot licence. Other agents can be plugged in.
+**GitHub Agentic Workflows is GA.** You describe an automation such as CI failure analysis in Markdown, and `gh aw` compiles it into ordinary Actions YAML. The [GA changelog](https://github.blog/changelog/2026-10-28-github-agentic-workflows-generally-available/) lists read-only permissions by default, a sandboxed container behind an agent firewall, a "safe outputs" step that mediates writes, and a threat-detection job that scans proposed changes before they apply. GA adds Actions Runner Controller with Docker-in-Docker on self-hosted runners. The default engine is the Copilot CLI and needs a Copilot licence; other agents can be plugged in.
 
-**Copilot Fusion is generally available.** Instead of picking a model, you pick an effort level and Copilot routes the task across the models your organisation has enabled. GitHub [says](https://github.blog/changelog/2026-10-28-route-and-orchestrate-models-with-github-copilot-fusion/) Fusion Max scored within two points of Claude Code with Opus 5.5 Max on the Artificial Analysis Coding Agent Index, at about half the API cost per task. GitHub gives no task set, sample size or measurement date for that comparison.
+**Copilot Fusion is generally available.** You pick an effort level and Copilot routes the task across the models your organisation enabled. GitHub [says](https://github.blog/changelog/2026-10-28-route-and-orchestrate-models-with-github-copilot-fusion/) Fusion Max scored within two points of Claude Code with Opus 5.5 Max on the Artificial Analysis Coding Agent Index at about half the API cost per task, without giving a task set, sample size or date. GitHub Enterprise customers can also use Copilot without a separate subscription, paying for AI credits as used; at launch through GitHub Sales, with self-serve "coming soon".
 
-The commercial change may matter more to many teams. GitHub Enterprise customers can now use Copilot features without a separate Copilot subscription, paying for AI credits as they use them. At launch this goes through GitHub Sales; self-serve is "coming soon".
-
-**What this means for engineers:** an agent that runs as an Actions job inherits Actions' permission model, runner isolation and audit trail. That is a better starting point than a bot with a personal access token. It also means your Actions hardening, such as token scopes, branch protection and who can approve a deployment, is now your agent governance as well.
+**For engineers:** an agent running as an Actions job inherits Actions' permissions, isolation and audit trail, so your Actions hardening (token scopes, branch protection, deployment approvers) is now your agent governance too.
 
 ### Agent Skills gets a neutral home (22 October)
 
-Anthropic [donated Agent Skills](https://www.anthropic.com/news/donating-agent-skills-to-the-agentic-ai-foundation) to the Agentic AI Foundation (AAIF), the Linux Foundation fund that already hosts the Model Context Protocol (MCP). A skill is a folder holding a `SKILL.md` file: YAML frontmatter that says what the skill is for, then Markdown instructions, plus optional scripts and reference files. Anthropic says more than 70 platforms, including ChatGPT, Cursor, GitHub Copilot and VS Code, already load the format.
+Anthropic [donated Agent Skills](https://www.anthropic.com/news/donating-agent-skills-to-the-agentic-ai-foundation) to the Agentic AI Foundation (AAIF), the Linux Foundation fund that already hosts the Model Context Protocol (MCP). A skill is a folder with a `SKILL.md` file (YAML frontmatter saying what it is for, then Markdown instructions) plus optional scripts and references. Anthropic says more than 70 platforms, including ChatGPT, Cursor, GitHub Copilot and VS Code, already load the format.
 
-The donation covers the specification, name, GitHub organisation and agentskills.io domain. Maintainers from Anthropic, Google, OpenAI and others will act as individuals. The proposed roadmap lists versioned releases, a formal proposal process and security guidance for people who write and install skills, with no dates yet.
-
-The practical detail is in the [specification](https://agentskills.io/specification). Only `name` and `description` are required. Tool-specific data belongs under a `metadata` map of string keys to string values. A `skills-ref validate` command checks conformance.
+In the [specification](https://agentskills.io/specification), only `name` and `description` are required, tool-specific data goes under a `metadata` map of string keys to string values, and `skills-ref validate` checks conformance.
 
 ## The supply chain was the weak point
 
 ### LiteLLM 1.107.0 (21 October)
 
-LiteLLM is widely used as a proxy that puts many model providers behind one OpenAI-style API. On 21 October, `litellm==1.107.0` appeared on PyPI with malware that, in the project's words, "steals credentials and loads remote-code execution tools". The project's [incident post](https://docs.litellm.ai/blog/security-incident-oct-21-2026) gives the windows. The PyPI wheels were live from 11:39 to 13:23 UTC. The Docker Hub tags `v1.107.0`, `latest`, `main-latest` and `main-stable` pointed at the malicious image from 11:46 to 14:20 UTC. Matching GHCR tags were reachable until 13:51 UTC at the latest.
+LiteLLM is a widely used proxy that puts many model providers behind one OpenAI-style API. On 21 October `litellm==1.107.0` appeared on PyPI with malware that, in the project's words, "steals credentials and loads remote-code execution tools". Per the [incident post](https://docs.litellm.ai/blog/security-incident-oct-21-2026), the PyPI wheels were live from 11:39 to 13:23 UTC; the Docker Hub tags `v1.107.0`, `latest`, `main-latest` and `main-stable` pointed at the malicious image from 11:46 to 14:20 UTC; matching GHCR tags were reachable until 13:51 UTC at the latest.
 
-The payload used a `.pth` file. Python runs these automatically at interpreter startup, so any Python process in an affected environment re-ran the payload. That is why the project's first cleanup instruction is "Don't start with `pip install`." The recommended path is to rebuild environments and images from scratch, pin `1.106.2` or another pre-incident version, and rotate everything the host could reach: cloud role credentials, every provider key stored in the proxy database, LiteLLM master and virtual keys, the database password, and any secret in the environment. Enterprise customers on the private registry were not affected.
+The payload used a `.pth` file, which Python runs at every interpreter start, hence the project's first instruction: "Don't start with `pip install`." Rebuild environments and images from scratch, pin `1.106.2` or another pre-incident version, and rotate everything the host could reach: cloud role credentials, every provider key in the proxy database, LiteLLM master and virtual keys, the database password and any environment secret. Enterprise customers on the private registry were not affected.
 
-The [attack-chain write-up](https://docs.litellm.ai/blog/security-incident-oct-21-2026-attack-chain) is the more useful document for anyone running a release pipeline:
+The [attack-chain write-up](https://docs.litellm.ai/blog/security-incident-oct-21-2026-attack-chain) is the document to read if you run a release pipeline:
 
 1. An administrative key committed to a public repository in May was still valid in October.
 2. That key exposed an unscoped GitHub CLI OAuth token belonging to the organisation owner.
@@ -183,103 +171,84 @@ The [attack-chain write-up](https://docs.litellm.ai/blog/security-incident-oct-2
 4. Release approval had been relaxed so that "any two engineers" could trigger and approve a release. One stolen token triggered the release and the other approved it.
 5. The pipeline signed and published a build from a lookalike fork.
 
-Signing did not help, because the attacker controlled the pipeline that did the signing.
-
-**What this means for engineers:** a signature proves which pipeline built an artifact. It does not prove the pipeline was honest. The controls that would have broken this chain are dull ones: secret scanning with forced rotation, short-lived scoped tokens, approvals that cannot come from the same compromised identity class, and pinning dependencies by version or digest rather than floating tags.
+**For engineers:** signing did not help, because the attacker controlled the pipeline that signed. The controls that would have broken this chain are dull: secret scanning with forced rotation, short-lived scoped tokens, approvals that cannot come from the same compromised identity class, and pinning dependencies by version or digest instead of floating tags.
 
 ### Next.js: two critical RCEs (14 October)
 
-Vercel's [out-of-band update](https://nextjs.org/blog/nextjs-security-update-october-14-2026) shipped Next.js 16.4.1 and 15.5.28. The fixes were postponed from September while upstream dependencies were fixed. Both critical issues allow unauthenticated remote code execution:
+Vercel's [out-of-band update](https://nextjs.org/blog/nextjs-security-update-october-14-2026) shipped Next.js 16.4.1 and 15.5.28 with two critical fixes for unauthenticated remote code execution:
 
 - **`use cache` functions returning typed arrays** (GHSA-673q-mjm6-r5xr), rooted in a React advisory. It affects App Router apps using Cache Components. There is no workaround.
 - **The Image Optimization API with SVGs** (CVE-2026-96889), caused by a memory bug in an upstream image library on glibc-based Linux. The workaround is `sharp` 0.35.5 or later.
 
-A third, high-severity fix covers CPU exhaustion through crafted Server Action requests. Next.js 14 and older get no fix.
+A third, high-severity fix covers CPU exhaustion via crafted Server Actions; Next.js 14 and older get no fix.
 
 ### Node.js: ten CVEs, then a new LTS (21 and 28 October)
 
-The [October Node.js security release](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases) fixed ten vulnerabilities across 22.x, 24.x and 26.x, in 22.23.4, 24.22.1 and 26.12.1. The one that got headlines is CVE-2026-111497, an out-of-bounds write in the bundled Brotli decoder that "can lead to a crash, disclosure of process memory, or remote code execution". Three other high-severity fixes matter for service-to-service traffic. They cover DNS name truncation and TLS hostname checks that unusual IP address spellings could fool. The release also removes trust in a compromised eMudhra intermediate certificate authority.
+The [October Node.js security release](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases) fixed ten vulnerabilities in 22.23.4, 24.22.1 and 26.12.1. The headline is CVE-2026-111497, a Brotli decoder out-of-bounds write that "can lead to a crash, disclosure of process memory, or remote code execution". Other high-severity fixes cover DNS name truncation and TLS hostname checks fooled by unusual IP spellings, and trust in a compromised eMudhra intermediate CA was removed.
 
-A week later, on 28 October, [Node.js 26.13.0](https://github.com/nodejs/node/releases/tag/v26.13.0) moved the 26.x line into Long Term Support as "Lithium", with updates through April 2029. The release contains no code changes beyond 26.12.1, so it carries the security fixes. The release notes warn that official Linux binaries have linked against `libatomic` since Node.js 25, so minimal images may need it installed.
+On 28 October [Node.js 26.13.0](https://github.com/nodejs/node/releases/tag/v26.13.0) moved 26.x into Long Term Support as "Lithium", with updates through April 2029 and no code changes beyond 26.12.1. The notes warn that official Linux binaries have linked against `libatomic` since Node.js 25, so minimal images may need it installed.
 
-**What this means for engineers:** container images built from `node:26-*` before 21 October still contain the vulnerable runtime until they are rebuilt. A floating base-image tag only helps if something actually rebuilds and redeploys.
+**For engineers:** images built from `node:26-*` before 21 October keep the vulnerable runtime until something rebuilds and redeploys them.
 
 ## Platforms and runtimes
 
 ### Python 3.15 (9 October)
 
-[Python 3.15.0](https://www.python.org/downloads/release/python-3150/) shipped on 9 October, slightly after the original 1 October target. The changes most likely to affect existing code:
+[Python 3.15.0](https://www.python.org/downloads/release/python-3150/) shipped on 9 October, slightly after its 1 October target. The changes most likely to affect existing code:
 
-- **UTF-8 is the default encoding (PEP 686).** `open()` without an `encoding` argument no longer depends on the platform locale. This mostly affects Windows and unusual container locales.
+- **UTF-8 is the default encoding (PEP 686).** `open()` without `encoding` no longer depends on the locale, which mostly affects Windows and unusual container locales.
 - **Explicit lazy imports (PEP 810)** for faster startup in large applications and CLIs.
 - **New built-ins:** `frozendict` (PEP 814) and `sentinel` (PEP 661).
-- **Better profiling:** frame pointers are on by default (PEP 831), and a new sampling profiler, Tachyon, arrives in a dedicated profiling package (PEP 799).
+- **Better profiling:** frame pointers on by default (PEP 831), and a sampling profiler, Tachyon, in a dedicated profiling package (PEP 799).
 
-python.org reports the experimental JIT is 7–8% faster (geometric mean) than the standard interpreter on x86-64 Linux, and 11–12% faster than the tail-calling interpreter on AArch64 macOS. The JIT is still experimental, so these are not default-build gains. Point releases have followed; check python.org for the current one before you pin.
+python.org reports the experimental JIT 7–8% faster (geometric mean) than the standard interpreter on x86-64 Linux and 11–12% faster than the tail-calling interpreter on AArch64 macOS; these are not default-build gains.
 
 ### AWS: web apps on Lambda, shared ingress for ECS, PyTorch on Trainium
 
-[AWS Lambda Web Functions](https://aws.amazon.com/blogs/aws/announcing-aws-lambda-web-functions-for-fast-consistent-web-app-performance-anywhere/) (12 October) lets a normal port-listening HTTP server, such as Express, Fastify, Hono or Next.js, run on Lambda without an adapter or a rewrite into event handlers. Each execution environment handles up to 128 concurrent requests, and billing meters active CPU time rather than wall-clock time. The limits are significant. At launch the only runtime is Node.js 24 on Arm64, it runs in five Regions, and AWS's post does not label the release as GA or preview.
+[AWS Lambda Web Functions](https://aws.amazon.com/blogs/aws/announcing-aws-lambda-web-functions-for-fast-consistent-web-app-performance-anywhere/) (12 October) runs a normal port-listening HTTP server (Express, Fastify, Hono, Next.js) on Lambda without an adapter. Each execution environment handles up to 128 concurrent requests, billed on active CPU time. At launch the only runtime is Node.js 24 on Arm64, in five Regions, and AWS does not label it GA or preview.
 
 AWS's [26 October roundup](https://aws.amazon.com/blogs/aws/aws-weekly-roundup-amazon-polly-generative-engine-torchneuron-for-trainium-and-more-october-26-2026/) added three items for platform teams:
 
-- **Amazon ECS Gateway.** A platform team defines one gateway with subnets, certificates, listeners and WAF rules. Application teams opt in from their service definition. It is available in all commercial ECS Regions at no extra charge.
-- **TorchNeuron.** An open-source PyTorch backend for Trainium, in public beta, that aims to make Trainium "a configuration change instead of a rewrite".
-- **AWS Continuum for code vulnerabilities.** Generally available in two US Regions, it reproduces findings in a sandbox and opens fix pull requests, with human approval required for every remediation.
+- **Amazon ECS Gateway:** one platform-owned gateway (subnets, certificates, listeners, WAF) that application teams opt into, at no extra charge.
+- **TorchNeuron:** an open-source PyTorch backend for Trainium in public beta, aiming to make Trainium "a configuration change instead of a rewrite".
+- **AWS Continuum for code vulnerabilities:** GA in two US Regions; it reproduces findings in a sandbox and opens fix pull requests that a human must approve.
 
 ### Kubernetes: an end of life and a new conformance effort
 
-Kubernetes 1.34 reached [end of life on 27 October](https://kubernetes.io/releases/patch-releases/) and gets no more patches. The supported lines are now 1.35 to 1.37.
-
-The same day, the project announced a [Workload Conformance Working Group](https://kubernetes.io/blog/2026/10/27/announcing-workload-conformance-wg/). Certified Kubernetes tests clusters, but nothing equivalent tests the workloads running on them. The group plans a per-version specification of workload runtime behaviour, from disruption handling to observability, where every requirement has an automatable test. It is early: the target is a first stable specification within two to three release cycles.
+Kubernetes 1.34 reached [end of life on 27 October](https://kubernetes.io/releases/patch-releases/); supported lines are now 1.35 to 1.37. The same day a new [Workload Conformance Working Group](https://kubernetes.io/blog/2026/10/27/announcing-workload-conformance-wg/) set out to do for workloads what Certified Kubernetes does for clusters: a per-version specification of runtime behaviour with an automatable test for every requirement, stable within two to three release cycles.
 
 ## How the stories connect
 
-**Model capability versus cost discipline.** Every major model launch this month came with a cost story and, from two vendors, an explicit "use our bigger model for hard coding" caveat. That is a useful signal. Vendors expect production systems to route between tiers rather than send everything to the top model. Copilot Fusion is the same idea, sold as a product.
-
-**Agent adoption versus pipeline governance.** GitHub Agentic Workflows puts agents inside Actions. The LiteLLM attack got its leverage from Actions secrets, an unscoped token and a two-person approval that two stolen tokens could satisfy. These are the same surfaces. The safeguards GitHub lists for agents (read-only defaults, mediated writes, threat detection before apply) are a template for any automation that can publish, not only for AI.
-
-**Open ecosystems versus dependence.** Agent Skills and MCP now both sit in a vendor-neutral foundation, which lowers the cost of switching agent hosts. Muse Spark Open shows the other side: "open" weights can still come with attribution and revenue clauses.
-
-**Patching is a deployment problem.** Whether a service is safe from the Next.js and Node.js bugs depends on lockfiles, base-image rebuilds and rollouts, which only your own pipeline can confirm.
+Vendors now expect production systems to route between model tiers, and Copilot Fusion sells that as a product. GitHub's agent safeguards (read-only defaults, mediated writes, threat detection before apply) target the same Actions surface the LiteLLM attacker used, so they are a template for any automation that can publish. And "open" now spans a neutral home for Agent Skills and MCP and open weights with revenue clauses.
 
 ## What this means for my projects
 
-I checked the jithendar.com, MOKS, RoboShop AI and tools repositories and the running mk4 cluster on 3 November 2026. I have not tested any of the October releases themselves.
+I checked the jithendar.com, MOKS, RoboShop AI and tools repositories and the running mk4 cluster on 3 November 2026, and rechecked the versions below on 6 November. I have not tested any of the October releases themselves.
 
 **Already in place**
 
-- **The Next.js advisories do not affect jithendar.com's current code.** The site is on Next.js 16.4.3 with `sharp` 0.35.5, both at or above the fixed versions.
-- **The live site already runs a patched Node.js.** The production pod reports `v26.13.0`, the new LTS release, which includes the 21 October fixes. The image builds from a floating `node:26-alpine` base, so each rebuild picks up the latest 26.x runtime.
+- **The Next.js advisories do not affect jithendar.com.** It runs Next.js 16.4.3 with `sharp` 0.35.5, both at or above the fixed versions.
+- **The live site runs a patched Node.js.** The production pod reports `v26.13.0`, which includes the 21 October fixes. The image builds from a floating `node:26-alpine` base, so each rebuild picks up the latest 26.x.
 - **The Kubernetes 1.34 end of life does not apply.** All five mk4 nodes run v1.37.0.
-- **MOKS already uses `SKILL.md` playbooks.** Its built-in SRE skills, such as `crashloop-triage` and `alb-target-health`, are directories with a `SKILL.md` file. The design is covered in [How MOKS uses RAG and skills](/blog/moks-rag-and-skills-design).
+- **MOKS already uses `SKILL.md` playbooks**, such as `crashloop-triage` and `alb-target-health` ([How MOKS uses RAG and skills](/blog/moks-rag-and-skills-design)).
 
 **Worth evaluating**
 
-- **MOKS skills against the Agent Skills spec.** MOKS puts its own fields (`triggers`, `steps`, `remediation`, `version`) at the top level of the frontmatter, and the spec routes extra data through a string-only `metadata` map. They are not interchangeable today. That is not a problem for MOKS's own loader, but it matters if these playbooks should ever load in another agent host.
-- **Claude Haiku 5.5 for narrow MOKS calls.** MOKS uses the Anthropic SDK, and its model list covers Fable 5.1, Opus 5.5, Opus 5 and Sonnet 5.5, but not Haiku 5.5. Haiku 5.5 would also need adding to the list of models that can hand a declined request to another model. Its stricter cyber safeguards are worth testing against real SRE questions before any switch.
+- **MOKS skills against the Agent Skills spec.** MOKS puts its own fields (`triggers`, `steps`, `remediation`, `version`) at the top level, where the spec expects a string-only `metadata` map, so the playbooks would not load unchanged in another agent host.
+- **Claude Haiku 5.5 for narrow MOKS calls.** MOKS's model list covers Fable 5.1, Opus 5.5, Opus 5 and Sonnet 5.5, not Haiku 5.5, which would also need adding to the models that can take over a declined request. Its stricter cyber safeguards need testing against real SRE questions first.
 
 **Not currently applicable**
 
-- **LiteLLM.** No project depends on the `litellm` package. MOKS's admin screen mentions LiteLLM only as an example of an OpenAI-compatible server. The attack-chain lessons about CI tokens still apply to the self-hosted runners these repositories use.
-- **Lambda Web Functions.** jithendar.com runs on Kubernetes and Node.js 26. Web Functions supports only Node.js 24 on Arm64 today.
-- **TorchNeuron.** The MOKS reranker runs PyTorch on arm64 CPUs on mk4. There is no Trainium in the picture.
-- **Python 3.15.** MOKS uses Python 3.12 images, RoboShop AI services mostly 3.14, and the jithendar.com practice executor 3.13. None is on 3.15 yet.
+- **LiteLLM:** no project depends on it, though the CI-token lessons apply to these repositories' self-hosted runners.
+- **Lambda Web Functions** (Node.js 24 only), **TorchNeuron** (no Trainium here) and **Python 3.15** (MOKS is on 3.12, most RoboShop AI services 3.14, the practice executor 3.13).
 
 ## What to evaluate next
 
-These are suggestions for learning and low-risk testing, not plans to change any infrastructure.
+Suggestions for learning and low-risk testing, not infrastructure plans:
 
-1. **Validate one skill against the spec.** Run `skills-ref validate` against a copy of one MOKS skill directory. Success means knowing exactly which fields fail, and whether moving them under `metadata` is feasible without breaking the loader. *Prerequisite:* the reference library from the agentskills GitHub organisation. *Cost:* none.
+1. **Validate one skill against the spec.** Run `skills-ref validate` on a copy of one MOKS skill directory and list the failing fields.
+2. **Price a model tier against your own evaluation set.** Re-run MOKS's routing and skills datasets with Haiku 5.5 for summarisation-style calls only. Success: equal pass rates at a lower cost per investigation and no new refusals. Costs API spend, and the price drop holds only below 100,000 tokens per request.
+3. **Audit one release pipeline against the LiteLLM chain:** who can trigger and approve a release, which tokens CI holds and for how long, and whether long-lived credentials sit in repository history.
+4. **Time a runtime patch.** After the next Node.js or Python security release, measure the time from advisory to a running pod that reports the fixed version.
 
-2. **Price a model tier against your own evaluation set.** Re-run an existing evaluation set (MOKS keeps routing and skills datasets in its repository) with Haiku 5.5 for summarisation-style calls only. Success means equal pass rates at a measurably lower cost per investigation, with no new refusals. *Caveats:* API spend, and the vendor price drop only holds below 100,000 tokens per request.
-
-3. **Audit one release pipeline against the LiteLLM chain.** For one repository, list who can trigger and approve a release, which tokens CI holds and how long they live, and whether any long-lived credentials sit in repository history. Success means a short list of concrete fixes, or confirmation there are none. *Cost:* a couple of hours. Nothing has to change to do the audit.
-
-4. **Try one Agentic Workflow on a throwaway repository.** Compile a read-only triage workflow, such as summarising CI failures, and inspect the generated Actions YAML and permissions before it runs anything. Success means you can explain every permission it requests. *Prerequisites:* the `gh aw` extension, and a Copilot licence for the default engine.
-
-5. **Rebuild-and-verify drill for runtime patches.** After the next Node.js or Python security release, record the time from advisory to a running pod that reports the fixed version. Success means a measured number, not an assumption. *Cost:* none beyond a normal deploy.
-
-## Closing
-
-October's evidence points in a consistent direction. The models are getting cheaper per task and vendors are telling you when not to use them. Agents are being wired into the same CI systems that build and sign releases. The incident that best illustrates the risk came from that plumbing, not from the models. None of this calls for adopting everything announced. It does make the boring parts of engineering more important: pinned versions, scoped tokens, rebuilt images and evaluation sets you trust.
+October's news makes the boring parts of engineering matter more: pinned versions, scoped tokens, rebuilt images and evaluation sets you trust.

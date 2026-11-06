@@ -187,7 +187,8 @@ export async function relatedArticles(article: Article, limit = 3, query: Publis
 export function readingTimeMinutes(body: string): number {
   const prose = body
     .replace(/```[\s\S]*?```/g, " ")
-    .replace(/<[^>]+>/g, " ")
+    // Only real tags: a bare "<" in prose ("300 <= status < 400") must not swallow text up to the next ">".
+    .replace(/<\/?[A-Za-z][^>\n]*>/g, " ")
     .replace(/[#>*_`[\]()!-]/g, " ");
   const words = prose.split(/\s+/).filter(Boolean).length;
   return Math.max(1, Math.round(words / 220));
