@@ -73,6 +73,9 @@ describe("reading time", () => {
     expect(readingTimeMinutes("word ".repeat(660))).toBe(3);
     expect(readingTimeMinutes("short")).toBe(1);
     expect(readingTimeMinutes("intro\n```\n" + "code ".repeat(5000) + "\n```")).toBe(1);
+    // A comparison operator in prose is not a tag, so the words after it still count.
+    expect(readingTimeMinutes("if a < b " + "word ".repeat(660) + "then c > d")).toBe(3);
+    expect(readingTimeMinutes("<Todo>" + "word ".repeat(660) + "</Todo>")).toBe(3);
   });
 });
 

@@ -123,27 +123,19 @@ sources:
     url: https://github.com/mrjithendar/tools/tree/387bd306d38b6e63d569ecae5121826e2e08d633
     publisher: GitHub
 ---
-<Todo>Written on 2026-11-03 against roboshop-ai c81e85a, jithendar.com f12f8cc, moks 74a097d and tools 387bd30. SEO title, excerpt and keywords are in docs/knowledge-sharing/python-vs-go-vs-typescript/README.md. Before publishing: (1) confirm the category (ai-engineering matches the Python vs TypeScript post, but no category is a natural fit for a language comparison); (2) the repositories record where each language is used, not why it was chosen, so the article never states your reasons. Add them in "Real examples from my projects" if you want to; (3) the article uses one Mermaid diagram, so confirm Mermaid rendering is deployed; (4) rerun docs/knowledge-sharing/python-vs-go-vs-typescript/verify_examples.py after editing any example; (5) add your own commentary, confirm the AI-assistance line against the AI use policy, then set status and publishedAt.</Todo>
-
-Most comparisons of Python, Go and TypeScript turn into a ranking. This one doesn't. All three are good general-purpose languages, and each makes different trade-offs about types, errors, concurrency and deployment. If you know one of them well, the fastest way to learn another is to see the same small programs written three ways and to know which habits will trip you up.
-
-This programming language comparison does exactly that. You will find equivalent, runnable Python vs Go vs TypeScript examples for everyday tasks, a plain-English tour of the three type systems, the behavioral differences that cause real bugs, and the tooling you need to ship each language. At the end, I look at a real request path in my RoboShop AI project where a TypeScript storefront, a Python gateway and a Go service all handle the same currency data.
-
-I assume you understand basic programming ideas such as variables, functions and loops, but you may know only one of these languages. Advanced material is marked as optional.
+This comparison does not rank Python, Go and TypeScript. It shows the same small programs written three ways, explains the three type systems, lists the behavioural differences that cause real bugs, and covers how each one is shipped. It ends with a real request path in my RoboShop AI project where a TypeScript storefront, a Python gateway and a Go service all handle the same currency data. You need basic programming ideas and at least one of the three languages.
 
 ## Python vs Go vs TypeScript in one minute
 
-**Python** is a dynamically typed, interpreted language. "Dynamically typed" means a variable can hold any kind of value, and types are checked while the program runs, not before. Python lets you add optional *type hints*: annotations such as `count: int` that tools like mypy check before you run the code, but that the Python interpreter itself does not enforce. Python is common in data analysis, machine learning, AI integrations, automation scripts and web back ends.
+**Python** is dynamically typed and interpreted: types are checked while the program runs. Optional *type hints* such as `count: int` are checked by tools like mypy, not by the interpreter. It is common for data, machine learning, AI integrations, automation and web back ends.
 
-**Go** is a statically typed, compiled language from Google. "Statically typed" means every variable has a fixed type that the compiler checks before the program can run. The Go compiler turns your code into a native executable for one operating system and CPU architecture, and that file runs without a separate interpreter. Go is common in network services, command-line tools and cloud infrastructure software.
+**Go** is statically typed and compiled: the compiler checks every type before the program can run and produces a native executable for one OS and CPU, with no interpreter needed. It is common for network services, CLIs and cloud infrastructure.
 
-**TypeScript** is JavaScript with a static type system added. You write `.ts` files; a tool checks the types and then removes them, leaving ordinary JavaScript that runs. TypeScript never runs by itself. The resulting JavaScript runs in a browser, in a server runtime such as Node.js, or in other JavaScript runtimes, and each environment offers different built-in APIs. TypeScript is the usual choice for browser interfaces, and it is common for full-stack web applications and Node.js services.
-
-None of them wins everywhere. The rest of this article shows where each one fits better and why.
+**TypeScript** is JavaScript with a static type system. A tool checks `.ts` files and removes the types, leaving JavaScript that runs in a browser, Node.js or another runtime, each with different built-in APIs. It is the usual choice for browser UIs and common for full-stack apps and Node.js services. None of the three wins everywhere.
 
 ## Where each language appears in my projects
 
-I didn't want to assume anything here, so I checked the four repositories (counts are tracked source files, tests included, at the commits in the sources list). Go turned out to be present, which I had not expected before looking.
+Counts are tracked source files, tests included, at the commits in the sources list.
 
 | Repository | Python | Go | TypeScript |
 | --- | --- | --- | --- |
@@ -152,9 +144,7 @@ I didn't want to assume anything here, so I checked the four repositories (count
 | MOKS (an SRE investigation portal) | 222 `.py` files: the API, worker, CLI and reranker | none | 45 `.ts` and `.tsx` files: the React web UI in `frontend/` |
 | tools (infrastructure) | 42 `.py` files: tests and deployment helpers | 1 file, `devops-tools/dependencies/dispatch.go`, with no `go.mod`, not referenced by any workflow | none (mostly Terraform and shell) |
 
-RoboShop AI also has 52 plain JavaScript `.mjs` files and a Java shipping service. The single Go file in tools can't be built as it stands (it has no module file), so I don't use it as an example. The real Go example in this article is the RoboShop currency service.
-
-The versions each part pins:
+RoboShop AI also has 52 plain JavaScript `.mjs` files and a Java shipping service. The Go file in tools has no module file and cannot be built, so the Go example here is the RoboShop currency service. Pinned versions:
 
 | Part | Language and version | Evidence |
 | --- | --- | --- |
@@ -167,7 +157,7 @@ The versions each part pins:
 
 ## What Python, Go and TypeScript have in common
 
-Before looking at differences, it helps to see how much carries over. If you can write a small program in one of these languages, you already understand most of the ideas in the other two.
+If you can write a small program in one of these, you already understand most of the ideas in the other two:
 
 | Aspect | Python | Go | TypeScript |
 | --- | --- | --- | --- |
@@ -183,17 +173,11 @@ Before looking at differences, it helps to see how much carries over. If you can
 | Dependencies | pip and PyPI, usually in a virtual environment | Go modules, fetched from version control or a proxy | npm (or pnpm, Yarn) and the npm registry |
 | Typical uses | APIs, automation, data, ML, AI integrations | network services, CLIs, infrastructure | browser UIs, full-stack web apps, Node.js services |
 
-Two cells deserve a warning. "Exceptions" in Python and TypeScript look alike, but TypeScript doesn't track which functions throw. And all three have "concurrency", but the models are so different that section [Concurrency and parallelism](#concurrency-and-parallelism) gets its own space.
+Two cells hide big differences: TypeScript does not track which functions throw, and the three concurrency models are covered in [Concurrency and parallelism](#concurrency-and-parallelism).
 
 ## How to run the examples
 
-Every example in this article has a label:
-
-- **Standalone comparison example**: a complete program I wrote for this article. Each one ends with an `Output:` comment showing exactly what it prints.
-- **Actual project code**: copied exactly from one of my repositories, with the path and line numbers.
-- **Simplified from project code**: shortened from a repository file, with the changes explained.
-
-Where an example says **Same output in all three languages**, the three programs print identical text. **Same values; the printed format differs** means the results match but, for example, Python prints `True` and Go prints `true`. **The outputs differ on purpose** means the example exists to show a difference.
+Examples are labelled **Standalone comparison example** (a complete program ending with an `Output:` comment), **Actual project code** (copied exactly, with path and lines) or **Simplified from project code**. **Same output in all three languages** means identical text; **Same values; the printed format differs** means, for example, `True` versus `true`; **The outputs differ on purpose** marks examples that show a difference. A script in the site's repository (`docs/knowledge-sharing/python-vs-go-vs-typescript/verify_examples.py`) runs every standalone example on Python 3.11 with mypy, Go 1.27 with the race detector, `gofmt` and `go vet`, and Node.js 26 with `tsc` 6.0.3 and 7.0.2, and compares project excerpts with the cited commits.
 
 **Python.** Save the code as a `.py` file and run `python3 example.py`. The examples use syntax that works on Python 3.11 and later. To check type hints, install mypy into a virtual environment:
 
@@ -237,7 +221,7 @@ Then run `npx tsc`. `noEmit` means "check only, don't write JavaScript files". `
 
 ### Hello world and the entry point
 
-Every program needs a place to start. Python runs a file from top to bottom; the `if __name__ == "__main__":` check runs `main()` only when the file is executed directly, not when another file imports it. Go always starts at `func main()` in `package main`, and the `fmt` package (short for "format") provides printing. A TypeScript file run by Node.js also runs from top to bottom, so you simply call your function.
+Python runs a file top to bottom, and `if __name__ == "__main__":` runs `main()` only when the file is executed directly. Go always starts at `func main()` in `package main`, with printing from `fmt`. Node.js runs a TypeScript file top to bottom, so you just call your function.
 
 *Standalone comparison example. Same output in all three languages.*
 
@@ -280,9 +264,7 @@ main();
 // Hello, world!
 ```
 
-Go is the only one of the three that refuses to compile a file with an unused import. Delete the `fmt.Println` line and keep `import "fmt"`, and the build fails. That feels strict at first, but it keeps imports honest.
-
-**Common mistake when switching:** writing Python-style top-level statements in Go. Go allows only declarations (functions, types, variables, constants) at the top level of a file; statements must live inside a function.
+Go alone refuses to compile a file with an unused import. **Common mistake when switching:** Python-style top-level statements in Go, which allows only declarations at the top level.
 
 ### Variables and constants
 
@@ -337,9 +319,9 @@ console.log(name, count, MAX_RETRIES);
 
 What to notice:
 
-- **Python** has no declaration keyword. `name = "Ada"` creates the variable. `Final` is a type hint that tells a type checker not to allow reassignment; Python itself would still let you reassign it.
-- **Go** has two forms. `name := "Ada"` declares and infers the type (only inside functions). `var count int = 2` spells the type out. `const` values must be known at compile time. Go also reports an *unused local variable* as a compile error.
-- **TypeScript** uses `const` for bindings that are never reassigned and `let` for ones that are. `const` doesn't make an object immutable: `const list = [1]; list.push(2)` is allowed.
+- **Python** has no declaration keyword; `Final` only tells a type checker to forbid reassignment.
+- **Go** declares with `name := "Ada"` (inferred, inside functions) or `var count int = 2`; `const` must be known at compile time, and an unused local variable is a compile error.
+- **TypeScript** uses `const` (never reassigned) and `let`; `const` does not make an object immutable, so `list.push(2)` is allowed.
 
 **Common mistake when switching:** in Go, `:=` inside an `if` or `for` block declares a *new* variable that shadows an outer one with the same name. If you meant to update the outer variable, use `=`.
 
@@ -404,9 +386,7 @@ console.log(["a", "b", "c"].join(", "));
 // a, b, c
 ```
 
-Python's f-strings (`f"..."`) and TypeScript's template literals (`` `...${x}` ``) put expressions directly inside the string. Go has no string interpolation; you use `fmt.Printf` or `fmt.Sprintf` with *verbs* such as `%s` (string), `%d` (integer) and `%.2f` (float with two decimals). `%v` prints any value in a default format. String helpers live in the `strings` package rather than as methods.
-
-`len(name)` and `name.length` both return 3 here, but they count different things. Go counts bytes, and JavaScript counts UTF-16 code units. For text outside plain ASCII, all three languages give different answers; see [Unicode and string indexing](#unicode-and-string-indexing).
+Python's f-strings and TypeScript's template literals put expressions inside strings. Go has no interpolation: `fmt.Printf` and `fmt.Sprintf` use *verbs* such as `%s`, `%d`, `%.2f` and `%v`, and string helpers live in the `strings` package. `len(name)` and `name.length` both give 3 here but count different things (bytes and UTF-16 units); see [Unicode and string indexing](#unicode-and-string-indexing).
 
 **Common mistake when switching:** `fmt.Println` with a format verb. `fmt.Println("%d", n)` prints the literal `%d` followed by the number. Use `fmt.Printf` (and add `\n` yourself) when you need formatting.
 
@@ -474,7 +454,7 @@ Division is where the languages first disagree:
 - **Go** decides by type. `7/2` divides two integers and gives `3`; `7.0/2` divides floats and gives `3.5`. Go has no `**` operator; `math.Pow` works on `float64`.
 - **JavaScript** has one number type for both, so `7 / 2` is `3.5` and you use `Math.trunc` or `Math.floor` to drop the fraction.
 
-Booleans are spelled `True`/`False` in Python and `true`/`false` in Go and TypeScript. Python uses the words `and`, `or` and `not`; Go and TypeScript use `&&`, `||` and `!`.
+Python writes `True`, `and`, `or`, `not`; Go and TypeScript write `true`, `&&`, `||`, `!`.
 
 **Common mistake when switching:** in Go you can't mix types in arithmetic. If `n` is an `int` and `f` is a `float64`, `n * f` doesn't compile; you write `float64(n) * f`. Only untyped constants, such as the literal `2`, adapt automatically.
 
@@ -536,11 +516,7 @@ console.log(JSON.stringify(nums.slice(1, 3)));
 // [1,2]
 ```
 
-All three use zero-based indexes and half-open ranges: `[1:3]` and `slice(1, 3)` include index 1 and exclude index 3.
-
-- A Python **list** holds values of any type and grows with `append`.
-- A Go **slice** (`[]int`) holds values of one type. `append` returns a slice, and you must assign the result back: `nums = append(nums, 4)`. The `slices` package (standard library since Go 1.21) provides `Sort`, `Clone`, `Contains` and similar helpers. Go also has fixed-length *arrays* such as `[3]int`, but you will use slices far more often.
-- A JavaScript **array** grows with `push`. `sort()` sorts in place, which is why the example copies the array first with `[...nums]`.
+All three index from zero with half-open ranges. A Python **list** holds any types; a Go **slice** (`[]int`) holds one type, and `append` returns a slice you must assign back (`nums = append(nums, 4)`), with helpers in the `slices` package; a JavaScript **array** grows with `push`, and `sort()` sorts in place, hence the copy with `[...nums]`.
 
 **Common mistake when switching:** calling `sort()` on numbers in JavaScript without a comparison function. The default sort compares values as strings, so `[10, 9, 1].sort()` gives `[1, 10, 9]`. Always pass `(a, b) => a - b` for numbers.
 
@@ -611,9 +587,7 @@ for (const name of Object.keys(ages).sort()) {
 // linus 29
 ```
 
-Iteration order is a real difference. Python dicts keep insertion order. JavaScript objects mostly keep insertion order for string keys (integer-like keys come first). Go deliberately randomizes map iteration order, so code that depends on it breaks quickly. That's why all three examples sort the keys.
-
-Use a JavaScript `Map` instead of a plain object when keys are not strings, when keys come from users (a key such as `"__proto__"` behaves specially on plain objects), or when you add and remove keys often.
+Python dicts keep insertion order, JavaScript objects mostly do (integer-like keys first), and Go deliberately randomizes map order, so all three examples sort the keys. Prefer a JavaScript `Map` when keys are not strings, come from users (`"__proto__"` is special on plain objects) or change often.
 
 **Common mistake when switching:** treating Go's `ages["bob"]` as an error. It returns the *zero value* for the value type (here `0`) and doesn't fail. Use the two-value form `value, ok := ages["bob"]` to tell "missing" apart from "present with value 0".
 
@@ -717,7 +691,7 @@ console.log(label("paid"), label("pending"), label("lost"));
 // done waiting unknown
 ```
 
-Python uses `elif`; Go and TypeScript use `else if`. Go's `if` needs no parentheses but always needs braces. Python's `match` statement (Python 3.10 and later) is pattern matching, which can also destructure values. Here it's used like a simple switch.
+Python writes `elif`, the others `else if`; Go's `if` needs braces but no parentheses, and Python's `match` (3.10+) is pattern matching used here as a switch.
 
 **Common mistake when switching:** fall-through. In JavaScript, a `case` without `return` or `break` keeps running into the next case. Go stops at the end of each case unless you write `fallthrough`, and Python's `match` never falls through.
 
@@ -794,7 +768,7 @@ while (n > 0) {
 // tick 1
 ```
 
-Go's `for i, name := range names` gives the index and a *copy* of each element. Since Go 1.22, each iteration gets a fresh `i` and `name`, so closures and goroutines that capture them behave as you would expect. Go 1.22 also lets you write `for i := range 3` to count from 0 to 2.
+Go's `range` gives the index and a *copy* of each element, with a fresh variable per iteration since Go 1.22, which also added `for i := range 3`.
 
 **Common mistake when switching:** using `for...in` on a JavaScript array. `for (const i in names)` loops over the *keys* as strings (`"0"`, `"1"`), not the values. Use `for...of` for values.
 
@@ -868,9 +842,7 @@ console.log(applyTwice((x) => x * 2, 5));
 // 20
 ```
 
-Returning two values looks similar in all three, but works differently. Python returns one tuple and unpacks it. TypeScript returns one array, typed as a *tuple* `[number, number]`, and destructures it. Go has true multiple return values, which is why Go's error handling (`value, err := ...`) feels natural there. In Go, parameter types come *after* names, and `a, b int` shares one type between two parameters.
-
-All three treat functions as values: `lambda`, Go's function literals and TypeScript's arrow functions are anonymous functions you can pass around.
+Python returns one tuple and TypeScript one array typed as a *tuple* `[number, number]`; Go has true multiple return values, which is why `value, err := ...` feels natural. Go puts parameter types after names. All three treat functions as values.
 
 **Common mistake when switching:** Python functions without a `return` statement return `None`; JavaScript functions return `undefined`. Go makes you declare the return type, and the compiler reports a missing `return`.
 
@@ -941,7 +913,7 @@ console.log(greet("Ada", { greeting: "Hi" }));
 // Hi, Ada!
 ```
 
-Python's `greeting="Hi"` is a *keyword argument*: you name the parameter at the call site. TypeScript has no keyword arguments, so the common pattern is an options object, destructured with defaults. The `?` in `greeting?: string` makes the property optional. Go's options struct works the same way, but relies on the field's zero value (`""`) to mean "not set". When the zero value is a valid setting, Go code uses a pointer field (`*string`) or the *functional options* pattern (variadic functions such as `WithGreeting("Hi")`).
+Python names the parameter at the call site (a *keyword argument*). TypeScript uses an options object destructured with defaults (`greeting?: string`). Go's options struct relies on the zero value meaning "not set"; when zero is valid, Go uses a pointer field or *functional options* such as `WithGreeting("Hi")`.
 
 **Common mistake when switching:** Python evaluates a default value once, when the function is defined. See [mutable default arguments](#mutable-default-arguments-in-python) for the bug that causes.
 
@@ -1021,9 +993,7 @@ console.log(label(user), user.active);
 // Ada <ada@example.com> true
 ```
 
-- `@dataclass` generates `__init__`, `__repr__` and `__eq__` from the annotated fields.
-- A Go struct has no constructor and no default field values. Every field starts at its zero value, so `Active` would be `false` unless set. A `NewUser` function is the usual way to supply defaults. `func (u User) Label()` is a *method*: a function with a *receiver* `u`. Capitalized names (`User`, `Name`, `Label`) are *exported*, meaning visible to other packages.
-- A TypeScript `interface` only describes a shape. The object is an ordinary JavaScript object, and the interface disappears when the types are removed.
+`@dataclass` generates `__init__`, `__repr__` and `__eq__`. A Go struct has no constructor or defaults (fields start at zero values, so a `NewUser` function supplies them); `func (u User) Label()` is a *method* with a *receiver*, and capitalized names are *exported*. A TypeScript `interface` only describes a shape and disappears with the types.
 
 **Common mistake when switching:** expecting a TypeScript interface to check data at runtime. It can't, because it doesn't exist at runtime. See [annotations versus runtime validation](#annotations-versus-runtime-validation).
 
@@ -1087,7 +1057,7 @@ console.log(emails.get("ada") ?? "unknown");
 // ada@example.com
 ```
 
-Python has one "nothing" value, `None`, and you test it with `is None`. Go has no general null; a missing map entry is the zero value (`""` here), plus a boolean that says whether the key was there. JavaScript has two "nothing" values, `undefined` and `null`. TypeScript's `??` (nullish coalescing) uses the right side only when the left side is `null` or `undefined`, and `?.` (optional chaining) stops at either one.
+Python has `None` (test with `is None`); Go has no general null, only zero values plus a found boolean; JavaScript has `undefined` and `null`, handled by `??` and `?.`.
 
 **Common mistake when switching:** using `or` in Python or `||` in TypeScript as a default operator. `count or 10` replaces a real `0` with `10`, because `0` is *falsy*. Use `is None` in Python and `??` in TypeScript.
 
@@ -1154,7 +1124,7 @@ console.log(Number(""), Number(" 42 "), Number.parseInt("42px", 10));
 // 0 42 42
 ```
 
-Python raises an exception; Go returns an `error` value next to the result; JavaScript's `Number()` returns the special value `NaN` ("not a number") and doesn't throw at all. The last TypeScript line shows why JavaScript parsing needs care: an empty string becomes `0`, and `parseInt` silently stops at the first non-digit.
+Python raises, Go returns an `error` beside the result, and JavaScript's `Number()` returns `NaN` without throwing; an empty string even becomes `0`, and `parseInt` stops silently at the first non-digit.
 
 ### JSON serialization and parsing
 
@@ -1236,9 +1206,9 @@ console.log(JSON.stringify({ ok: true, count: 2 }));
 // {"ok":true,"count":2}
 ```
 
-- **Python** turns JSON into plain `dict`, `list`, `str`, `int`, `float`, `bool` and `None` values. By default `json.dumps` adds spaces after `,` and `:`; `separators` removes them.
-- **Go** decodes into a struct. The text in backquotes after each field, such as `` `json:"name"` ``, is a *struct tag*: metadata that tells `encoding/json` which JSON key to use. Only exported (capitalized) fields are encoded. `&p` passes a pointer so `Unmarshal` can fill in `p`. Unknown JSON keys are ignored, missing keys leave the zero value, and key matching is case-insensitive by default (`"NAME"` would also fill `Name`). Since Go 1.27, `encoding/json` is implemented on top of the new `encoding/json/v2`; the release notes say the behavior is preserved, but error message text may differ.
-- **TypeScript**: `JSON.parse` returns `any`, and `as Profile` is a *type assertion*. It tells the compiler "trust me"; nothing checks that the data really has that shape.
+- **Python** decodes to plain `dict`, `list` and scalar values; `separators` removes `json.dumps`'s default spaces.
+- **Go** decodes into a struct whose *struct tags* (`` `json:"name"` ``) name the keys. Only exported fields are encoded, unknown keys are ignored, missing keys leave zero values, and matching is case-insensitive. Since Go 1.27, `encoding/json` runs on `encoding/json/v2`, with the same behaviour but possibly different error text.
+- **TypeScript**: `JSON.parse` returns `any`, and `as Profile` is a *type assertion* that nothing checks.
 
 **Common mistake when switching:** lowercase struct fields in Go. A field named `name` (unexported) is silently skipped by `encoding/json`, so your output is `{}`.
 
@@ -1315,9 +1285,7 @@ console.log(hello("Ada"));
 // Hello, Ada!
 ```
 
-- **Python**: every `.py` file is a module. `from greetings import hello` finds `greetings.py` on the module search path, which includes the script's folder. Everything is importable; a leading underscore (`_helper`) is only a convention for "private".
-- **Go**: a *package* is a folder. The import path `example/greetings` is the module name from `go.mod` plus the folder name. Visibility is decided by the first letter: `Hello` is exported, `prefix` is not. Go also rejects circular imports between packages.
-- **TypeScript**: every file with `import` or `export` is an ES module, and you export names explicitly. Node's type stripping needs the real `.ts` extension in relative imports. If you compile with `tsc` to `.js` files instead, TypeScript can rewrite these extensions for you (the `rewriteRelativeImportExtensions` option), or you can import the `.js` name.
+In **Python** every `.py` file is a module and everything is importable (`_helper` is only a convention). In **Go** a *package* is a folder, imported as module name plus folder, with visibility set by the first letter and circular imports rejected. In **TypeScript** every file with `import` or `export` is an ES module; Node's type stripping needs the real `.ts` extension in relative imports (or `rewriteRelativeImportExtensions` when compiling with `tsc`).
 
 **Common mistake when switching:** naming a Python file after a standard library module, such as `json.py` or `random.py`. Your file *shadows* the real module, and `import json` loads your file instead.
 
@@ -1413,28 +1381,13 @@ console.log(response.status, user.name, user.role);
 // 200 Ada Lovelace admin
 ```
 
-All three use only the standard library (or, for TypeScript, the `fetch` built into Node.js and browsers). In real Python projects, people often use the third-party `httpx` or `requests` packages instead of `urllib`.
-
-Two details matter in production code:
-
-- **Timeouts.** None of these clients should wait forever. Python's `timeout=5`, Go's `http.Client{Timeout: ...}` and `AbortSignal.timeout(5000)` each set a limit. Go's zero-value `http.Client` and `http.Get` have *no* timeout.
-- **Status codes.** Python's `urlopen` raises an exception for 4xx and 5xx responses. Go and `fetch` treat any response as success, so you must check `resp.StatusCode` or `response.ok` yourself.
-
-`defer resp.Body.Close()` schedules the close to run when `main` returns. Forgetting to close response bodies in Go leaks connections.
+All three use only the standard library (Python projects often use `httpx` or `requests` instead). Always set a timeout: Go's zero-value `http.Client` and `http.Get` have none. Python's `urlopen` raises for 4xx and 5xx, while Go and `fetch` need you to check `resp.StatusCode` or `response.ok`. In Go, `defer resp.Body.Close()` prevents leaked connections.
 
 ## Type systems explained simply
 
 ### Dynamic typing versus static typing
 
-A *type* says what kind of value something is and what you can do with it. In a *dynamically typed* language, values carry their types and the interpreter checks them while running. In a *statically typed* language, the compiler checks types before the program runs.
-
-That makes three different situations:
-
-- **Python**: dynamically typed, with optional static checking. Type hints are stored but not enforced; an external tool such as mypy or Pyright checks them.
-- **Go**: statically typed. A type error is a compile error, and there is no program to run until you fix it.
-- **TypeScript**: statically typed at *check* time, dynamically typed at *run* time. The compiler checks your types, then the types are erased and plain JavaScript runs.
-
-The same mistake shows all three:
+**Python** is dynamically typed with optional static checking by mypy or Pyright; **Go** is statically typed, so a type error means no program; **TypeScript** is static at *check* time and dynamic at *run* time, because types are erased. The same mistake in all three:
 
 *Standalone comparison example. The outputs differ on purpose.*
 
@@ -1485,15 +1438,11 @@ console.log(add("2", "3"));
 // 23
 ```
 
-Python runs the bad call and joins the strings into `"23"`; mypy would have reported it. The Go program doesn't build, and the compiler prints the error shown. The TypeScript program fails `tsc`, but `node hints.ts` runs it anyway and also prints `23`, because Node.js only strips the types. (`@ts-expect-error` tells `tsc` that the next line is expected to fail, which lets this article's checker confirm that it does.)
-
-The lesson for TypeScript: **running a `.ts` file is not checking it.** Put `tsc --noEmit` (or your framework's equivalent) in CI.
+Python joins the strings into `"23"` (mypy would object), Go does not build, and TypeScript fails `tsc` but `node hints.ts` still prints `23` (`@ts-expect-error` marks the expected failure). **Running a `.ts` file is not checking it**: put `tsc --noEmit` in CI.
 
 ### Type inference and structural typing
 
-*Type inference* means the compiler works out a type you didn't write. Go infers types for `x := 42`, TypeScript infers `const n = 42` as `number` (actually the literal type `42`), and Python type checkers infer `n = 42` as `int`.
-
-*Structural typing* means two types are compatible if they have the same shape, regardless of their names. TypeScript is structural, and so are Go interfaces and Python `Protocol` classes. None of them requires you to declare "this class implements that interface".
+All three infer types you did not write. *Structural typing*, compatibility by shape rather than name, applies to TypeScript, Go interfaces and Python `Protocol` classes, so none requires "implements".
 
 *Standalone comparison example. Same output in all three languages.*
 
@@ -1606,21 +1555,11 @@ console.log(totalArea([new Rect(2, 3), square]));
 // 10
 ```
 
-These look alike, but they are not the same feature:
-
-- A **Go interface** is a real runtime value. A variable of type `Shape` holds a pair: the concrete type (`Rect`) and the value. That's why Go can ask at runtime, `r, ok := s.(Rect)` (a *type assertion*) or use a *type switch*. Go interfaces contain only methods, never fields.
-- A **TypeScript interface** exists only at check time. It can describe fields, methods, optional properties and index signatures, but you can't write `value instanceof Shape`, because nothing named `Shape` exists in the running JavaScript.
-- A **Python Protocol** exists only for type checkers too, unless you add `@runtime_checkable`, which then allows a basic `isinstance` check of method names.
-
-TypeScript's constructor is written out longhand on purpose. The shortcut `constructor(public width: number)` (a *parameter property*) generates code, so Node's type stripping can't run it and `erasableSyntaxOnly` rejects it.
+They differ underneath. A **Go interface** is a runtime value holding the concrete type and value, so `r, ok := s.(Rect)` and type switches work; it contains only methods. A **TypeScript interface** exists only at check time and can describe fields, but `value instanceof Shape` is impossible. A **Python Protocol** is also check-time only unless `@runtime_checkable`. The TypeScript constructor is longhand because parameter properties generate code that Node's type stripping cannot run.
 
 ### Python Any, Go any, and TypeScript any and unknown
 
-All three have a type meaning "could be anything", and the name `any` means something different in Go and TypeScript.
-
-- **Python `Any`** turns off checking: a type checker allows any operation on it. Use `object` when you mean "any value, but make me check before using it".
-- **Go `any`** is an alias for `interface{}`, the empty interface. Every type satisfies it, but it is *not* an escape hatch. You can't add to it, call methods on it or index it until you get the concrete type back with a type assertion or type switch. In TypeScript terms, Go's `any` behaves like `unknown`.
-- **TypeScript `any`** turns off checking, like Python's `Any`. **`unknown`** accepts any value but requires you to narrow it before use.
+**Python `Any`** and **TypeScript `any`** turn checking off; Python's `object` and TypeScript's **`unknown`** accept anything but make you check first. **Go `any`** (`interface{}`) is not an escape hatch: you cannot use it until a type assertion or switch recovers the concrete type, so it behaves like TypeScript's `unknown`.
 
 *Standalone comparison example. Same output in all three languages.*
 
@@ -1698,7 +1637,7 @@ for (const v of [42, "hi", null, [1]]) {
 // something else
 ```
 
-`isinstance`, Go's type switch and `typeof` all *narrow* the type: inside each branch, the checker knows the more specific type. One trap is Python-specific: `bool` is a subclass of `int`, so `isinstance(True, int)` is `True`. If booleans can reach code like this, check for `bool` first.
+`isinstance`, type switches and `typeof` all *narrow* the type. In Python `bool` subclasses `int`, so check for `bool` first.
 
 ### Annotations versus runtime validation
 
@@ -1770,11 +1709,7 @@ console.log(person.age + 1);
 // 361
 ```
 
-- The **Python** dataclass happily stores a string in a field annotated `int`, and the problem surfaces later as a `TypeError`.
-- **Go** refuses at the boundary, because `encoding/json` must put a value of the declared type into the field. Go checks types only, though, not rules such as "age must be positive".
-- **TypeScript** gives the worst result: no error at all, and `"36" + 1` quietly becomes the string `"361"`. The `as Person` assertion promised something nobody checked.
-
-The fix in Python and TypeScript is a runtime validation library. My projects use Pydantic in the Python services (MOKS and the jithendar.com executor) and Zod in the jithendar.com website; you will see a real Zod schema in the project section. In Go, you decode into a struct and then validate the rules yourself, or use a third-party validation package.
+The Python dataclass stores a string in an `int` field and fails later; Go refuses at decoding (types only, not rules such as "positive"); TypeScript is worst, quietly making `"36" + 1` into `"361"`. Use a runtime validation library: Pydantic in my Python services, Zod on jithendar.com (shown later). In Go, decode into a struct and validate the rules yourself.
 
 ### Python None, Go nil and zero values, JavaScript null and undefined
 
@@ -1810,33 +1745,15 @@ func main() {
 // [go]
 ```
 
-Zero values mean you rarely see "uninitialized variable" bugs, and many types are usable without setup (a nil slice can be appended to and has length 0). The costs: you can't tell "not set" from "set to zero" without an extra boolean or a pointer, and two things do fail at runtime. Writing to a nil map panics, and so does reading a field through a nil pointer.
-
-Python has only `None`. JavaScript has `undefined` (a missing property, a variable with no value) and `null` (an explicit "no value"). With `strict` enabled, TypeScript makes you handle both: a value of type `string | undefined` can't be used as a `string` until you check it.
-
-### Classes, dataclasses, structs and interfaces
-
-| Need | Python | Go | TypeScript |
-| --- | --- | --- | --- |
-| A record of named fields | `@dataclass` or a class | `struct` | `interface` or `type` alias describing an object |
-| Behavior attached to data | methods on a class | methods with a receiver | methods on a class, or functions taking the object |
-| "Anything with this behavior" | `Protocol` (checked statically) | `interface` (implicit, real at runtime) | `interface` (structural, erased at runtime) |
-| Inheritance | yes, including multiple inheritance | no; use embedding and interfaces | yes, single inheritance with `extends` |
-| Generics | yes, for type checkers (`list[T]`, `TypeVar`, and the `def f[T]()` syntax since 3.12) | yes, since Go 1.18; generic methods since Go 1.27 | yes |
+Zero values prevent "uninitialized" bugs and make many types usable without setup, but "not set" and "zero" look the same without a boolean or pointer, and writing to a nil map or reading through a nil pointer panics. In strict TypeScript, `string | undefined` must be checked before use as a `string`.
 
 ## Important behavioral differences
 
-These are the differences that cause bugs when you switch languages, because the code looks right.
-
 ### Indentation versus braces
 
-Python uses indentation to mark blocks: the body of an `if` is the indented lines beneath it, and inconsistent indentation is a syntax error. Go and TypeScript use braces, so indentation is just for people. Go removes the debate entirely: `gofmt` defines one standard layout, using tabs, and almost all Go code is formatted with it. TypeScript projects usually pick a formatter such as Prettier, and Python projects often use Black or Ruff's formatter. Neither of those is part of the language.
-
-Go also inserts semicolons automatically at the end of certain lines, which is why the opening brace must be on the same line as `if` or `func`. Putting it on the next line is a compile error.
+Python blocks are indentation, and inconsistent indentation is a syntax error. Go and TypeScript use braces; `gofmt` gives all Go code one layout, while Python and TypeScript projects choose formatters (Black or Ruff, Prettier). Go's automatic semicolons make an opening brace on the next line a compile error.
 
 ### Truthiness: Go conditions require booleans
-
-*Truthiness* is the rule that decides whether a non-boolean value counts as true in a condition.
 
 *Standalone comparison example. The outputs differ on purpose.*
 
@@ -1884,9 +1801,7 @@ console.log(Boolean(""), Boolean("0"), Boolean(0), Boolean([]));
 // false true false true
 ```
 
-In Python, empty collections, `0`, `""` and `None` are falsy. In JavaScript, `0`, `""`, `null`, `undefined` and `NaN` are falsy, but **an empty array and an empty object are truthy**. That's why `items ? ...` says "has items" for an empty array. Go has no truthiness at all: a condition must be a `bool`, so you write what you mean.
-
-**Common mistake when switching:** Python developers writing `if (items)` in TypeScript to test for an empty list. It's always true. Test `items.length === 0`.
+Python treats empty collections, `0`, `""` and `None` as false. In JavaScript **an empty array and an empty object are truthy**, so `if (items)` is always true for an array; test `items.length === 0`. Go has no truthiness: conditions must be `bool`.
 
 ### Equality, identity and references
 
@@ -1949,16 +1864,11 @@ console.log(JSON.stringify(a));
 // [1,2,3]
 ```
 
-- **Python**: `==` compares contents; `is` asks "is this the same object?". Assigning `c = a` makes a second name for one list.
-- **Go**: `==` works on numbers, strings, booleans, pointers, and structs or arrays made of comparable fields. It does not compile for slices, maps or functions; use `slices.Equal` or `maps.Equal`.
-- **JavaScript**: `===` on objects and arrays compares *references*, so two arrays with the same contents are not equal. There is no built-in deep equality; test libraries provide one (`toEqual` in Vitest). Always use `===` rather than `==`, which converts types first (`"1" == 1` is `true`).
+Python's `==` compares contents and `is` identity. Go's `==` does not compile for slices, maps or functions (use `slices.Equal`, `maps.Equal`). JavaScript's `===` compares object *references*, with no built-in deep equality; never use `==`, which converts types (`"1" == 1` is `true`).
 
 ### Python lists, Go slices and JavaScript arrays in functions
 
-You may have read that some language "passes objects by reference". That phrase causes confusion, so here is what actually happens:
-
-- **Python and JavaScript** pass a reference to the object *by value*. The function gets its own variable pointing at the same list. Mutating the list (`append`, `push`) is visible to the caller; assigning a new list to the parameter is not.
-- **Go passes everything by value**: the function gets a copy of the argument. For a slice, the copied value is a small *slice header* (a pointer to an underlying array, a length and a capacity). The copy points at the same array, so changing an element is visible to the caller, but changing the length with `append` is not, because the caller still has its old header.
+**Python and JavaScript** pass a reference *by value*: mutating the list is visible to the caller, reassigning the parameter is not. **Go passes everything by value**; a slice's copied *header* (pointer, length, capacity) shares the array, so element changes are visible but `append`'s new length is not.
 
 *Standalone comparison example. The outputs differ on purpose.*
 
@@ -2033,7 +1943,7 @@ console.log(JSON.stringify(nums));
 // [1,2,3,4]
 ```
 
-That's why Go's `append` returns a slice, and why Go functions that grow a slice return it. A related subtlety: two slices of the same array can affect each other until one of them grows past its capacity and `append` copies it to a new array. Use `slices.Clone` when you need an independent copy.
+That is why Go functions that grow a slice return it; use `slices.Clone` for an independent copy.
 
 ### Map and dictionary access with missing keys
 
@@ -2093,7 +2003,7 @@ console.log(JSON.stringify(counts), counts["z"]);
 // {"a":2,"b":1} undefined
 ```
 
-Python raises `KeyError` for a missing key with `[]`; use `.get()`, `in`, or `collections.defaultdict` / `Counter`. Go returns the zero value, which makes counting a one-liner. JavaScript returns `undefined`, and `undefined + 1` is `NaN`, hence the `?? 0`. With the compiler option `noUncheckedIndexedAccess`, TypeScript makes `counts[word]` have type `number | undefined`, which forces you to handle the missing case.
+Python's `[]` raises `KeyError` (use `.get()`, `defaultdict` or `Counter`); Go returns the zero value, so counting is one line; JavaScript returns `undefined`, and `undefined + 1` is `NaN`, hence `?? 0`, which `noUncheckedIndexedAccess` forces you to write.
 
 ### Mutable default arguments in Python
 
@@ -2142,7 +2052,7 @@ console.log(JSON.stringify(addTag("b")));
 // ["b"]
 ```
 
-Python evaluates `= []` once, when `def` runs, so every call that uses the default shares one list. JavaScript evaluates default values on every call. The Python fix is the `None` sentinel shown in `add_tag_fixed`. Go has no default arguments, so the problem can't occur there.
+Python evaluates `= []` once, so every call shares one list; JavaScript evaluates defaults per call. Use the `None` sentinel in `add_tag_fixed`.
 
 ### Integer arithmetic, division, overflow and precision
 
@@ -2201,11 +2111,9 @@ console.log(0.1 + 0.2);
 // 0.30000000000000004
 ```
 
-- **Integer size.** Python's `int` has arbitrary precision: it grows as large as memory allows. Go has fixed-size types (`int8` to `int64`, unsigned `uint8` to `uint64`, and `int`, which is 64 bits on common 64-bit platforms). Go integer overflow at runtime *wraps around* silently, as `small++` shows; overflow in a constant expression is a compile error instead. Use `math/big` for larger values. JavaScript's `number` is a 64-bit float, so integers are exact only up to 2⁵³ − 1 (`Number.MAX_SAFE_INTEGER`). `BigInt` (the `n` suffix) gives arbitrary-size integers, but you can't mix it with `number` in arithmetic.
-- **Negative division.** Python's `//` rounds toward negative infinity and its `%` takes the sign of the divisor. Go and JavaScript truncate toward zero, and their `%` takes the sign of the dividend.
-- **Floating point.** All three use IEEE 754 64-bit floats, so `0.1 + 0.2` is not exactly `0.3`. For money, use integer cents or a decimal type: Python's `decimal.Decimal`, a decimal package in Go, or integer cents in JavaScript. RoboShop's Python gateway uses `Decimal` for checkout conversion, as the project section shows.
-
-One Go oddity: `fmt.Println(0.1 + 0.2)` with literal constants prints `0.3`, because Go evaluates constant expressions exactly before converting to `float64`. The variables in the example show normal float behavior.
+- **Size.** Python's `int` is arbitrary-precision. Go's fixed-size integers *wrap* silently at runtime (`small++`), while constant overflow is a compile error; use `math/big`. JavaScript's `number` is a float exact only to 2⁵³ − 1; `BigInt` cannot mix with `number`.
+- **Negative division.** Python's `//` rounds toward negative infinity; Go and JavaScript truncate toward zero, and `%` signs differ accordingly.
+- **Floating point.** All three use IEEE 754, so `0.1 + 0.2` is not `0.3`; use integer cents or a decimal type (RoboShop's gateway uses `Decimal`). Go evaluates literal constants exactly, so `fmt.Println(0.1 + 0.2)` prints `0.3`.
 
 ### Unicode and string indexing
 
@@ -2262,15 +2170,11 @@ console.log(s.slice(-1) === "😀", s.slice(-2) === "😀");
 // false true
 ```
 
-- **Python** strings are sequences of Unicode code points, so `len` is 6 and indexing returns characters.
-- **Go** strings are read-only byte sequences, usually UTF-8. `len` counts bytes (10), and `s[1]` is a single byte (195, the first byte of `é`). A *rune* is Go's name for a Unicode code point; `range` over a string walks runes and gives the byte offset of each.
-- **JavaScript** strings are UTF-16 code units. Most characters take one unit, but the emoji takes two (a *surrogate pair*), so `length` is 7 and slicing can cut a character in half. Spreading `[...s]` iterates by code point.
-
-What a user sees as one character can still be several code points (a flag emoji, or `e` plus a combining accent), in all three languages. For user-facing text operations, use a library or API that understands *grapheme clusters*, such as `Intl.Segmenter` in JavaScript.
+Python strings are code points (`len` 6). Go strings are UTF-8 bytes (`len` 10, `s[1]` is byte 195), and `range` walks *runes* (code points). JavaScript strings are UTF-16 units, the emoji takes two, so `length` is 7 and slicing can split it. What users see as one character can be several code points in all three; use a grapheme-aware API such as `Intl.Segmenter` for user-facing text.
 
 ### Go pointers, briefly
 
-A *pointer* holds the memory address of a value. `&x` takes the address of `x`, and `*p` reads or writes the value that `p` points to. Python and JavaScript have no pointers you can see; objects are always accessed through references, and numbers and strings are immutable.
+A *pointer* holds a value's address: `&x` takes it, `*p` reads or writes through it. Python and JavaScript have no visible pointers.
 
 *Standalone comparison example. Go only.*
 
@@ -2308,7 +2212,7 @@ func main() {
 // 42
 ```
 
-The rule of thumb for beginners: use a pointer receiver (`*Counter`) when a method must change the struct or when the struct is large; otherwise a value receiver is fine. Go has no pointer arithmetic, and the garbage collector frees memory you no longer reference, so pointers in Go are much safer than in C.
+Use a pointer receiver (`*Counter`) when a method changes the struct or the struct is large. With no pointer arithmetic and a garbage collector, Go pointers are much safer than C's.
 
 ## Error handling in Python, Go and TypeScript
 
@@ -2442,15 +2346,11 @@ console.log("failures:", failures);
 // failures: 3
 ```
 
-**Python exceptions.** `raise` stops the function and unwinds the call stack until some `try`/`except` catches the exception. A custom class (`ValidationError`, a subclass of `ValueError`) lets callers catch exactly this kind of failure. The benefit is that the "happy path" reads cleanly and errors can't be silently ignored: an uncaught exception stops the program. The cost is that nothing in a function's signature says what it can raise. Note the `isascii()` check: `str.isdigit()` alone accepts characters such as `²`, which `int()` then rejects.
+**Python** `raise` unwinds the stack to the nearest matching `except`, and a custom `ValidationError` lets callers catch exactly this failure. The happy path reads cleanly and errors cannot be ignored silently, but signatures do not say what can be raised. (`isascii()` matters because `isdigit()` accepts `²`, which `int()` rejects.)
 
-**Go returned errors.** `parseAge` returns two values, the result and an `error`. `nil` means success. The caller checks `if err != nil` right away. `fmt.Errorf` with the `%w` verb *wraps* the sentinel error `ErrInvalidAge` inside a more specific message, and `errors.Is` finds it again anywhere in the chain. The benefit is that every failure point is visible in the code and in the signature. The cost is repetition, and the compiler won't stop you from ignoring an error you assign to `_`. (Third-party linters such as errcheck catch many of these cases.)
+**Go** returns the result and an `error` (`nil` on success), checked at once with `if err != nil`. `fmt.Errorf("...: %w", ...)` wraps the sentinel `ErrInvalidAge`, and `errors.Is` finds it anywhere in the chain. Every failure point is visible, at the cost of repetition, and an error assigned to `_` is ignored (linters such as errcheck help). `panic` is for bugs, not normal errors; `net/http` recovers a panicking handler so one request cannot stop the service.
 
-Go also has `panic` and `recover`, but they are not the normal error-handling tool. A panic means a bug or an impossible state, such as indexing past the end of a slice or writing to a nil map. One place you will see recovery in practice is `net/http`: if a handler panics, the server recovers, logs a stack trace and closes that connection (or resets the HTTP/2 stream), so one bad request doesn't stop the whole service.
-
-**TypeScript exceptions.** `throw` and `try`/`catch` work like Python's. Under `strict`, the caught value `err` has type `unknown`, because JavaScript can throw *anything*, not just `Error` objects; `instanceof ValidationError` narrows it. Rethrowing unknown errors (`throw err`) keeps real bugs visible. **TypeScript does not track which functions throw**, so neither the signature nor the compiler tells callers they need a `try`.
-
-In asynchronous code, a thrown error becomes a *rejected promise*:
+**TypeScript** throws like Python. Under `strict` the caught `err` is `unknown`, because JavaScript can throw anything, so `instanceof` narrows it and unknown errors are rethrown. **TypeScript does not track which functions throw.** In async code, a thrown error becomes a *rejected promise*:
 
 *Standalone comparison example. TypeScript only.*
 
@@ -2474,7 +2374,7 @@ try {
 // rejected: invalid age: not a whole number
 ```
 
-`await` turns the rejection back into an exception you can catch. If you call `loadAge("abc")` without `await` or `.catch()`, the rejection goes unhandled, and Node.js's default behavior is to report it and exit the process. In Python's `asyncio`, an exception inside a coroutine also surfaces when it is awaited; a task that is never awaited only logs a warning when it is garbage-collected.
+`await` turns the rejection back into a catchable exception; without `await` or `.catch()`, Node.js reports the unhandled rejection and exits. In `asyncio`, a never-awaited task only logs a warning when collected.
 
 | | Python | Go | TypeScript |
 | --- | --- | --- | --- |
@@ -2488,18 +2388,11 @@ try {
 
 ### Two ideas first
 
-**Concurrency** means dealing with several tasks at once: starting one, switching to another while the first waits, then coming back. **Parallelism** means *executing* several tasks at the same moment on different CPU cores. A single core can run concurrent tasks but not parallel ones.
-
-Which you need depends on the workload:
-
-- **I/O-bound** work spends most of its time waiting: for a network response, a database or a disk. Concurrency helps a lot, because the program can start other requests while waiting. Parallelism adds little.
-- **CPU-bound** work keeps the processor busy: compressing files, parsing large documents, numeric computation. Only parallelism (more cores) makes it faster.
-
-`async`/`await` is a concurrency tool. It does not make CPU-heavy work run in parallel. If an `async` function spends two seconds computing, everything else on that event loop waits two seconds.
+**Concurrency** is juggling several tasks, switching while one waits; **parallelism** is running them at the same moment on different cores. **I/O-bound** work (waiting on networks, databases, disks) gains from concurrency; **CPU-bound** work gains only from parallelism. `async`/`await` is concurrency: two seconds of computing in an `async` function blocks its event loop for two seconds.
 
 ### The same I/O task in all three
 
-Each program runs three simulated network calls concurrently. Each call has its own 300 ms timeout, and job `c` takes too long, so it gets cancelled. The whole run takes about 300 ms instead of 1.25 seconds.
+Three simulated calls run concurrently, each with a 300 ms timeout; job `c` is too slow and is cancelled, so the run takes about 300 ms instead of 1.25 seconds.
 
 *Standalone comparison example. Same output in all three languages.*
 
@@ -2633,15 +2526,11 @@ console.log(performance.now() - start < 600 ? "fast enough" : "too slow");
 // fast enough
 ```
 
-**Python `asyncio`.** An `async def` function is a *coroutine*: calling it creates a paused computation, and `await` runs it until it has to wait. `asyncio.gather` runs several coroutines concurrently on one thread and returns their results in order. `asyncio.wait_for` cancels a coroutine that exceeds its timeout and raises `TimeoutError`. (Since Python 3.11, `asyncio.TaskGroup` and `asyncio.timeout()` offer more structured alternatives.)
-
-**Go goroutines.** A *goroutine* is a function running concurrently, started with the `go` keyword; the Go runtime schedules many goroutines onto a few operating-system threads, and they run in parallel on multiple cores. `sync.WaitGroup` waits for a group of goroutines, and `wg.Go` (Go 1.25) starts one and does the counting for you. Cancellation and timeouts travel through a `context.Context`: `ctx.Done()` is a channel that closes when the deadline passes, and `select` waits on whichever channel is ready first. Each goroutine writes to a different slice index, so they don't conflict.
-
-**TypeScript promises.** A *promise* represents a value that will arrive later. JavaScript runs your code on one thread with an *event loop*: when code awaits a timer or a network response, the runtime runs other ready work and comes back later. `Promise.all` waits for all promises. Cancellation in JavaScript is cooperative: an `AbortSignal` is passed to APIs that support it (`fetch`, Node's promise timers), and `AbortSignal.timeout(300)` aborts automatically. The import from `node:timers/promises` is Node-specific; a browser would use a different sleep helper.
+**Python**: an `async def` *coroutine* runs until it waits; `asyncio.gather` runs several on one thread, and `asyncio.wait_for` cancels on timeout (3.11 added `TaskGroup` and `asyncio.timeout()`). **Go**: the `go` keyword starts a *goroutine*, scheduled onto OS threads in parallel; `wg.Go` (1.25) starts and counts one, and a `context.Context` carries cancellation, with `select` waiting on whichever channel is ready. **TypeScript**: one thread runs an *event loop* that resumes awaited work; `Promise.all` waits for all, and cancellation is cooperative through `AbortSignal` (`node:timers/promises` is Node-specific).
 
 ### Channels, locks and data races in Go
 
-Go also offers *channels*: typed pipes that goroutines use to send values to each other. Shared variables still need protection.
+*Channels* are typed pipes between goroutines, but shared variables still need protection.
 
 *Standalone comparison example. Go only.*
 
@@ -2688,11 +2577,11 @@ func main() {
 // 1000
 ```
 
-Goroutines do **not** prevent data races. A *data race* happens when two goroutines access the same variable at the same time and at least one writes. Remove the `mu.Lock()` and `mu.Unlock()` lines, and `count++` from 1000 goroutines can lose updates. Go ships a race detector: run `go test -race` or `go run -race`, and it reports races it observes while the program runs. It can only catch races that actually happen during that run, so it complements careful design rather than replacing it.
+Without the mutex, `count++` from 1000 goroutines can lose updates: a *data race*. `go test -race` and `go run -race` report races that actually happen during that run, so the detector complements careful design.
 
 ### CPU-bound work
 
-**Python.** The standard CPython build has a *global interpreter lock* (GIL), which lets only one thread execute Python bytecode at a time. Threads still help with I/O, because the lock is released while waiting, and many native libraries (NumPy, for example) release it during heavy computation. For pure-Python CPU work, use processes:
+**Python.** Standard CPython's *global interpreter lock* (GIL) lets one thread run Python bytecode at a time; threads still help with I/O, and native libraries such as NumPy release it. For pure-Python CPU work, use processes:
 
 *Standalone comparison example. Python only.*
 
@@ -2714,33 +2603,25 @@ if __name__ == "__main__":
 # [285, 328350, 332833500]
 ```
 
-Each worker is a separate Python process with its own memory, so arguments and results are copied between processes. The `if __name__ == "__main__":` guard is required here, because on macOS and Windows each worker process imports your file again.
+Workers are separate processes, so data is copied, and the `__main__` guard is required because macOS and Windows workers re-import the file. CPython 3.14 officially supports a separate *free-threaded* build without the GIL (often `python3.14t`), but it is not the default; my images use standard `python:3.x-slim`.
 
-The GIL statement above depends on the build. CPython 3.13 added an optional *free-threaded* build without the GIL, and Python 3.14 made that build officially supported, but it is a separate build (often installed as `python3.14t`), not the default, and some C extensions don't support it yet. My projects' container images use the standard `python:3.x-slim` images.
-
-**Go** needs nothing extra: goroutines already run in parallel, up to `GOMAXPROCS` threads at once. Since Go 1.25, `GOMAXPROCS` defaults to the container's CPU limit on Linux when that limit is lower than the machine's core count.
-
-**TypeScript** depends on the runtime. In Node.js, the main thread runs one piece of JavaScript at a time; CPU-heavy work goes to the `worker_threads` module (or a child process). Browsers use Web Workers. Workers don't share ordinary objects; they exchange messages (and can share memory explicitly through `SharedArrayBuffer`). Deno and Bun also run TypeScript and have their own worker implementations and APIs. "TypeScript concurrency" always means "the concurrency model of whichever JavaScript runtime you use".
+**Go** goroutines already run in parallel, up to `GOMAXPROCS`, which since 1.25 follows a lower container CPU limit on Linux. **TypeScript** depends on the runtime: Node.js runs one piece of JavaScript at a time and moves CPU work to `worker_threads`, browsers use Web Workers, and workers exchange messages rather than objects.
 
 ## Execution, packaging and deployment
 
 ### Python
 
-You run Python source directly with an interpreter. Third-party packages come from PyPI via pip, and the standard advice is to install them into a *virtual environment* (`python -m venv .venv`), an isolated folder of packages per project, so projects don't conflict. Dependencies are listed in `requirements.txt` or in `pyproject.toml`; tools such as uv and Poetry add lock files and faster installs, but they are third-party.
-
-For deployment, you ship the interpreter, your source and your dependencies, usually as a container image. That's what RoboShop's AI gateway does: its `Dockerfile` starts from `python:3.14-slim`, runs `pip install --no-cache-dir -r requirements.txt`, copies the service code, switches to a non-root user and runs `python services/ai-gateway/server.py`. Packages with native code need wheels built for the target platform, which matters when building images for a different CPU architecture.
+Python runs source through an interpreter, with PyPI packages installed by pip into a per-project *virtual environment* and listed in `requirements.txt` or `pyproject.toml` (uv and Poetry add lock files). You ship interpreter, source and dependencies, usually as an image: RoboShop's AI gateway starts from `python:3.14-slim`, installs `requirements.txt`, switches to a non-root user and runs `server.py`. Native packages need wheels for the target CPU.
 
 ### Go
 
-`go build` compiles a package and its dependencies into one executable. Dependencies are declared in `go.mod` and pinned by checksums in `go.sum`; `go mod tidy` keeps both in sync. Cross-compiling is built in: set `GOOS` and `GOARCH`.
+`go build` produces one executable; `go.mod` declares dependencies and `go.sum` pins their checksums. Cross-compiling needs only `GOOS` and `GOARCH`:
 
 ```bash
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o currency-service .
 ```
 
-Whether the result is *statically linked* (no dependence on system C libraries) depends on cgo, Go's mechanism for calling C code. The cgo documentation says it is enabled by default for native builds where a C compiler is available, and disabled by default when cross-compiling. Some standard packages, such as `net` and `os/user`, can use C implementations when cgo is enabled. Setting `CGO_ENABLED=0`, as above, forces pure-Go builds. So "Go binaries are static" is often true, but not automatically.
-
-The RoboShop currency service follows this pattern. Here is its build file:
+A binary is *statically linked* only without cgo, which is on by default for native builds with a C compiler and lets packages such as `net` use C. `CGO_ENABLED=0` forces pure Go. The RoboShop currency service builds this way:
 
 *Actual project code. Repository: roboshop-ai. File: `services/currency-service/Dockerfile`, lines 1–12.*
 
@@ -2759,59 +2640,31 @@ EXPOSE 4111
 ENTRYPOINT ["/usr/local/bin/currency-service"]
 ```
 
-This is a *multi-stage build*. The first stage has the full Go toolchain, runs the tests and compiles. The second stage copies only the binary into a small Alpine image, adds CA certificates (needed for the HTTPS call to the rate feed) and runs as an unprivileged user. `-trimpath` removes local file paths from the binary, and `-ldflags="-s -w"` strips debugging symbols to make it smaller.
-
-I built the service the same way on my Mac with Go 1.27.3 for both Linux architectures. Both binaries were reported as statically linked by `file`; the arm64 binary was 7,078,048 bytes and the amd64 binary 7,626,912 bytes. That's one measurement of one small, standard-library-only service, not a general rule about Go binary sizes.
+In this *multi-stage build*, the first stage tests and compiles, and the second copies only the binary into Alpine with CA certificates for the HTTPS rate feed, running unprivileged; `-trimpath` and `-ldflags="-s -w"` drop local paths and debug symbols. Built with Go 1.27.3, both Linux binaries were static: 7,078,048 bytes for arm64 and 7,626,912 for amd64, for one small standard-library-only service.
 
 ### TypeScript
 
-TypeScript has two separate steps that people often blur: **type checking** and **producing JavaScript**. Depending on the tool, they happen together or separately.
-
-- `tsc` checks types and, unless `noEmit` is set, writes `.js` files.
-- Bundlers and frameworks (Vite, Next.js, esbuild) usually strip types very quickly *without* checking them, so projects run `tsc --noEmit` as a separate step.
-- Node.js 22.18 and later strips types itself and runs `.ts` files directly, without checking. Deno and Bun also run TypeScript directly.
-
-So TypeScript doesn't always need a separate manual compile step, but it always needs a type-check step somewhere if you want the types to mean anything. My three TypeScript projects show three setups:
+**Type checking** and **producing JavaScript** are separate steps. `tsc` checks and, without `noEmit`, writes `.js`; Vite, Next.js and esbuild strip types *without* checking; Node.js 22.18+, Deno and Bun run `.ts` directly, unchecked. So a type-check step must exist somewhere. My three projects:
 
 - **RoboShop storefront**: `scripts/build.mjs` runs `tsc -p tsconfig.json` to emit plain JavaScript into `dist/`, then copies HTML and CSS. nginx serves the result, so no Node.js runs in production.
 - **MOKS web UI**: `"build": "tsc --noEmit && vite build"`. `tsc` checks, then Vite bundles.
 - **jithendar.com**: `"typecheck": "next typegen && tsc --noEmit"`, and Next.js builds a standalone Node.js server that runs on `node:26-alpine`.
 
-Dependencies come from the npm registry and are pinned in `package-lock.json` (or pnpm/Yarn lock files). Packages under `devDependencies`, such as `typescript` itself, are needed only to build.
-
-TypeScript 7.0, released in July 2026, is a native port of the compiler written in Go. It's still installed as the `typescript` npm package and run as `tsc`, but builds are much faster, and some defaults changed (for example, `strict` is now on by default). The RoboShop storefront already uses 7.0.2.
+Dependencies come from npm, pinned in a lock file, with build-only packages such as `typescript` in `devDependencies`. TypeScript 7.0 (July 2026) is a native compiler written in Go, still the `typescript` package and `tsc`, much faster, with `strict` on by default; the RoboShop storefront uses 7.0.2.
 
 ### Containers and configuration
 
-All three languages end up in container images in my projects, configured through environment variables. The differences are in the image contents: a Python image carries an interpreter and packages, a Node.js image carries the runtime and `node_modules`, and a Go image can carry just the binary (plus certificates if it makes TLS calls). In all three, read configuration at startup and fail clearly when something required is missing. The RoboShop gateway does that with `os.getenv('CURRENCY_URL', 'http://currency-service:4111')`, as you will see below.
+In my projects all three ship as container images configured by environment variables: a Python image carries an interpreter and packages, a Node.js image the runtime and `node_modules`, and a Go image can carry just the binary and certificates.
 
 ## Performance and resource usage
 
-I'm not going to give you a benchmark table, because I haven't run a fair one, and numbers from someone else's workload rarely transfer to yours. Here is what actually drives performance for each.
+I have not run a fair benchmark, so here are the drivers instead. **Startup:** a Go binary starts fast; Python and Node.js load an interpreter and modules, which matters for CLIs and short jobs. **Memory:** all three are garbage-collected; Python objects carry overhead, Node.js reserves a heap, Go values are compact, and `GOMEMLIMIT` or `--max-old-space-size` change behaviour inside container limits. **CPU:** Go runs native code in parallel; pure-Python loops are slow, but NumPy and PyTorch compute in native code; JavaScript engines compile hot code just in time, and TypeScript adds no runtime cost. **I/O-heavy APIs** are usually limited by what they wait on, so pooling, timeouts and non-blocking calls matter more than language. **Size:** Go images can be tiny.
 
-**Startup time.** A Go binary starts quickly: it's already compiled to machine code. Python and Node.js start an interpreter or engine, then load modules, which takes longer, especially when an application imports many packages. That matters for command-line tools and short-lived jobs, and much less for long-running services.
-
-**Memory use.** All three use garbage collection. Python objects carry per-object overhead; Node.js reserves a JavaScript heap; Go values are compact, and slices of structs store data contiguously. Each runtime has settings (Go's `GOMEMLIMIT`, Node's `--max-old-space-size`) that change behavior inside container limits. Measure your own service under realistic load.
-
-**CPU-heavy work.** Go compiles to native code and runs goroutines in parallel. Pure-Python loops are slow in comparison, but much serious Python computation runs in native code: NumPy, PyTorch and many parsing libraries do the heavy work in C, C++ or Rust. JavaScript engines compile hot code just in time and can be fast for single-threaded work. TypeScript itself adds no runtime cost, since its runtime performance is the performance of the JavaScript it produces and the engine running it.
-
-**I/O-heavy APIs.** For services that mostly wait on databases and other APIs, all three are usually limited by the things they wait on. What matters more is using async I/O or goroutines correctly, connection pooling, timeouts and avoiding blocking calls on an event loop.
-
-**Developer iteration speed.** Python and TypeScript have no required compile step during development, and Go compiles quickly. Static types (Go, TypeScript, or Python with a type checker) slow down the first draft a little and speed up refactoring a lot.
-
-**Deployment size.** Go binaries are self-contained, so images can be small. Python and Node.js images include a runtime and dependencies, and size depends heavily on what you install.
-
-**How to benchmark fairly:**
-
-1. Implement the *same* workload with the same algorithm and data, and check that all versions produce identical output.
-2. Use each language's benchmarking tools: Python's `timeit` (or the third-party `pyperf`), Go's `testing.B` benchmarks run with `go test -bench` (`b.Loop()` since Go 1.24), and a dedicated benchmark tool for Node.js. For whole programs, measure wall time across many runs with a tool such as `hyperfine`.
-3. Warm up first (JavaScript's JIT compiler needs time), run many iterations and report the spread, not just the best number.
-4. Use the versions and build modes you deploy, on hardware like production, with the same container CPU and memory limits.
-5. Measure what you care about: latency percentiles and memory for services, total time for batch jobs.
+To benchmark fairly, implement the same algorithm with identical output, use each language's tools (`timeit` or `pyperf`, `go test -bench`, a Node benchmark tool, `hyperfine` for whole programs), warm up the JIT, report the spread, and measure with production versions, hardware and container limits.
 
 ## Testing and maintainability
 
-Here is the same tiny function, which turns a tag like `"  Hello World "` into `"hello-world"`, with a table of test cases in each language's common test style.
+The same function, turning `"  Hello World "` into `"hello-world"`, with table-driven tests in each language's common style:
 
 *Standalone comparison example. Test example.*
 
@@ -2894,11 +2747,7 @@ describe("normalizeTag", () => {
 
 Run them with `python -m pytest -q`, `go test ./...` and `npx vitest run`.
 
-- **pytest** is third-party, but it's the common choice: test files are named `test_*.py`, tests are plain functions, and the plain `assert` statement shows useful detail when it fails. MOKS uses pytest. The standard library's `unittest` also works; RoboShop's AI gateway tests use `unittest`.
-- **Go's `testing` package** is part of the standard toolchain. Files ending in `_test.go` hold `TestXxx(t *testing.T)` functions, and the *table-driven* style above is the usual Go idiom. There is no assertion library in the standard library; you compare values and call `t.Errorf`.
-- **Vitest** is a third-party framework with a Jest-compatible API. jithendar.com and MOKS use Vitest; the RoboShop storefront uses Node's built-in `node:test` runner.
-
-A small detail in the TypeScript version: JavaScript's `split(/\s+/)` on a string with leading spaces returns an empty first element, so `filter(Boolean)` removes empty strings. Python's `split()` with no argument and Go's `strings.Fields` handle this for you.
+**pytest** (third-party, used by MOKS) runs plain functions with plain `assert`; RoboShop's gateway uses the standard `unittest`. **Go's `testing`** ships with the toolchain: `TestXxx(t *testing.T)` in `_test.go` files, no assertion library, `t.Errorf` on mismatch. **Vitest** (jithendar.com, MOKS) has a Jest-style API; the RoboShop storefront uses `node:test`. JavaScript's `split` leaves an empty first element for leading spaces, hence `filter(Boolean)`.
 
 **Tooling for maintainability:**
 
@@ -2909,9 +2758,7 @@ A small detail in the TypeScript version: JavaScript's `split(/\s+/)` on a strin
 | Type checking | third-party: mypy, Pyright | the compiler | the compiler (`tsc`) |
 | Dependency updates | pip, uv or Poetry; Dependabot | `go get -u`, `go mod tidy`; Dependabot | npm, pnpm; Dependabot |
 
-Go's advantage is that its essential tools ship with the language, so every Go project looks alike. Python and TypeScript projects need more decisions up front. In my repositories, none of the Python projects configure a linter or type checker; the TypeScript projects run `tsc` and ESLint (jithendar.com) as part of their scripts.
-
-On readability: Go optimizes for code that looks the same everywhere and hides little. Python optimizes for short, readable code and gives you powerful features (decorators, metaclasses, dynamic attributes) that can make code harder to follow if overused. TypeScript's type system is very expressive; that helps model real data, but complex generic and conditional types can become hard to read.
+Go's essential tools ship with the language, so Go projects look alike; Python and TypeScript need choices up front. None of my Python projects configures a linter or type checker; the TypeScript ones run `tsc`, and jithendar.com also ESLint. Go hides little, Python's dynamic features can obscure code when overused, and TypeScript's expressive types can become hard to read.
 
 ## Real examples from my projects
 
@@ -2921,7 +2768,7 @@ The best real example I found is in RoboShop AI, where one piece of data, the cu
 2. The **TypeScript** storefront in the browser fetches those rates through nginx to show estimated local prices.
 3. The **Python** AI gateway fetches the same rates to produce a signed checkout quote in INR.
 
-The repository README explains *what* this design does. It doesn't record why each part is written in a particular language, so I won't invent reasons. What I can show is how each language's features appear in the code.
+The README records *what* this design does, not why each language was chosen, so the sections below show only how each language's features appear.
 
 ### Go: the currency rate service
 
@@ -2980,7 +2827,7 @@ func (c *rateCache) run(ctx context.Context) {
 }
 ```
 
-This uses most of the Go concurrency vocabulary from earlier: a `context.Context` for cancellation, a `select` waiting on two channels (the context's `Done` channel and the ticker's channel), and returned errors handled with `if err != nil`. A failed refresh is logged with the standard library's structured logger `log/slog` and the old cache is kept. `main` starts this loop with `go cache.run(ctx)`, where `ctx` comes from `signal.NotifyContext`, so a SIGTERM from Kubernetes stops it. Inside `refresh`, `context.WithTimeout(ctx, 5*time.Second)` bounds each download.
+It uses the vocabulary from earlier: a `context.Context`, a `select` on the context's `Done` and the ticker channels, and `if err != nil`. A failed refresh is logged with `log/slog` and the old cache kept; `main` starts the loop with `go cache.run(ctx)` under `signal.NotifyContext`, so Kubernetes' SIGTERM stops it, and `context.WithTimeout` bounds each download to 5 seconds.
 
 The concurrency is also tested:
 
@@ -3011,9 +2858,7 @@ func TestConcurrentRefreshAndRequests(t *testing.T) {
 }
 ```
 
-Fifty goroutines refresh and read at the same time. The HTTP client gets a fake `Transport` (a function type that satisfies the `http.RoundTripper` interface), so the test never contacts the real feed. `httptest.NewRecorder` captures the handler's response without starting a server. On its own, this test only proves nothing crashes; run with `-race`, as the service README and its CI workflow do, it also checks for data races. I ran `go vet`, `gofmt -l` and `go test -race -count=1 ./...` on this service with Go 1.27.3, and all eight tests passed.
-
-**What this shows about Go:** a small standard-library-only service (its `go.mod` has no dependencies) with an HTTP server, JSON, XML parsing, structured logging, metrics and tests, all from the standard library, built into one binary.
+Fifty goroutines refresh and read at once, with a fake `Transport` (satisfying `http.RoundTripper`) instead of the real feed and `httptest.NewRecorder` instead of a server. Under `-race`, as in the README and CI, it also checks for data races; `go vet`, `gofmt -l` and `go test -race -count=1 ./...` passed all eight tests with Go 1.27.3. The whole service, with HTTP, JSON, XML, logging, metrics and tests, uses only the standard library.
 
 ### TypeScript: the storefront's rate loader
 
@@ -3052,9 +2897,7 @@ export async function loadCurrencyRates(): Promise<Fx> {
 }
 ```
 
-The same `fetch` + `AbortSignal.timeout` + `response.ok` pattern as the earlier HTTP example, plus browser-only APIs (`Intl`, `navigator`). It throws on failure, and callers wrap it in `try`/`catch` and fall back to original prices.
-
-The `Fx` type is written by hand to match the Go struct, and comparing them shows a small mismatch: Go always sends `suggestedCurrency`, as `null` when there's no suggestion, but the TypeScript type says `suggestedCurrency?: string`, which allows `undefined` but not `null`. The code is safe, because it reads the value as `fx?.suggestedCurrency || ''`, which treats `null` like an empty string. It's a good illustration of the cost of hand-mirrored types across a language boundary: nothing checks that the two definitions agree.
+The same `fetch`, `AbortSignal.timeout` and `response.ok` pattern as earlier, plus browser-only `Intl` and `navigator`; callers catch failures and fall back to original prices. The hand-written `Fx` type has a small mismatch with the Go struct: Go sends `suggestedCurrency: null`, but the type says `suggestedCurrency?: string`. The code is safe (`fx?.suggestedCurrency || ''`), but nothing checks that hand-mirrored types agree.
 
 ### Python: the gateway's checkout quote
 
@@ -3079,9 +2922,7 @@ The gateway calls the Go service from Python and converts with `Decimal`:
             raise HttpError(503, 'Currency quote unavailable. Please retry later. Payments require a valid INR quote.')
 ```
 
-This is very Python: the JSON is a plain `dict` accessed with `data['asOf']`, and instead of checking every field in advance, the code just tries the work and catches the exceptions that bad data would cause (a missing key raises `KeyError`, a malformed date raises `ValueError`). Any of them becomes a single HTTP 503 error. `Decimal(str(...))` converts the JSON float through its string form, so the rate is used as written rather than as its binary floating-point approximation. Chained comparisons such as `0 <= age <= 7` are a Python feature the other two languages don't have.
-
-Notice that the Python side repeats the Go service's freshness and range checks. Each service validates the data it receives instead of trusting the other side.
+Very Python: a plain `dict`, and instead of checking fields first, it tries the work and turns `KeyError` or `ValueError` into one HTTP 503. `Decimal(str(...))` uses the rate as written, not its binary approximation, and `0 <= age <= 7` is a chained comparison the others lack. The gateway repeats the Go service's freshness and range checks instead of trusting it.
 
 ### TypeScript: runtime validation with Zod on jithendar.com
 
@@ -3113,15 +2954,15 @@ export const articleFrontmatter = z
     corrections: z.array(z.strictObject({ date: isoDateTime, note: z.string().min(1) })).default([]),
 ```
 
-`strictObject` rejects unknown keys, `.min(50).max(160)` enforces lengths, and `.transform` normalizes tags while parsing. Zod can derive the TypeScript type from this schema, so the compile-time type and the runtime rules can't drift apart. Compare that with the hand-written `Fx` type above. This very article's front matter has to pass this schema.
+`strictObject` rejects unknown keys, `.min(50).max(160)` enforces lengths and `.transform` normalizes tags. Zod derives the TypeScript type from the schema, so type and rules cannot drift, unlike the hand-written `Fx`. This article's front matter must pass it.
 
 ### What the projects show, and what they don't
 
-Observed in the code: Go handles a small, long-running network service with shared state and background work using only its standard library; Python handles business logic with exact decimal arithmetic and exception-based validation; TypeScript runs in the browser, where it is the only one of the three that runs natively. The repositories don't document why these languages were chosen, and the currency service is too small to say anything about how Go would compare for the larger services.
+In short: Go runs a small long-lived service with shared state using only its standard library, Python handles exact decimal business logic with exception-based validation, and TypeScript runs in the browser, where it alone runs natively. The currency service is too small to say how Go would compare for larger services.
 
 ## Can all three work together?
 
-Yes, and RoboShop is a working example. The boundary between the languages is HTTP and JSON, so no service knows or cares what language the others use.
+Yes; in RoboShop the boundary is HTTP and JSON, so no service knows the others' language.
 
 *Simplified from project code. Based on `services/web/nginx/snippets/routes.conf`, `services/ai-gateway/currency_quote.py` and `services/currency-service/README.md` in roboshop-ai.*
 
@@ -3151,17 +2992,9 @@ location = /api/currency/rates {
 }
 ```
 
-Only `GET` is allowed, cookies and authorization headers are stripped before reaching the rate service, and timeouts are short. The comment says the service is optional: if it's down, the storefront still works and shows original prices.
+Only `GET` passes, cookies and authorization headers are stripped, timeouts are short, and the service is optional: if it is down, the storefront shows original prices. A multi-language boundary needs a **contract** (here the `/rates` JSON, mirrored by hand; a shared OpenAPI, JSON Schema or Protobuf schema prevents drift), **validation on every side**, **timeouts and fallbacks** (2.5 s browser, 2 s nginx, 3 s gateway, 5 s upstream), **consistent observability** (the Go `metrics.go` uses "the same series names as the Python and Node services", and requests carry `traceparent`), and **messaging** for work that can wait (RoboShop has RabbitMQ and Kafka, unused by this flow).
 
-What a multi-language system needs at its boundaries:
-
-- **A contract.** Here the contract is the JSON shape of `/rates`, defined by the Go struct and mirrored by hand in TypeScript and in Python dictionary access. For larger systems, a shared schema (OpenAPI, JSON Schema or Protocol Buffers) that generates types for each language prevents the drift shown earlier.
-- **Validation on every side.** Each consumer here checks freshness and value ranges itself.
-- **Timeouts and failure behavior.** 2.5 seconds in the browser, 2 seconds in nginx, 3 seconds in the gateway, 5 seconds for the Go service's upstream call, and a defined fallback for each failure.
-- **Observability.** RoboShop's README and code show consistent conventions across languages: the Go service's `metrics.go` uses "the same series names as the Python and Node services so one Grafana query covers every service", and requests carry W3C `traceparent` headers.
-- **Messaging, when calls shouldn't wait.** HTTP fits request/response lookups like this one. For work that can happen later, a queue or event stream decouples the services. RoboShop also includes RabbitMQ and a Kafka bridge for that kind of traffic, but the currency flow doesn't use them.
-
-The cost is real: each language brings its own toolchain, base images, dependency updates, security advisories, test setup and CI workflow, and its own expertise the team must maintain. A good architecture doesn't need three languages. Many excellent systems use one. Add a second or third language when it solves a specific problem (it runs where nothing else can, as in the browser, or a library or workload clearly favors it), not for variety.
+Each language adds a toolchain, base images, updates, advisories, tests, CI and expertise to maintain. Many excellent systems use one language; add another only for a specific need, such as the browser or a library the workload clearly favors.
 
 ## Which language should you choose?
 
@@ -3179,21 +3012,9 @@ These are starting points, not rules. Team experience and existing code often ma
 | Concurrent network services | Go | Python `asyncio` or Node.js for I/O-bound services, especially with existing code | Whether the work is I/O- or CPU-bound; operational experience |
 | Small-team maintainability | The one language the team already knows best | A second language only for a clear need, such as TypeScript in the browser | Every extra language adds toolchains, CI and upgrade work |
 
-## Learning one after another
-
-**Python developers learning Go.** Expect to write more lines, and accept it. Habits that don't transfer: relying on exceptions (check `err` every time), relying on truthiness (write `len(x) == 0`), expecting default arguments, and expecting `append` to modify a slice in place. Learn zero values, the difference between value and pointer receivers, and that maps must be created before writing (`map[string]int{}` or `make`). Run `gofmt`, `go vet` and `go test -race` from the start.
-
-**Python developers learning TypeScript.** Syntax will feel familiar; runtime behavior won't. Use `===` always. Remember that empty arrays are truthy, `sort()` compares strings, and `undefined` and `null` both exist. Most importantly, types are a compile-time promise only: validate external data (with a library such as Zod) instead of using `as`. Turn on `strict`.
-
-**TypeScript developers learning Go.** Go's `any` is like your `unknown`, not your `any`. Interfaces only contain methods and are satisfied implicitly. There are no union types, so use interfaces, separate fields or a `switch` on a type. Concurrency is not single-threaded anymore: shared data needs a mutex or a channel, and the race detector is your friend. Errors are values, not exceptions.
-
-**TypeScript developers learning Python.** Indentation is syntax. Type hints are optional and unchecked at runtime, so run mypy or Pyright if you want TypeScript-like feedback, and use Pydantic or dataclasses with validation for external data. Watch for mutable default arguments, and remember that `async` in Python requires an explicitly started event loop (`asyncio.run`).
-
-**Go developers learning Python or TypeScript.** You lose compile-time guarantees unless you add a type checker; add one. Exceptions can come from almost any call, so decide where to catch them. Standard tooling isn't included: pick a formatter, linter and test framework early and enforce them in CI. In TypeScript, there's no goroutine-style parallelism: CPU-heavy work on the main thread blocks everything else.
-
 ## Practice exercises
 
-Try each exercise in the language you know, then in one you're learning. The requirements and expected output are identical for all three languages. Suggested solutions follow the exercises.
+Try each in the language you know, then one you are learning; the expected output is identical in all three.
 
 **Exercise 1: Transform and summarize a collection.** Given three orders, with amounts in integer cents:
 
@@ -3361,7 +3182,7 @@ console.log(
 // statuses: paid=2 refunded=1
 ```
 
-Money stays in integer cents until it's printed, which avoids the floating-point problem from earlier. Python's comprehensions and `Counter` make the code short; Go uses one explicit loop; TypeScript chains `filter` and `reduce`.
+Money stays in integer cents until printed. Python uses comprehensions and `Counter`, Go one loop, TypeScript `filter` and `reduce`.
 
 ### Solution 2: Validate structured input
 
@@ -3497,7 +3318,7 @@ for (const raw of inputs) {
 // errors: email is required; age must be between 13 and 120
 ```
 
-Each solution decodes into a loose structure (`dict`, `map[string]any`, `Record<string, unknown>`) so it can report *every* problem. Decoding straight into a Go struct with `Age int` would stop at the first type error. Watch the language-specific traps: Python's `bool` is an `int`, Go decodes numbers as `float64`, and TypeScript needs `typeof` checks because `unknown` forces you to narrow.
+Each decodes into a loose structure so it can report *every* problem (a Go struct with `Age int` would stop at the first). Traps: Python's `bool` is an `int`, Go decodes numbers as `float64`, and `unknown` forces `typeof` checks.
 
 ### Solution 3: Process a mocked API response
 
@@ -3611,7 +3432,7 @@ console.log("more pages:", page.next === null ? "no" : "yes");
 // more pages: no
 ```
 
-Go models the nullable `next` field as `*string`, just like the currency service's `SuggestedCurrency`. Python's `TypedDict` and TypeScript's interface both describe the JSON for the type checker without validating it, so in real code you would combine them with the validation approach from Solution 2.
+Go models the nullable `next` as `*string`, like `SuggestedCurrency`. `TypedDict` and the TypeScript interface describe the JSON without validating it, so combine them with Solution 2's approach in real code.
 
 ## Quick reference
 
@@ -3636,12 +3457,6 @@ Go models the nullable `next` field as `*string`, just like the currency service
 | Tests | pytest or `unittest` | `testing`, `go test` | Vitest, Jest, `node:test` | Go's test tool is part of the toolchain |
 | Formatting | Black, Ruff | `gofmt` (standard) | Prettier, Biome | Only Go has one standard style |
 | Dependencies | pip + venv, `pyproject.toml` | `go.mod`, `go.sum` | npm, `package.json` + lock file | Go pins with checksums by default |
-
-## How these examples were checked
-
-Every **Standalone comparison example** was extracted from this article and run by a script in the site's repository, `docs/knowledge-sharing/python-vs-go-vs-typescript/verify_examples.py`. It compares each program's output with its `Output:` comment and checks that examples labeled "same output" print identical text in all three languages. Python ran on CPython 3.11.9 and was type-checked with mypy; lines marked "a type checker flags this line" must produce an error, and no other line may. Go ran on Go 1.27.3 with the race detector, and every Go file passed `gofmt` and `go vet`; the Go example that should not compile must fail with the error shown. TypeScript ran on Node.js 26.13.0 and was type-checked with `tsc` in strict mode, using TypeScript 6.0.3 and 7.0.2. The test examples ran under pytest, `go test` and Vitest. The HTTP examples used a local mock server on 127.0.0.1. Each **Actual project code** excerpt is compared line by line with the file at the commit listed in the sources.
-
-The project's own Go tests (`go vet`, `gofmt -l` and `go test -race` for the currency service) were run on a copy of the service at commit c81e85a. The project's Python and TypeScript test suites were not run for this article.
 
 *This article was drafted with AI assistance and checked against the source code and official documentation listed in the sources.*
 

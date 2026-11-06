@@ -60,26 +60,18 @@ sources:
     url: https://github.com/mrjithendar/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b
     publisher: GitHub
 ---
-<Todo>Written on 2026-11-03 against jithendar.com dc249e8, moks ef6908a and roboshop-ai c81e85a. Suggested SEO title, excerpt and keywords are in docs/knowledge-sharing/python-vs-typescript/README.md. Before publishing: (1) choose the category (no existing category fits a language comparison well; ai-engineering is a placeholder); (2) the title says "When I Use Each", but the repositories do not record why each language was chosen, so the article describes where each language is used, not why. Add your reasons in "Where each language runs in my projects" if you want to state them; (3) rerun docs/knowledge-sharing/python-vs-typescript/verify_examples.py if you edit any example; (4) add your own commentary, confirm the AI-assistance line against the AI use policy, then set status and publishedAt.</Todo>
-
 ## Python vs TypeScript: the short answer
 
-**Python** is a general-purpose programming language. You run Python code with an interpreter, usually CPython, which reads your `.py` files and executes them directly.
+**Python** is a general-purpose language run by an interpreter, usually CPython. **TypeScript** is JavaScript with a type system: every JavaScript program is valid TypeScript, and `tsc` checks annotations such as `name: string` before the code runs. Two facts shape everything here:
 
-**TypeScript** is JavaScript with a type system added on top. Every JavaScript program is also valid TypeScript syntax, and TypeScript adds type annotations such as `name: string`. A tool called the TypeScript compiler (`tsc`) checks those annotations and finds mistakes before the code runs.
+1. **TypeScript types are erased.** A build tool removes them, and the handbook says "Type annotations never change the runtime behavior of your program."
+2. **Python type hints are not enforced.** `add("2", "3")` runs despite `def add(a: int, b: int) -> int`; as the docs say, "The Python runtime does not enforce function and variable type annotations."
 
-Two facts shape everything else in this article:
-
-1. **TypeScript types are erased.** Browsers and Node.js run JavaScript, so a build tool removes the type annotations before the code runs. The TypeScript handbook puts it plainly: "Type annotations never change the runtime behavior of your program." At runtime, TypeScript code behaves exactly like JavaScript.
-2. **Python type hints are not enforced at runtime.** Python lets you write `def add(a: int, b: int) -> int`, but the interpreter will still call `add("2", "3")` without complaint. The Python documentation says: "The Python runtime does not enforce function and variable type annotations." Separate tools, called type checkers, read the hints.
-
-So both languages let you describe types, and in both cases a separate tool checks them. The difference is where the check usually happens. TypeScript projects typically run the checker as part of the build. Python projects often treat the checker as optional.
-
-Neither language is better in general. Each has a runtime, an ecosystem and habits that suit some jobs more than others. This Python vs TypeScript comparison is mostly about those details, with runnable examples in both languages and real code from my own projects.
+In both, a separate tool checks the types. TypeScript projects usually run it in the build; Python projects often treat it as optional. Neither language is better in general. This comparison shows the details that differ, with runnable examples and real code from my projects.
 
 ## Where each language runs in my projects
 
-Before comparing syntax, here is what the three repositories actually contain. I counted tracked source files at the commits named in the sources list, test files included.
+Tracked source files at the commits in the sources list, tests included:
 
 | Repository | Python | TypeScript | Other languages |
 | --- | --- | --- | --- |
@@ -98,13 +90,11 @@ And the versions each part runs on:
 | RoboShop AI Python services | Python 3.14 (the Kafka bridge uses 3.13) | varies by service | `services/*/Dockerfile` |
 | RoboShop AI storefront | TypeScript 7.0.2 | none: `tsc` compiles to plain JavaScript served by nginx | `services/web/frontend/package.json` |
 
-A pattern shows up. In all three projects, the code that runs in a browser is TypeScript. The services that run models, call cloud SDKs or run learners' Python code are Python. RoboShop AI also shows that "Node.js service" does not mean "TypeScript": its catalogue and payment services are plain JavaScript `.mjs` files.
-
-The repositories record *what* each part uses, not *why* it was chosen, so I will not invent reasons here. The project examples section below looks at real code from each project.
+In all three projects, browser code is TypeScript, and services that run models, call cloud SDKs or run learners' Python code are Python. RoboShop AI's catalogue and payment services show that "Node.js service" does not mean TypeScript: they are plain `.mjs`. The repositories record *what* each part uses, not *why*, so I do not invent reasons.
 
 ## Python and TypeScript similarities: what do they have in common?
 
-If you know one of these languages, you already know most of the ideas in the other. The names and punctuation change, but the concepts carry over.
+If you know one of these languages, you already know most of the ideas in the other:
 
 | Shared idea | Python | TypeScript |
 | --- | --- | --- |
@@ -122,7 +112,7 @@ If you know one of these languages, you already know most of the ideas in the ot
 | Packages | PyPI, installed with `pip` | npm registry, installed with `npm` |
 | Typical jobs | APIs, automation, data, machine learning, AI services | Browser UIs, full-stack web apps, APIs, automation, AI apps |
 
-Here is one small task in both languages, to show how close they can look. Given a list of orders, it keeps the paid ones and adds up their amounts.
+One small task in both, keeping paid orders and adding up their amounts:
 
 *Standalone comparison example. Same output in both languages.*
 
@@ -167,34 +157,26 @@ console.log(`${paid.length} paid orders, total ${total}`);
 // 2 paid orders, total 25
 ```
 
-The structure is the same: a collection of records, a filter, a sum and a formatted string. Both versions also name the shape of an order: TypeScript with a `type`, and Python with a `TypedDict`. Neither is required to run the code, but without them a type checker cannot tell that `amount` is a number. The type systems section explains both.
+Same structure; both name the order's shape (`type` and `TypedDict`), which the code does not need to run but a type checker does.
 
 ## How to run the examples
 
-Every Python vs TypeScript example marked **Standalone comparison example** is complete and runnable. Each one ends with an `Output:` comment showing what it prints. I ran every one of them, and the checker script is described at the end of the article.
+Every **Standalone comparison example** is complete and ends with an `Output:` comment. **Same output in both languages** means identical text; **Same values; the printed format differs** means, for example, `[1, 2]` versus `[ 1, 2 ]`; **The outputs differ on purpose** marks a behaviour difference. Project code is labelled **Actual project code** or **Simplified from project code**. A script in the site's repository, `docs/knowledge-sharing/python-vs-typescript/verify_examples.py`, runs every example on CPython 3.11 and Node.js 26, type-checks with mypy and with `tsc` 6.0.3 and 7.0.2 in strict mode, and compares project excerpts with the cited commits.
 
-The labels mean:
+**Python.** Run `python3 example.py` (3.11 or later). Two examples need `python3 -m pip install pydantic` in a virtual environment.
 
-- **Same output in both languages**: the two programs print exactly the same text.
-- **Same values; the printed format differs**: the results match, but Python and Node.js print them differently, for example `[1, 2]` and `[ 1, 2 ]`.
-- **The outputs differ on purpose**: the example exists to show a behavior difference.
-
-The project examples section also uses **Actual project code** (copied exactly from a repository) and **Simplified from project code** (shortened, with the change explained).
-
-**Python.** Save the code as `example.py` and run `python3 example.py`. The examples use syntax that works on Python 3.11 and later, which covers the 3.12, 3.13 and 3.14 versions my projects run. Two examples need a package: install it with `python3 -m pip install pydantic` inside a virtual environment (the build and packaging section explains these).
-
-**TypeScript.** Save the code as `example.ts`. Node.js 22.18 and later can run a `.ts` file directly with `node example.ts`, because Node removes the type annotations before running the code. Node does **not** check the types, though. To check them, install TypeScript and run the compiler without producing output files:
+**TypeScript.** Node.js 22.18+ runs `node example.ts` by removing the types, but does **not** check them. To check:
 
 ```bash
 npm install --save-dev typescript @types/node
 npx tsc --noEmit --strict --target es2022 --module nodenext example.ts
 ```
 
-Node's built-in type stripping supports only TypeScript syntax that can be erased. Enums, namespaces with runtime code and constructor parameter properties need a real compiler, so the examples avoid them. One example needs Zod: `npm install zod`.
+Type stripping supports only erasable syntax, so the examples avoid enums, runtime namespaces and parameter properties. One example needs `npm install zod`.
 
 ## Python vs TypeScript examples, side by side
 
-The topics go from simple to more involved, starting with printing a line and ending with calling an API. Each one has a Python block, a TypeScript block, and three short notes: the shared idea, the important difference, and a common mistake when you switch languages.
+From printing a line to calling an API, each topic has a Python block, a TypeScript block, the important difference and a common mistake when you switch.
 
 ### Printing output
 
@@ -218,9 +200,7 @@ console.log("Total:", 3);
 // Total: 3
 ```
 
-**Shared idea.** Both functions write a line of text and put a space between multiple arguments.
-
-**Difference.** `print` is a built-in Python function. `console.log` comes from the JavaScript runtime. In Node.js it writes to the terminal, but in a browser it writes to the developer tools console, not the page.
+**Difference.** `print` is built in; `console.log` comes from the runtime and, in a browser, writes to the developer console, not the page.
 
 **Common mistake.** Expecting `console.log` to show a list the way Python does. Node prints `[ 1, 2 ]` with inner spaces, and prints objects in its own format. Use `JSON.stringify(value)` when you need a predictable string.
 
@@ -254,9 +234,7 @@ console.log(name, age, isAdmin, nothing);
 // Ada 37 false null
 ```
 
-**Shared idea.** A variable is a name that refers to a value.
-
-**Difference.** Python creates a variable the first time you assign to it. TypeScript declares it with `const` (cannot be reassigned) or `let` (can be reassigned). `const` stops reassignment, not changes: a `const` array can still grow. Python has no `const`. By convention, `UPPER_CASE` names are treated as constants. Python also writes `True`, `False` and `None` with capital letters.
+**Difference.** Python creates a variable on first assignment and marks constants only by `UPPER_CASE` convention. TypeScript declares with `const` (no reassignment, though a `const` array can still grow) or `let`.
 
 **Common mistake.** Assigning to a name you never declared in TypeScript. In an ES module that is a `ReferenceError`, and `tsc` reports it first. Moving the other way, people bring `camelCase` into Python, where the convention is `snake_case`.
 
@@ -292,9 +270,7 @@ console.log("a,b,c".split(",").join(" | "));
 // a | b | c
 ```
 
-**Shared idea.** Strings cannot be changed in place in either language. Methods such as `upper()` and `toUpperCase()` return a new string.
-
-**Difference.** Python interpolates with f-strings, `f"{name}"`. JavaScript uses template literals in backticks, `` `${name}` ``. Python's `len()` is a function, while JavaScript's `.length` is a property. Length also counts different things: `len("😀")` is 1 in Python, but `"😀".length` is 2 in JavaScript, because JavaScript counts UTF-16 code units.
+**Difference.** f-strings versus backtick template literals; `len()` versus `.length`, which counts UTF-16 units, so `"😀".length` is 2 where `len("😀")` is 1.
 
 **Common mistake.** Writing `"${name}"` in ordinary double quotes in TypeScript, which prints the literal text `${name}`. In Python, the mirror mistake is forgetting the `f` prefix.
 
@@ -324,9 +300,7 @@ console.log(0.1 + 0.2);
 // 0.30000000000000004
 ```
 
-**Shared idea.** The operators look the same, and `/` gives a fractional result in both. Both use the same 64-bit floating-point format for decimals, which is why `0.1 + 0.2` prints the same slightly-off value.
-
-**Difference.** Python has separate `int` and `float` types, plus a floor-division operator, `//`. JavaScript has one `number` type for both, so you round explicitly with `Math.floor` or `Math.trunc`. The runtime behaviors section shows where this matters: negative numbers and very large integers.
+**Difference.** Python has `int`, `float` and floor division `//`; JavaScript has one `number`, so you round with `Math.floor` or `Math.trunc`.
 
 **Common mistake.** Expecting `//` to exist in TypeScript. In JavaScript, `//` starts a comment.
 
@@ -362,9 +336,7 @@ console.log(1 < 3 && 3 < 5);
 // true
 ```
 
-**Shared idea.** Both languages short-circuit. `or` and `||` return the first value that counts as true, which is why both print `guest` rather than a boolean.
-
-**Difference.** Python spells the operators `and`, `or` and `not`. JavaScript uses `&&`, `||` and `!`. Python also allows chained comparisons such as `1 < 3 < 5`.
+**Difference.** `and`/`or`/`not` versus `&&`/`||`/`!`; both short-circuit and return the first truthy value. Python also chains comparisons (`1 < 3 < 5`).
 
 **Common mistake.** Writing a chained comparison in JavaScript. `5 > 3 > 1` is evaluated as `(5 > 3) > 1`, which is `true > 1`, which is `false`. TypeScript rejects comparing a boolean with a number, so `tsc` catches it, but plain JavaScript does not.
 
@@ -407,9 +379,7 @@ console.log("A docstring documents the function.");
 // A docstring documents the function.
 ```
 
-**Shared idea.** Both have line comments and a documentation-comment style that editors show on hover.
-
-**Difference.** In Python, **indentation is syntax**: the indented lines after `if n > 0:` are the block. TypeScript uses braces `{ }`, and indentation is only for people. A Python docstring is a real string, readable at runtime as `describe.__doc__`. A JSDoc comment is just a comment, so the TypeScript version has to print the text itself. That line is an unavoidable difference.
+**Difference.** In Python **indentation is syntax**; TypeScript uses braces. A docstring is a real string (`describe.__doc__`), while JSDoc is only a comment, so the TypeScript version prints its text itself.
 
 **Common mistake.** Mixing tabs and spaces in Python, or mis-indenting one line so it falls outside a block. In TypeScript, forgetting braces on a multi-line `if` means only the first line is conditional.
 
@@ -443,9 +413,7 @@ console.log(nums.slice(1, 3));
 // [ 2, 3 ]
 ```
 
-**Shared idea.** An ordered, growable collection, indexed from 0, that can be sorted in place.
-
-**Difference.** Python supports negative indexes, `nums[-1]`, and slices, `nums[1:3]`. JavaScript uses `.at(-1)` and `.slice(1, 3)`, because `nums[-1]` is simply `undefined`.
+**Difference.** Python's `nums[-1]` and `nums[1:3]` are `.at(-1)` and `.slice(1, 3)` in JavaScript, where `nums[-1]` is `undefined`.
 
 **Common mistake.** Calling `.sort()` with no comparison function on numbers in JavaScript. It sorts as text, so `[10, 9, 1].sort()` gives `[1, 10, 9]`. Python sorts numbers numerically.
 
@@ -494,9 +462,7 @@ console.log(counts.get(2), counts.size, counts.has(1));
 // two 2 true
 ```
 
-**Shared idea.** Key-value lookup that keeps insertion order. Python guarantees order for `dict`. JavaScript keeps insertion order for string keys and for every `Map`.
-
-**Difference.** A Python `dict` accepts any hashable key: strings, numbers, tuples. A JavaScript object is two things at once, a record with known fields and a string-keyed dictionary, and it converts other keys to strings: `obj[1]` and `obj["1"]` are the same entry. `Map` is JavaScript's real dictionary: it keeps key types and has `.size`, `.get` and `.has`.
+**Difference.** A `dict` takes any hashable key and keeps insertion order. A JavaScript object is both record and string-keyed dictionary, so `obj[1]` and `obj["1"]` are the same entry; `Map` is the real dictionary, keeping key types.
 
 **Common mistake.** Using a plain object as a general dictionary with non-string keys. Another one: in JavaScript, `"toString" in {}` is `true`, because `in` also checks inherited properties. `Object.hasOwn(obj, key)` checks only the object itself.
 
@@ -533,9 +499,7 @@ console.log([...tags].filter((tag) => wanted.has(tag)).join(", "));
 // ai
 ```
 
-**Shared idea.** A collection of unique values with fast membership tests.
-
-**Difference.** Python has set operators: `&` (intersection), `|` (union) and `-` (difference). Recent JavaScript runtimes, Node 26 included, add methods such as `tags.intersection(other)`, but TypeScript only knows about them when your `lib` setting includes ES2025 or `esnext`. The filter shown works everywhere. Uniqueness also works differently. A Python set compares tuples by value. A JavaScript `Set` compares arrays and objects by identity, so `new Set([[1], [1]]).size` is 2.
+**Difference.** Python has `&`, `|` and `-`; Node 26 has `tags.intersection(other)`, which TypeScript knows only with an ES2025 or `esnext` `lib`. A JavaScript `Set` compares arrays and objects by identity, so `new Set([[1], [1]]).size` is 2.
 
 **Common mistake.** Putting a list in a Python set, which raises `TypeError: unhashable type: 'list'`. Use a tuple instead.
 
@@ -573,9 +537,7 @@ console.log(fixed);
 // [ 10, 4 ]
 ```
 
-**Shared idea.** A fixed-size group of values, often returned from a function and unpacked into variables.
-
-**Difference.** A Python tuple is its own runtime type, and it is immutable: the interpreter refuses the assignment. A TypeScript tuple type such as `[number, number]` is just a description of an ordinary JavaScript array. Even `readonly` exists only for the type checker. I silenced the error with `@ts-expect-error` (a comment that tells `tsc` an error is expected on the next line), and at runtime the "read-only" tuple changed.
+**Difference.** A Python tuple is an immutable runtime type. A TypeScript tuple type describes an ordinary array, and `readonly` exists only for the checker: with the error silenced by `@ts-expect-error`, the "read-only" tuple changed at runtime.
 
 **Common mistake.** Treating a TypeScript tuple like a Python tuple as a dictionary key or set member. Python tuples are hashable and compare by value. JavaScript arrays are compared by identity.
 
@@ -622,9 +584,7 @@ console.log(label);
 // pass
 ```
 
-**Shared idea.** `if`, an else-if chain and `else`, plus a one-line conditional expression.
-
-**Difference.** Python writes `elif` and puts the condition in the middle of its conditional expression: `a if condition else b`. JavaScript writes `else if` and uses the `condition ? a : b` operator. For many fixed cases, Python has `match` (3.10 and later) and JavaScript has `switch`. In a `switch`, a case without `break` falls through into the next case.
+**Difference.** `elif` and `a if condition else b` versus `else if` and `condition ? a : b`; Python's `match` versus `switch`, where a case without `break` falls through.
 
 **Common mistake.** Using `==` in TypeScript. Use `===`, which does not convert types first (see the runtime behaviors section).
 
@@ -679,9 +639,7 @@ while (n > 0) {
 // while 1
 ```
 
-**Shared idea.** Loop over a range, loop over items, and loop while a condition holds.
-
-**Difference.** Python's `for` always loops over items; `range(3)` produces 0, 1 and 2. JavaScript has the C-style counting loop plus `for...of` for items. Python has no `++` operator; write `n += 1`.
+**Difference.** Python's `for` loops over items (`range(3)`); JavaScript adds the C-style loop and `for...of`. Python has no `++`.
 
 **Common mistake.** Using `for...in` on a JavaScript array. It loops over the keys, as strings `"0"`, `"1"` and so on, not the values. Use `for...of`.
 
@@ -719,9 +677,7 @@ console.log(nums.reduce((a, b) => a + b, 0), nums.some((n) => n > 5));
 // 21 true
 ```
 
-**Shared idea.** Build a new collection from an old one by filtering and transforming, without writing a loop.
-
-**Difference.** Python's idiom is the comprehension, `[expression for item in items if condition]`, which also has dictionary and set forms. Python has `map` and `filter` too, but comprehensions are usually preferred. JavaScript chains array methods. Python's `map` and `filter` are **lazy**: they return an iterator that produces values on demand, and you can read it only once. JavaScript's `.map()` and `.filter()` build a new array immediately.
+**Difference.** Python prefers comprehensions (with dict and set forms); JavaScript chains array methods. Python's `map` and `filter` are **lazy** one-pass iterators, while JavaScript's build arrays immediately.
 
 **Common mistake.** Printing a Python `map(...)` directly and seeing `<map object at 0x...>`, or reading the same `map` twice and getting nothing the second time. Wrap it in `list(...)` when you need a list.
 
@@ -777,9 +733,7 @@ console.log(logOnly("hi"));
 // undefined
 ```
 
-**Shared idea.** A function takes inputs and returns one value. To return several, return a tuple or array and unpack it.
-
-**Difference.** A function without `return` gives `None` in Python and `undefined` in JavaScript. Edge cases differ as well: `max([])` raises `ValueError` in Python, while `Math.max()` with no arguments returns `-Infinity`.
+**Difference.** No `return` gives `None` or `undefined`; `max([])` raises while `Math.max()` returns `-Infinity`.
 
 **Common mistake.** In TypeScript, an arrow function with braces needs an explicit `return`: `(n) => { n * 2 }` returns `undefined`. In Python, forgetting `return` silently gives `None`. Annotating the return type lets a type checker catch both, and mypy also flags the last Python line above, because it prints the result of a function that never returns a value.
 
@@ -819,9 +773,7 @@ console.log(greet("Ada", undefined, "Dr."));
 // Hello, Dr. Ada!
 ```
 
-**Shared idea.** A parameter can have a default value, or can be left out.
-
-**Difference.** TypeScript marks an optional parameter with `?`, which means its value may be `undefined`. To skip a parameter, you pass `undefined` in its place, as in the third call. Python lets the caller name the argument instead: `title="Dr."`. The two languages also evaluate defaults at different times. JavaScript evaluates a default on every call. Python evaluates it **once**, when the function is defined, which causes the trap shown in the runtime behaviors section.
+**Difference.** TypeScript's `?` makes a parameter possibly `undefined`, and you skip one by passing `undefined`; Python lets the caller name it (`title="Dr."`). JavaScript evaluates defaults per call, Python **once** (see the runtime behaviours section).
 
 **Common mistake.** Passing `null` in JavaScript and expecting the default. Only `undefined` triggers a default parameter.
 
@@ -853,9 +805,7 @@ console.log(connect("db.local", { ssl: false }));
 // db.local:5432 timeout=5 ssl=false
 ```
 
-**Shared idea.** When a function has many settings, let the caller name the ones they change.
-
-**Difference.** Python has keyword arguments built in. The bare `*` makes everything after it keyword-only, so `connect("db", 5433)` is an error. JavaScript has no keyword arguments, so the common pattern is a single options object that the function destructures with defaults. Notice the output, too: Python prints the float `5.0` as `5.0`, while JavaScript's single number type prints `5`.
+**Difference.** Python has keyword arguments, and a bare `*` makes the rest keyword-only; JavaScript uses an options object destructured with defaults. Python prints `5.0` where JavaScript prints `5`.
 
 **Common mistake.** Misspelling an option. Python raises `TypeError: connect() got an unexpected keyword argument` at runtime. TypeScript catches a typo in an object literal at compile time, but at runtime JavaScript silently ignores unknown properties.
 
@@ -891,9 +841,7 @@ console.log(double(21));
 // 42
 ```
 
-**Shared idea.** A small function you write inline, often to tell `sort` how to order things.
-
-**Difference.** A Python `lambda` is limited to a single expression, so anything longer becomes a normal `def`. A JavaScript arrow function can have a full body in braces. Sorting differs too. Python's `sorted(..., key=...)` returns a new list using a key function. JavaScript's `.sort()` changes the array in place and takes a comparison function that returns a negative, zero or positive number. That is why the example copies the array first with `[...people]`.
+**Difference.** A `lambda` is one expression; an arrow function can have a body. `sorted(..., key=...)` returns a new list, while `.sort()` sorts in place with a comparison function, hence the `[...people]` copy.
 
 **Common mistake.** Returning an object literal from an arrow function: `() => { id: 1 }` is a function body, not an object. Write `() => ({ id: 1 })`.
 
@@ -938,9 +886,7 @@ console.log(name, role);
 // Ada owner
 ```
 
-**Shared idea.** Pull several values out of a sequence in one line, and build a new record by spreading an old one.
-
-**Difference.** JavaScript can destructure objects by property name: `const { name, role } = user`. Python has no direct equivalent for dictionaries. You index each key, or use a `match` statement with a mapping pattern. Spreading also differs: Python uses `*` for sequences and `**` for dictionaries, while JavaScript uses `...` for both.
+**Difference.** JavaScript destructures objects by name (`const { name, role } = user`); Python indexes each key or uses `match`. Python spreads with `*` and `**`, JavaScript with `...`.
 
 **Common mistake.** In Python, unpacking the wrong number of items raises `ValueError`. In JavaScript, a missing item quietly becomes `undefined`.
 
@@ -1001,11 +947,7 @@ console.log(account.balance, String(account));
 // 50 Account('Ada', 50)
 ```
 
-**Shared idea.** A class bundles data and the methods that work on it. A constructor sets up each new object.
-
-**Difference.** Python passes the object explicitly as `self`, and creates an object by calling the class: `Account("Ada")`. TypeScript uses an implicit `this` and the `new` keyword. TypeScript's `private` keyword is checked only at compile time. JavaScript's `#field` syntax is private at runtime. Python relies on a convention: names starting with `_` are internal.
-
-A note on syntax: TypeScript has a shorthand, `constructor(public owner: string)`, called a parameter property. It works in compilers such as `tsc` and Vite, and the MOKS UI uses it. Node's built-in type stripping cannot run it, because it generates code rather than just removing types.
+**Difference.** Explicit `self` and `Account("Ada")` versus implicit `this` and `new`. TypeScript's `private` is compile-time only, `#field` is private at runtime, and Python relies on the `_` convention. Parameter properties (`constructor(public owner: string)`), used by the MOKS UI, need a real compiler, not type stripping.
 
 **Common mistake.** Forgetting `self.` or `this.` inside a method. In JavaScript, passing `account.deposit` as a callback also loses `this`. Wrap it in an arrow function: `(n) => account.deposit(n)`.
 
@@ -1061,9 +1003,7 @@ console.log(greetings.DEFAULT_GREETING);
 
 Run them with `python3 main.py` and `node main.ts`.
 
-**Shared idea.** Each file is a module. You import a whole module, or specific names from it.
-
-**Difference.** In Python, every top-level name in a module can be imported. In TypeScript, only names marked `export` can. Paths work differently, too. Python finds modules by name on its search path. JavaScript imports use relative paths, and Node's type stripping needs the `.ts` extension in them. To type-check those imports with `tsc`, add `--allowImportingTsExtensions` (or `rewriteRelativeImportExtensions` when emitting JavaScript). Bundler-based projects work differently: jithendar.com's Next.js app imports `@/lib/practice/errors`, with no extension, through a `paths` alias in `tsconfig.json`.
+**Difference.** Python can import any top-level name and finds modules on its search path; TypeScript imports only `export`ed names by relative path, and type stripping needs the `.ts` extension (`--allowImportingTsExtensions` for `tsc`). Bundled projects such as jithendar.com use a `paths` alias like `@/lib/practice/errors`.
 
 **Common mistake.** In Python, top-level code runs when a module is imported. Code that should run only when the file is executed directly belongs under `if __name__ == "__main__":`. ES modules also run top-level code on first import. Neither language has a built-in equivalent of that Python guard for ES modules.
 
@@ -1117,9 +1057,7 @@ for (const text of ["8080", "abc", "70000"]) {
 // error port out of range: 70000
 ```
 
-**Shared idea.** Raise or throw when something is wrong, and catch it where you can handle it.
-
-**Difference.** Python's `int("abc")` raises an exception. JavaScript's `Number("abc")` returns `NaN` (not a number) instead, so the TypeScript version has to check the result and throw its own error. Watch out for `Number("")`, which is `0`. Catching differs as well. Python can catch by type, with one `except` clause per exception class. JavaScript has a single `catch`, and with `strict` enabled TypeScript types the caught value as `unknown`, because JavaScript can throw anything, not only `Error` objects. Python also has an `else` clause on `try`, which runs only when nothing was raised.
+**Difference.** `int("abc")` raises, but `Number("abc")` returns `NaN` (and `Number("")` is `0`), so TypeScript must check and throw. Python catches by type, with `else` for the no-error case; JavaScript has one `catch` whose value is `unknown` under `strict`, since anything can be thrown.
 
 **Common mistake.** Catching too broadly: a bare `except:` in Python, or a `catch` that ignores the error in TypeScript. Both hide bugs. Catch what you expect, and let the rest propagate.
 
@@ -1162,9 +1100,7 @@ console.log(results.join(", "));
 // a done, b done
 ```
 
-**Shared idea.** `await` pauses one function until a slow operation finishes, and other work can run in the meantime. Both programs take about 0.2 seconds, not 0.3, because the two waits overlap. Results come back in the order you asked for them, not the order they finished.
-
-**Difference.** JavaScript always has an event loop running, which is the part of the runtime that schedules waiting work, and ES modules allow `await` at the top level. Python starts its event loop explicitly with `asyncio.run(main())`. The timing of when work starts also differs. Calling a JavaScript `async` function starts it immediately and returns a promise. Calling a Python `async def` function only creates a coroutine object, which does nothing until it is awaited or scheduled as a task.
+**Difference.** Both take about 0.2 s, not 0.3, because the waits overlap. JavaScript always has an event loop and allows top-level `await`; Python starts one with `asyncio.run(main())`. A JavaScript `async` call starts immediately, while a Python coroutine does nothing until awaited or scheduled.
 
 **Common mistake.** Forgetting `await`. Python warns `coroutine ... was never awaited`, and the work never runs. JavaScript runs the work, but its errors escape your `try`. A second trap: calling a blocking function such as `time.sleep()` inside async Python code freezes everything else on the loop.
 
@@ -1216,21 +1152,13 @@ console.log(JSON.stringify({ id: user.id, admin: user.roles.includes("admin") })
 // {"id":7,"admin":true}
 ```
 
-**Shared idea.** Send an HTTP request, parse the JSON body into native data, use it, and turn data back into JSON text.
-
-**Difference.** Python's standard-library `urlopen` blocks until the response arrives. My projects use the `httpx` package instead, which also offers an async client. `fetch` is always asynchronous. Errors work differently, too. `urlopen` raises an exception for 4xx and 5xx responses, but `fetch` only rejects on network failures, so you must check `response.ok` yourself. Even the JSON text differs: `json.dumps` adds spaces after `:` and `,`, while `JSON.stringify` does not.
+**Difference.** `urlopen` blocks (my projects use `httpx`, which also has an async client); `fetch` is async. `urlopen` raises on 4xx and 5xx, while `fetch` rejects only on network failure, so check `response.ok`. `json.dumps` adds spaces; `JSON.stringify` does not.
 
 **Common mistake.** Believing `as User` checks the data. It does not. It tells the compiler to trust you, and the types are erased before the code runs. If the server sends `{"name": 42}`, the program carries on with wrong data. The type systems section covers runtime validation.
 
 ## How do the type systems compare?
 
-This section is about one question: when does each language find out that a value has the wrong type?
-
-### Dynamic typing, optional checking and erased types
-
-Python is **dynamically typed**: values have types, variables do not, and Python checks operations only as they run. Type hints are optional notes that tools such as mypy and Pyright read. TypeScript **statically checks** JavaScript: `tsc` analyzes the program before it runs, then the types are removed.
-
-So in both languages, the type annotations disappear by the time the code runs.
+When does each language find out that a value has the wrong type? Python is **dynamically typed**: values have types, variables do not, and hints are notes for mypy or Pyright. TypeScript is **statically checked** by `tsc`, then erased. Either way, annotations are gone at runtime:
 
 *Standalone comparison example. Same output in both languages.*
 
@@ -1261,15 +1189,15 @@ console.log(add("2", "3"));
 // 23
 ```
 
-The two programs print the same thing. Both runtimes happily join two strings, because neither one checks annotations while running. The difference is in the workflow. Running mypy on the Python file reports the second call, and so does running `tsc` on the TypeScript file. In practice, TypeScript projects usually fail the build on that error, while a Python project only notices if it runs a type checker. None of my three repositories configures a Python type checker or runs one in CI. The TypeScript projects type-check in their builds (see the build and packaging section).
+Both runtimes join the strings. mypy and `tsc` each report the second call, but TypeScript projects usually fail the build on it, while Python projects notice only if they run a checker; none of my three repositories configures one, while all three TypeScript projects check in their builds.
 
 ### Type inference
 
-Both checkers **infer** types: they work out the type from the value, so you do not have to write it everywhere. In TypeScript, `const total = 3` is inferred as a number, and adding `total.toUpperCase()` is an error. mypy does the same for `total = 3`. The usual practice in both is to annotate function parameters and return types, and to let inference handle local variables.
+Both checkers **infer** types from values, so annotate parameters and return types and let inference handle locals.
 
 ### Unions and narrowing
 
-A **union** type says a value may be one of several types. You then **narrow** it: check which one you actually have, and the checker understands the rest of that branch.
+A **union** allows several types, and you **narrow** it with a check the checker understands:
 
 *Standalone comparison example. Same output in both languages.*
 
@@ -1305,9 +1233,7 @@ console.log(describe(null), describe(4), describe("hi"));
 // missing number 4 text HI
 ```
 
-The syntax, `A | B`, is almost identical. Python narrows with `isinstance()` and `is None`. TypeScript narrows with `typeof`, `instanceof`, `in` and equality checks. The `value == null` check is the one place where TypeScript code commonly uses `==` on purpose: it matches both `null` and `undefined`.
-
-*Optional, more advanced:* TypeScript code often uses **discriminated unions**, where a literal field tells the variants apart: `{ ok: true; value: number } | { ok: false; error: string }`. Zod's `safeParse` returns this shape, as the project examples section shows. Python can express the same idea with `Literal` types and `TypedDict`, but it is less common.
+`A | B` is nearly identical. Python narrows with `isinstance()` and `is None`, TypeScript with `typeof`, `instanceof`, `in` and equality, where `value == null` deliberately matches both `null` and `undefined`. TypeScript also favours **discriminated unions** such as Zod's `safeParse` result, `{ ok: true; ... } | { ok: false; ... }`.
 
 ### Optional values and missing properties
 
@@ -1340,19 +1266,11 @@ console.log(user.email ?? "no email", user.nickname);
 // no email null
 ```
 
-A `TypedDict` describes the keys of an ordinary Python dictionary, and at runtime `user` is just a `dict`. TypeScript's `type` describes an ordinary object. Both separate two ideas:
-
-- **The key may be missing**: `NotRequired[str]` in Python, `email?: string` in TypeScript.
-- **The key is present, but the value may be empty**: `str | None` in Python, `string | null` in TypeScript.
+`TypedDict` and `type` both describe plain runtime data, and both separate a **missing key** (`NotRequired[str]`, `email?: string`) from a **present but empty value** (`str | None`, `string | null`).
 
 ### Why `None` is not the same as `null` and `undefined`
 
-Python has one "no value" object, `None`. JavaScript has two:
-
-- `undefined` means a value was never set: a missing property, a missing argument, or a function with no `return`.
-- `null` means something was deliberately left empty.
-
-JSON has only `null`. When Python sends `None`, JavaScript receives `null`. When JavaScript serializes an object, properties set to `undefined` are left out completely. Check for both with `value == null` or `value ?? fallback`. In Python, use `is None`.
+Python has one `None`. JavaScript has `undefined` (never set: missing property, argument or `return`) and `null` (deliberately empty). JSON has only `null`, so Python's `None` arrives as `null`, and `undefined` properties are dropped when serializing. Check both with `value == null` or `??`; in Python, `is None`.
 
 ### Python classes, dataclasses and Protocol, versus TypeScript interfaces
 
@@ -1419,9 +1337,7 @@ console.log(service === new Service("api"));
 // false
 ```
 
-- A **dataclass** is a normal Python class with generated methods: `__init__`, a readable `__repr__`, and an `__eq__` that compares fields. That is why `service == Service("api")` is `True`. A TypeScript class gets none of these, and `===` compares identity.
-- A **Protocol** and an **interface** both describe a shape, and anything with a `name` string fits. This is called structural typing. The difference is what remains at runtime. A Protocol is a real Python class (`isinstance` works if you mark it `@runtime_checkable`). A TypeScript interface is erased completely, so `x instanceof HasName` cannot exist.
-- **Type aliases versus interfaces in TypeScript.** `type User = { ... }` and `interface User { ... }` overlap a lot. Interfaces can be extended and merged. Aliases can also name unions and tuples. My projects mostly use `type`: every shape in jithendar.com's executor client is a `type`.
+A **dataclass** generates `__init__`, `__repr__` and field-comparing `__eq__`, so `service == Service("api")` is `True`; a TypeScript class gets none of these. A **Protocol** and an **interface** both describe a shape structurally, but a Protocol is a real class (`isinstance` works with `@runtime_checkable`) while an interface is erased. TypeScript's `type` and `interface` overlap; my projects mostly use `type`.
 
 ### Python `Any` versus TypeScript `any` and `unknown`
 
@@ -1476,13 +1392,11 @@ try {
 // TypeError: value.toUpperCase is not a function
 ```
 
-`Any` and `any` both switch the checker off: anything goes, and mistakes surface at runtime. The safe choices are Python's `object` and TypeScript's `unknown`. Both accept every value, but make you narrow it before you use it. The Python docs say to use `object` "to indicate that a value could be any type in a typesafe manner" and `Any` "to indicate that a value is dynamically typed."
+`Any` and `any` switch checking off. The safe choices, `object` and `unknown`, accept every value but make you narrow it first.
 
 ### Static checking versus runtime validation
 
-Static checks cover your own code. They cannot check data that arrives while the program runs: HTTP request bodies, JSON files, environment variables, model output. For that you need **runtime validation**, code that inspects the actual value. My projects use Pydantic on the Python side and Zod on the TypeScript side. jithendar.com pins Pydantic 2.14.2 and Zod 4.6.7.
-
-This example is modeled on the `Limits` model in jithendar.com's executor, with a positive-number rule added to show validation errors.
+Static checks cannot see data that arrives at runtime: request bodies, JSON files, environment variables, model output. That needs **runtime validation**; my projects use Pydantic 2.14.2 and Zod 4.6.7. This example is modelled on the executor's `Limits` model, with a positive-number rule added:
 
 *Standalone comparison example. The outputs differ on purpose.*
 
@@ -1527,21 +1441,15 @@ console.log(limits);
 // { per_test_seconds: 2, memory_mb: 512 }
 ```
 
-Both libraries do the same job: declare a schema once, validate untrusted input against it, and get a static type for free. With Zod, that last part is `z.infer`. The defaults differ in one important way. Pydantic converts compatible input by default: the string `"512"` became the integer 512 (its docs call this lax mode, and a strict mode turns it off). Zod's `z.number()` rejects the string. If you need conversion in Zod, you ask for it, for example with `z.coerce.number()`. Know which behavior your service boundary has.
-
-### More pairs that look alike but are not
-
-- **Python dictionaries and JavaScript objects.** The side-by-side examples covered keys. Objects also inherit properties from a prototype, and JSON turns both into the same text, so the difference only shows up in code.
-- **Python classes and TypeScript interfaces.** A Python class always exists at runtime. A TypeScript interface never does. The closest Python match for an interface is a `Protocol`, and the closest TypeScript match for a Python class is a TypeScript class.
-- **Python tuples and TypeScript tuple types.** A Python tuple is an immutable runtime object. A TypeScript tuple is a type over a normal, mutable array.
+Both declare a schema once, validate input and give you a static type (`z.infer` in Zod). One default differs: Pydantic's lax mode turned `"512"` into 512, while Zod's `z.number()` rejects it unless you ask for `z.coerce.number()`. Know which your boundary does.
 
 ## Which runtime behaviors differ?
 
-TypeScript follows JavaScript's runtime behavior exactly, because by the time the code runs, it *is* JavaScript. Every difference below is a JavaScript-versus-Python difference that TypeScript's types do not change.
+At runtime TypeScript *is* JavaScript, so every difference below is one its types do not change.
 
 ### Indentation versus braces
 
-Python uses indentation to define blocks, as the side-by-side examples showed. TypeScript uses braces and semicolons. Semicolons are optional in JavaScript because of automatic semicolon insertion, but all three of my projects write them. A formatter keeps the style consistent in either language.
+Python blocks are indentation; TypeScript uses braces, and my projects write the optional semicolons.
 
 ### Truthiness, including empty lists and arrays
 
@@ -1576,7 +1484,7 @@ for (const [label, value] of samples) {
 // "0" true
 ```
 
-The important rows are `[]` and `{}`. In Python, empty collections are false, so `if items:` means "if there are items". In JavaScript, every array and object is true, even an empty one. Write `if (items.length > 0)` instead.
+The key rows are `[]` and `{}`: empty collections are false in Python but true in JavaScript, so write `if (items.length > 0)`.
 
 ### Equality and identity
 
@@ -1608,13 +1516,11 @@ console.log(Number.NaN === Number.NaN, Object.is(Number.NaN, Number.NaN));
 // false true
 ```
 
-- Python's `==` compares **values**, so two lists with the same items are equal. Python's `is` compares **identity**: is it the same object? Use `is` only for `None`, `True` and `False`.
-- JavaScript's `===` compares primitives (numbers, strings, booleans) by value, but arrays and objects by **identity**. There is no built-in deep-equality operator. Comparing JSON strings works for simple data, but breaks when key order differs. Test libraries provide deep-equality helpers.
-- JavaScript's `==` converts types before comparing, so `"1" == 1` is `true`. That is why `===` is the norm. TypeScript rejects `"1" == 1` because the types have no overlap.
+Python's `==` compares **values** and `is` **identity** (use `is` only for `None`, `True`, `False`). JavaScript's `===` compares objects by **identity**, with no built-in deep equality, and `==` converts types (`"1" == 1` is `true`, which TypeScript rejects).
 
 ### Mutable objects and shared references
 
-In both languages, assigning a list, array, dictionary or object copies the *reference*, not the data. Two names can point at the same object, and a change through one is visible through the other.
+In both, assignment copies the *reference*, so two names can share one object.
 
 *Standalone comparison example. Same values; the printed format differs.*
 
@@ -1642,7 +1548,7 @@ console.log(original.admins, original.authors);
 // [ 'ada' ] [ 'grace', 'alan' ]
 ```
 
-`dict(original)` and `{ ...original }` make **shallow** copies. The top level is new, so replacing `admins` on the copy leaves the original alone. The nested lists are still shared, so appending to `authors` changes both. For a full copy, use `copy.deepcopy()` in Python or `structuredClone()` in JavaScript.
+`dict(original)` and `{ ...original }` are **shallow**: nested lists stay shared. Use `copy.deepcopy()` or `structuredClone()` for full copies.
 
 ### Python's mutable default arguments
 
@@ -1684,7 +1590,7 @@ console.log(addTag("a"), addTag("b"));
 // [ 'a' ] [ 'b' ]
 ```
 
-Python creates the default `[]` once, when the function is defined, and every call that omits `tags` shares that one list. The usual fix is `None` as the default, with a new list created inside. JavaScript creates the default on every call, so the TypeScript version is fine as written.
+Python creates the default `[]` once, so calls share it; default to `None` and create the list inside. JavaScript creates defaults per call.
 
 ### Missing dictionary keys versus missing object properties
 
@@ -1722,10 +1628,7 @@ console.log(raw.hots);
 // undefined
 ```
 
-- Python fails loudly. Indexing a missing key raises `KeyError`, and `.get()` returns `None` or a default you choose.
-- JavaScript fails quietly. A missing property is `undefined`, with no error, until something later tries to use it.
-- `or` in Python and `||` in JavaScript treat `0`, `""` and empty values as missing, so a real setting of `0` retries becomes 3. JavaScript's `??` (nullish coalescing) falls back only for `null` and `undefined`. Python has no direct equivalent, so write `x if x is not None else default`.
-- `JSON.parse` returns `any`, so the typo `raw.hots` passes the type checker. jithendar.com's `tsconfig.json` also enables `noUncheckedIndexedAccess`, which makes `record[key]` include `undefined` in its type, so the checker forces you to handle missing keys.
+Python fails loudly (`KeyError`; `.get()` for defaults); JavaScript quietly returns `undefined`. `or` and `||` treat `0` as missing, so `0` retries becomes 3; JavaScript's `??` falls back only for `null` and `undefined` (Python: `x if x is not None else default`). `JSON.parse` returns `any`, so the typo `raw.hots` type-checks; `noUncheckedIndexedAccess` makes missing keys visible to the checker.
 
 ### Integer division and numeric precision
 
@@ -1756,7 +1659,7 @@ console.log((10 + 20) / 100);
 // 0.3
 ```
 
-Python's `//` rounds **down**, toward negative infinity, so `-7 // 2` is `-4`. Converting with `int()` or `Math.trunc` rounds toward zero. The `%` operator differs for negative numbers: Python's result takes the sign of the divisor (`2`), JavaScript's takes the sign of the dividend (`-1`). Neither language stores decimals exactly, so compare floats with a tolerance. For money, Python's standard library has `Decimal`. JavaScript has no built-in decimal type, so a common approach is to store whole cents as integers, as the last TypeScript line hints.
+Python's `//` rounds toward negative infinity (`-7 // 2` is `-4`), while `int()` and `Math.trunc` round toward zero, and `%` follows the divisor's sign in Python and the dividend's in JavaScript. Compare floats with a tolerance; for money use `Decimal` or integer cents.
 
 ### Python `int` versus JavaScript `number` and `BigInt`
 
@@ -1780,7 +1683,7 @@ console.log(2 ** 53 + 1, Number.isSafeInteger(2 ** 53 + 1));
 // 9007199254740992 false
 ```
 
-Python integers have no size limit. A JavaScript `number` is a 64-bit float, which holds integers exactly only up to `Number.MAX_SAFE_INTEGER` (9,007,199,254,740,991). Above that, `2 ** 53 + 1` silently comes out as `2 ** 53`. JavaScript's `BigInt` type, written with an `n` suffix, holds integers of any size. You cannot mix it with `number` in arithmetic (that throws `TypeError`), and BigInt division drops the remainder: `5n / 2n` is `2n`.
+Python integers are unlimited. A JavaScript `number` is exact only to `Number.MAX_SAFE_INTEGER`, so `2 ** 53 + 1` silently becomes `2 ** 53`. `BigInt` (`n` suffix) is unlimited but cannot mix with `number`, and `5n / 2n` is `2n`.
 
 ### Exceptions and rejected promises
 
@@ -1831,7 +1734,7 @@ console.log("task:", settled?.status === "rejected" ? String(settled.reason) : "
 // task: Error: boom
 ```
 
-An `async` function that throws produces a **rejected promise**. When you `await` it, the rejection becomes an ordinary exception that `try` and `catch` can handle. The risk is a promise that nobody awaits. By default, Node.js stops the whole process on an unhandled rejection. I checked this on Node 26: it exits with code 1. Python is gentler. An unawaited task's exception is stored on the task, and asyncio logs "Task exception was never retrieved" if nobody reads it. Either way, always `await` or handle what you start.
+A throwing `async` function gives a **rejected promise**, which `await` turns back into an exception. An unawaited rejection stops Node.js (exit code 1 on Node 26), while asyncio only logs "Task exception was never retrieved". Always `await` or handle what you start.
 
 ### JSON limitations and serialization differences
 
@@ -1876,19 +1779,13 @@ console.log(JSON.stringify({ day: new Date(Date.UTC(2026, 10, 3)) }));
 // {"day":"2026-11-03T00:00:00.000Z"}
 ```
 
-JSON has strings, numbers, booleans, `null`, arrays and objects, and nothing else. Each language handles everything else differently:
-
-- **NaN and Infinity.** Python writes `NaN` by default, which is not valid JSON and which `JSON.parse` rejects. Pass `allow_nan=False` to get an error instead. JavaScript writes `null`.
-- **Big integers.** Python reads and writes them exactly. JavaScript reads them as floats and loses digits, and refuses to serialize a `BigInt`. Send large IDs as strings.
-- **Dates.** Python refuses until you give it a converter. JavaScript calls `Date.prototype.toJSON` and writes an ISO 8601 string. Neither turns the string back into a date when parsing.
-- **Other types.** Python turns tuples into arrays. JavaScript drops `undefined` properties and turns a `Map` into `{}`, which loses its data silently.
-- **Key order and spacing.** Both keep insertion order. Only Python adds spaces by default.
+JSON has only strings, numbers, booleans, `null`, arrays and objects. Python writes invalid `NaN` by default (`allow_nan=False` errors instead) where JavaScript writes `null`; JavaScript loses digits in big integers and refuses `BigInt`, so send large IDs as strings; Python refuses dates without a converter while JavaScript writes ISO 8601; and JavaScript silently turns a `Map` into `{}`.
 
 ## How do you run, build and package the code?
 
 ### Running Python
 
-CPython compiles your `.py` file to bytecode and runs it, all in one step: `python3 app.py`. There is no separate build. Services in my projects start a long-running server instead. The jithendar.com executor and MOKS both run FastAPI apps on Uvicorn, an ASGI server (ASGI is the standard interface between async Python web apps and servers). They are launched through Python entry points such as the `moks serve` command that MOKS's `pyproject.toml` defines.
+`python3 app.py` compiles to bytecode and runs in one step. My services run FastAPI on Uvicorn, an ASGI server, started through entry points such as `moks serve`.
 
 ### Type-checking and running TypeScript, as my projects actually do it
 
@@ -1900,18 +1797,11 @@ All three projects check types with `tsc`, but they turn TypeScript into JavaScr
 | MOKS web UI | Vite 8 transpiles with Oxc, which removes types without checking them | `npm run build` is `tsc --noEmit && vite build`, so the check runs first. Vite's docs say it "does NOT perform type checking". | `frontend/package.json` |
 | RoboShop AI storefront | `tsc` itself compiles `src/*.ts` to `dist/`, with `noEmitOnError` set | The same `tsc` run, through `scripts/build.mjs`. The Docker build runs it in a Node 26 stage and copies the output into nginx. | `services/web/frontend/tsconfig.json`, `services/web/Dockerfile` |
 
-So "compile TypeScript" can mean a framework build, a fast transpiler plus a separate check, or the TypeScript compiler alone. The RoboShop storefront uses TypeScript 7.0.2. Version 7 is the native port of the compiler, written in Go, and Microsoft's announcement says it is designed to type-check the same way as 6.0.
-
-Other options exist. Node.js 22.18 and later strips types itself (`node file.ts`), which is how the standalone examples in this article run. Third-party runners such as `tsx`, and runtimes such as Deno and Bun, also run TypeScript directly. None of them replaces `tsc` for type checking.
+So "compile TypeScript" can mean a framework build, a fast transpiler plus a separate check, or `tsc` alone (version 7, used by the storefront, is the native Go port, designed to check the same way as 6.0). Node.js type stripping, `tsx`, Deno and Bun run TypeScript directly, but none replaces `tsc` for checking.
 
 ### Browser code versus server code
 
-TypeScript runs in two very different places:
-
-- **The browser.** Code has the DOM (the page's document object model), `fetch`, `localStorage` and the user's network connection, but no file system and no secrets. Anything shipped to the browser is public. The RoboShop storefront and the MOKS UI run only here.
-- **Node.js on a server.** Code can read files, hold credentials and call internal services. jithendar.com's Next.js app runs on both sides. Its executor client starts with `import "server-only"`, a package that makes the build fail if that file is ever imported into browser code.
-
-Python code in my projects runs only on servers. Python can run in browsers through WebAssembly projects such as Pyodide, but none of my projects does.
+In the **browser**, TypeScript has the DOM, `fetch` and `localStorage` but no file system or secrets, and everything shipped is public (the RoboShop storefront and MOKS UI run only there). On a **Node.js server** it can read files and hold credentials; jithendar.com runs on both sides, and its executor client starts with `import "server-only"` so the build fails if browser code imports it. My Python runs only on servers.
 
 ### Dependencies, virtual environments and lockfiles
 
@@ -1924,48 +1814,27 @@ Python code in my projects runs only on servers. Python can run in browsers thro
 | Run tests | pytest (MOKS, executor) and `unittest` (RoboShop AI) | Vitest (jithendar.com, MOKS) and Node's built-in `node --test` (RoboShop AI) |
 | Lint and format | No Python linter or formatter is configured in any of the three repositories | ESLint in jithendar.com. No formatter is configured. |
 
-In short, the Node side has one standard lockfile format. On the Python side, the project's own tooling choices decide how reproducible an install is.
+The Node side has one standard lockfile; on the Python side, tooling choices decide how reproducible an install is.
 
 ## Async, concurrency and performance: is one faster?
 
 ### I/O-bound versus CPU-bound work
 
-- **I/O-bound** work spends most of its time waiting for something outside the program: a database, an HTTP API, a disk. An investigation in MOKS that queries Kubernetes, Prometheus and Loki is mostly this kind of work.
-- **CPU-bound** work spends its time computing: parsing large files, resizing images, running a neural network.
-
-Async programming helps with I/O-bound work. While one request waits, the event loop runs others. That is concurrency: many tasks in progress at once, taking turns on a single thread.
-
-### Event loops in both languages
-
-Both Python's `asyncio` and JavaScript run your async code on one thread, with an event loop that resumes each task when its I/O is ready. The model is the same, and the main differences are the ones from the side-by-side examples: JavaScript always has a loop running, and a promise starts immediately when created. JavaScript also does almost all I/O asynchronously by default. Python has both blocking and async libraries, so you have to pick async ones (such as `httpx.AsyncClient` or `asyncpg`) or move blocking calls off the loop.
-
-**Async does not make CPU-heavy work parallel.** A long calculation inside an async function blocks the loop, and every other task waits for it, in either language.
+**I/O-bound** work waits on databases, APIs and disks (a MOKS investigation is mostly this); **CPU-bound** work computes. Async helps the first: while one request waits, the event loop runs others on one thread. Both `asyncio` and JavaScript resume each task when its I/O is ready; JavaScript always has a loop running and does almost all I/O asynchronously, while Python makes you choose async libraries (`httpx.AsyncClient`, `asyncpg`) or move blocking calls off the loop. **Async does not make CPU-heavy work parallel** in either language.
 
 ### Threads, processes and the GIL
 
 When you need real parallelism (several CPU cores working at once), the runtime matters:
 
-- **CPython** (the standard Python interpreter) has a **global interpreter lock (GIL)** in its default build. Only one thread runs Python bytecode at a time, so threads help with blocking I/O but not with pure-Python computation. Python 3.13 introduced an optional free-threaded build without the GIL, and Python 3.14 made it officially supported (PEP 779), but the default build still has the GIL. My projects use the standard `python:3.x-slim` images, which are not the free-threaded build.
-- **Native libraries** such as NumPy and PyTorch run their heavy work in compiled code, which can release the GIL and use many cores. This is a big part of why Python works well for numerical and machine-learning work.
-- **Processes** sidestep the GIL completely: `multiprocessing` or `concurrent.futures.ProcessPoolExecutor` in Python. Running several server worker processes behind one service does the same job.
-- **Node.js** runs JavaScript on one main thread. For CPU-heavy work it provides **worker threads**, which its documentation describes as "useful for performing CPU-intensive JavaScript operations" but not much help for I/O. Node also has child processes and the `cluster` module.
+Default CPython's **GIL** lets one thread run Python bytecode at a time, so threads help I/O but not pure-Python computation; the free-threaded build (officially supported in 3.14) is not what my `python:3.x-slim` images use. NumPy and PyTorch release the GIL in native code, and processes (`ProcessPoolExecutor`, several server workers) sidestep it. Node.js runs JavaScript on one main thread, with **worker threads** for CPU-intensive work, plus child processes and `cluster`.
 
 ### A fair performance comparison
 
-You will often read that one of these languages is faster. Most such claims compare different things. A fair benchmark would need:
-
-1. The same task and the same algorithm, written idiomatically in both languages.
-2. Named runtime versions (for example CPython 3.14, or Node.js 26), and the same hardware.
-3. A clear statement of what is measured: startup time, steady-state throughput, latency percentiles or memory.
-4. Warm-up runs, because both V8 (Node's JavaScript engine) and newer CPython versions speed up code as it runs.
-5. A note on whether native libraries do the real work, since a NumPy call measures C code, not Python.
-6. Several runs, with the spread reported, not one number.
-
-I have not run such a benchmark for this article, so I make no speed claims. For the I/O-bound services in my projects, the time usually goes to the network and the database, whichever language waits on them.
+I have not run a fair benchmark, so I make no speed claims. A fair one needs the same algorithm written idiomatically, named runtime versions on the same hardware, a stated metric, warm-up runs, a note on whether native libraries do the work, and the spread of several runs. For my I/O-bound services, time goes to the network and database whichever language waits.
 
 ## Real examples from my projects
 
-Each example names its repository, file and lines at the commits in the sources list. I separate what the code does, which is observed, from what I think it buys, which is interpretation.
+Each example names its repository, file and lines; I separate what the code does from my interpretation.
 
 ### Example 1: one contract in both languages (jithendar.com practice runner)
 
@@ -2020,12 +1889,7 @@ export type JobRequest = {
 
 What the code shows:
 
-- **Unions map directly.** Python's `Literal["run", "submit", "validate"]` and TypeScript's `"run" | "submit" | "validate"` describe the same three strings.
-- **The wire format follows Python's naming.** The fields are `snake_case`, such as `idempotency_key`, even in TypeScript, where the rest of the code uses `camelCase`. The `buildJob` function in `www/src/lib/practice/evaluator.ts` maps `opts.idempotencyKey` to `idempotency_key`.
-- **Defaults live only in Python.** `prelude` and `limits` have defaults in the Pydantic model, but the TypeScript type makes them required, so the website always sends them.
-- **The mirror is maintained by hand.** The FastAPI app is created with `openapi_url=None`, so it publishes no OpenAPI schema to generate a client from. Nothing checks automatically that the two definitions stay in sync. The docstring is the only link.
-
-Validation also happens in different places on each side. When the response comes back, the TypeScript client parses the JSON and returns it:
+`Literal["run", "submit", "validate"]` maps directly to the TypeScript union. The wire format keeps Python's `snake_case` (`buildJob` maps `idempotencyKey` to `idempotency_key`). Defaults live only in Python, so the TypeScript type makes `prelude` and `limits` required. And the mirror is kept by hand: with `openapi_url=None` there is no schema to generate a client from, and the docstring is the only link. When the response comes back, the client parses it:
 
 *Actual project code. Repository: jithendar.com. File: `www/src/lib/practice/executor-client.ts`, lines 63–70.*
 
@@ -2040,7 +1904,7 @@ Validation also happens in different places on each side. When the response come
   if (res.ok) return data as T;
 ```
 
-`data as T` is a type assertion, not a check. The client trusts the executor's response. The response comes from a service in the same deployment, and the Python side builds it from a Pydantic `JobView` model, so that is a reasonable trust boundary, but it is a choice, and it is not enforced. Input from the browser is treated differently. Before anything reaches the executor client, a Zod schema validates the browser's request:
+`data as T` trusts the executor, a reasonable but unenforced choice for a same-deployment service whose response is built from a Pydantic `JobView`. Browser input is validated with Zod before it reaches the client:
 
 *Actual project code. Repository: jithendar.com. File: `www/src/lib/practice/submissions.ts`, lines 24–33.*
 
@@ -2057,11 +1921,11 @@ export const runInput = z.object({
 export type RunInput = z.infer<typeof runInput>;
 ```
 
-So there are two runtime validation points: Zod where untrusted browser input enters the TypeScript server, and Pydantic where requests enter the Python executor. Static types cover the code in between. My interpretation is that this is the pattern the type systems section recommends: validate where data crosses a boundary, and rely on types inside.
+So Zod guards where browser input enters the TypeScript server, Pydantic where requests enter the Python executor, and static types cover the code between: validate at boundaries, rely on types inside.
 
 ### Example 2: browser TypeScript that does not trust its own types (RoboShop AI)
 
-The RoboShop storefront converts displayed prices into the visitor's currency, using rates from the shop's API. The code declares the expected shape as a type, then checks it at runtime anyway:
+The RoboShop storefront converts prices into the visitor's currency, declaring the rates' shape as a type and checking it at runtime anyway:
 
 *Actual project code. Repository: roboshop-ai. File: `services/web/frontend/src/paths.ts`, lines 29–36.*
 
@@ -2088,15 +1952,11 @@ function validFx(value: Fx | null): value is Fx {
 
 What the code shows:
 
-- `const value: Fx = await response.json()` compiles because `response.json()` returns `any`. The annotation proves nothing about the data.
-- `validFx` is a **type guard**: its return type, `value is Fx`, tells TypeScript that a `true` result means the value really is an `Fx`. The body does the real work. It checks that the rates are less than eight days old, that every currency code is three capital letters, and that every rate is a finite number in a sane range.
-- It checks `response.ok` before parsing, because `fetch` does not reject on HTTP errors.
-
-This is the browser-side version of the lesson from the side-by-side examples and the type systems section: a type describes what you expect, and only runtime code can confirm it. Writing guards by hand like this needs no library. The cost is that the type and the guard can drift apart, which a schema library such as Zod avoids by deriving one from the other.
+`const value: Fx = await response.json()` compiles only because `json()` returns `any`. `validFx` is a **type guard** (`value is Fx`) whose body checks that rates are under eight days old, codes are three capital letters and rates are finite and sane, and `response.ok` is checked first. A hand-written guard needs no library, but can drift from the type, which Zod avoids.
 
 ### Example 3: async Python that waits on several things at once (MOKS)
 
-MOKS's backup status page asks the Kubernetes API for four kinds of Velero resources. Velero is a Kubernetes backup tool. The four requests are independent, so the code starts them together:
+MOKS's backup page asks Kubernetes for four kinds of Velero (backup tool) resources at once:
 
 *Actual project code. Repository: moks. File: `backend/moks/velero.py`, lines 321–324.*
 
@@ -2107,9 +1967,7 @@ async def status(k8s: Any, volumes_supported: bool = True) -> dict[str, Any]:
         locations, backups, restores, schedules = await asyncio.gather(*(k8s.velero_list(p) for p in ("backupstoragelocations", "backups", "restores", "schedules")))
 ```
 
-`asyncio.gather` runs the four awaitables concurrently and returns their results in order, which the code unpacks into four names. It is the Python equivalent of `const [a, b, c, d] = await Promise.all([...])`.
-
-Elsewhere, MOKS calls AWS through `boto3`, which is a **blocking** library. Calling it directly inside async code would stall the event loop, so the CloudWatch connector moves each call onto a worker thread:
+`asyncio.gather` is Python's `await Promise.all([...])`. `boto3` is **blocking**, so the CloudWatch connector moves each call onto a worker thread:
 
 *Actual project code. Repository: moks. File: `backend/moks/connectors/cloudwatch.py`, lines 70–77.*
 
@@ -2124,47 +1982,33 @@ Elsewhere, MOKS calls AWS through `boto3`, which is a **blocking** library. Call
             return await asyncio.to_thread(run)
 ```
 
-`asyncio.to_thread` runs the blocking function on a thread and lets the event loop keep serving other requests. The Python docs describe it as "primarily intended to be used for executing IO-bound functions". With the GIL, that is exactly where it helps: the thread spends its time waiting on the network, not running Python code. JavaScript developers rarely need this pattern, because Node's I/O APIs are asynchronous to begin with. It is the clearest example in my projects of the earlier point that Python makes you choose between blocking and async libraries.
+`asyncio.to_thread` keeps the event loop free; the docs say it is "primarily intended to be used for executing IO-bound functions", exactly where the GIL allows it to help. Node.js rarely needs this, because its I/O is asynchronous from the start.
 
 ## Can Python and TypeScript work together?
 
-Yes, and two of my projects already do it. The usual split is a TypeScript user interface talking to a Python service over HTTP and JSON.
+Yes; the usual split is a TypeScript UI talking to a Python service over HTTP and JSON.
 
 ### What exists today
 
-- **MOKS** builds its React UI in a Node 26 stage of its `Dockerfile` and copies the output into the Python image. The FastAPI app then serves both the static UI files and the `/moks/api` routes, from one origin and one image.
-- **jithendar.com** keeps the browser away from Python entirely. The browser talks to the Next.js server (TypeScript), and the server calls the Python executor over HTTP with a bearer token, validating with Zod on the way in. The executor validates with Pydantic.
-- **RoboShop AI** runs a TypeScript storefront in front of Python, JavaScript, Go and Java services. My [RoboShop AI architecture article](/blog/roboshop-ai-architecture) covers that layout, and the [FastAPI and FastMCP article](/blog/fastapi-and-fastmcp-ai-projects) covers its Python services in detail.
+**MOKS** builds its React UI in a Node 26 stage and serves it from the FastAPI image, one origin and one image. **jithendar.com** keeps the browser away from Python: Next.js calls the executor with a bearer token, Zod on the way in and Pydantic in the executor. **RoboShop AI** puts a TypeScript storefront in front of Python, JavaScript, Go and Java services ([architecture](/blog/roboshop-ai-architecture), [FastAPI and FastMCP](/blog/fastapi-and-fastmcp-ai-projects)).
 
 ### A general pattern you can adapt
 
-The diagram below is a proposed design, not a description of any one of my projects. It combines the pieces above with one optional step the projects do not use: generating the TypeScript client from an OpenAPI schema.
+This proposed design, not a description of one project, adds one step my projects do not use: generating the client from OpenAPI.
 
 :::figure{caption="Figure 1. A proposed TypeScript-plus-Python architecture. Dashed parts are optional; my projects write the client types by hand."}
 ![Proposed architecture. A TypeScript user interface in the browser sends HTTP requests with JSON bodies to a Python API service. The API validates every request with Pydantic models at its boundary, then calls AI and data libraries. The API publishes an OpenAPI schema. Optionally, a code generator reads that schema and produces typed TypeScript client code, which the user interface imports. The user interface can also validate responses at runtime with Zod.](/images/python-vs-typescript/typescript-python-architecture.svg)
 :::
 
-How the pieces fit:
-
-1. **The TypeScript UI** handles the browser: rendering, forms and local state.
-2. **HTTP and JSON** form the contract. Agree on names (`snake_case` or `camelCase`), how to represent missing values (`null` or a missing key), dates (ISO 8601 strings), and large IDs (strings).
-3. **Validate at the boundary, on both sides.** The Python API validates requests with Pydantic (FastAPI does this automatically for typed parameters). The UI validates the responses it cannot afford to get wrong, with Zod or a hand-written guard like RoboShop's `validFx`.
-4. **Optionally generate the client.** FastAPI publishes an OpenAPI schema at `/openapi.json` by default, and OpenAPI client generators can turn that into TypeScript types. The jithendar.com executor switches the schema off with `openapi_url=None`, and none of my projects generates clients, so this step is untested here.
+Agree the HTTP and JSON contract (naming case, `null` versus missing keys, ISO 8601 dates, large IDs as strings); validate requests with Pydantic and critical responses with Zod or a guard like `validFx`; and optionally generate TypeScript types from FastAPI's `/openapi.json`, untested in my projects because the executor turns it off.
 
 ### What two languages cost
 
-Using both languages is not free:
-
-- **Two toolchains**: two package managers, two lockfile stories, two sets of security updates, and two base images to patch.
-- **Two deployments**, unless you bundle them into one image as MOKS does.
-- **Contract upkeep.** Every field exists twice, and nothing stops the two definitions from drifting unless you generate one from the other or test them against each other.
-- **Two sets of habits** for your team, including every trap in the runtime behaviors section.
-
-A single-language stack avoids all of that. Use both when each side gains something real, such as a Python AI library on one side and a browser UI on the other.
+Two languages mean two toolchains, lockfile stories, security feeds and base images, usually two deployments, every field defined twice, and two sets of habits. Use both only when each side gains something real, such as a Python AI library and a browser UI.
 
 ## Which language should you choose?
 
-Base the choice on your constraints, not on popularity. Both languages can build APIs, automation and AI applications.
+Choose by constraints, not popularity; both can build APIs, automation and AI applications.
 
 | Situation | Leans towards | Why |
 | --- | --- | --- |
@@ -2177,42 +2021,9 @@ Base the choice on your constraints, not on popularity. Both languages can build
 | Existing team skills | Whatever the team knows | A language your team reviews confidently beats a better fit nobody knows well. |
 | Existing codebase and dependencies | Whatever already runs | If a key library exists only in one ecosystem, that usually decides it. |
 
-## How do you move from one language to the other?
+## Five exercises
 
-### Python to TypeScript: a learning checklist
-
-1. Learn JavaScript's runtime rules first: `===`, truthiness, `undefined` versus `null`, and how numbers work.
-2. Use `const` by default and `let` when you must reassign. Never use `var`.
-3. Learn array methods: `map`, `filter`, `reduce`, `some`, `find`, and the comparison function for `sort`.
-4. Learn promises: `async`, `await`, `Promise.all` and `Promise.allSettled`.
-5. Learn the type basics: `type`, `interface`, unions, optional properties, `unknown`, and narrowing.
-6. Turn on `strict` in `tsconfig.json` and run `tsc --noEmit` in CI.
-7. Learn how your project builds: framework, bundler or plain `tsc`.
-
-### TypeScript to Python: a learning checklist
-
-1. Indentation is syntax. Set your editor to four spaces.
-2. Learn the core collections, `list`, `dict`, `set` and `tuple`, and when to use each one.
-3. Learn comprehensions and the `for` loop forms: `enumerate`, `zip` and `dict.items()`.
-4. Learn keyword arguments and the mutable-default trap.
-5. Learn exceptions by type: `ValueError`, `KeyError`, `TypeError`, and writing your own.
-6. Create a virtual environment for every project.
-7. If you want TypeScript-like checking, add type hints and run mypy or Pyright in CI. It is not on by default.
-8. Learn asyncio's rules: `asyncio.run`, tasks, and keeping blocking calls off the loop.
-
-### Habits that do not translate directly
-
-- `if (arr.length)` and `if arr:` both work, but `if (arr)` in TypeScript is always true for an array.
-- `x || default` in JavaScript and `x or default` in Python both replace `0` and `""`. Only JavaScript has `??`.
-- JavaScript objects double as dictionaries. In Python, use a `dict` for data and a class or dataclass for records.
-- Python's `==` compares values. JavaScript's `===` compares object identity.
-- Python errors are loud (`KeyError`, `AttributeError`). JavaScript often quietly returns `undefined` or `NaN`.
-- TypeScript types and Python hints both disappear at runtime. Validate external data in either language.
-- Python creates default arguments once. JavaScript creates them on every call.
-
-### Five exercises
-
-Write each one in both languages, with the same input and the same output. Solutions follow, so try them first.
+Write each in both languages with the same output; try them before the solutions.
 
 1. **Word frequency.** Given `"the cat and the hat and the bat"`, print each word and its count, most frequent first, with ties in alphabetical order.
 2. **Group and total.** Given three orders, `{id: 1, status: "paid", amount: 20.5}`, `{id: 2, status: "pending", amount: 10}` and `{id: 3, status: "paid", amount: 4.5}`, print each status with its order count and total, formatted to two decimal places.
@@ -2514,7 +2325,3 @@ Both print `server unavailable` when nothing is listening on port 8000. In Pytho
 Python and TypeScript share more than their communities sometimes admit: the same building blocks, the same async model, and annotations that both disappear at runtime. The real differences are in the details that bite, such as truthiness, equality, missing keys, numbers and JSON, and in the ecosystems around each language.
 
 My projects follow the work in front of each piece of code. TypeScript runs wherever there is a browser, Python runs where the models, cloud SDKs and learners' Python code are, and HTTP and JSON connect the two. If you are choosing, start from where your code has to run, which libraries you cannot do without, and what your team can maintain confidently. Then, whichever language you pick, validate the data that crosses your boundaries.
-
-## How the examples in this article were checked
-
-Every **Standalone comparison example** was extracted from this article and run by a script in the site's repository: `docs/knowledge-sharing/python-vs-typescript/verify_examples.py`. The script compares each program's output with its `Output:` comment, and checks that pairs labeled "same output" really print the same text. It type-checks the TypeScript with `tsc` in strict mode, using TypeScript 6.0.3 and 7.0.2, and runs mypy on the Python. Python examples ran on CPython 3.11.9, and TypeScript examples on Node.js 26.13.0. The **Actual project code** excerpts are compared line by line with the files at the commits listed in the sources.

@@ -38,69 +38,49 @@ sources:
     publisher: Hugging Face
 ---
 
-MOKS is the SRE agent and investigation portal I am building. An engineer asks a question about a namespace, and a LangGraph investigation collects live evidence from Kubernetes, Prometheus and Loki. It can also search the team's runbooks and postmortems. This article is about one small part of that search path, PyTorch RAG reranking: an optional internal service that uses PyTorch to reorder documentation passages before the agent sees them.
+MOKS is the SRE agent and investigation portal I am building: an engineer asks about a namespace, and a LangGraph investigation collects live evidence from Kubernetes, Prometheus and Loki and searches the team's runbooks. This article is about one small part of that search path: an optional internal service that uses PyTorch to reorder documentation passages before the agent sees them. It covers the service, how MOKS calls it and falls back, the Kubernetes deployment, and what was and was not measured.
 
-It is a narrow component. The service does not generate text, call tools, read the database or decide anything about an incident. It receives a question and a short list of passages that MOKS has already decided the caller may read. It returns ids and scores. Most of the engineering went into everything around that one forward pass: what reaches it, what happens when it is slow or wrong, and how to tell whether it helps.
+The service does not generate text, call tools, read the database or decide anything about an incident. It receives a question and a short list of passages MOKS has already decided the caller may read, and returns ids and scores. Most of the engineering is around that one forward pass: what reaches it, what happens when it is slow or wrong, and how to tell whether it helps.
 
-I reviewed everything here against MOKS commit [`4928f09`](https://github.com/mrjithendar/moks/tree/4928f094e1dab364156103234859f7e8efe7072d) on 2 November 2026. I use four labels throughout:
-
-- **Implemented**: behaviour I read in the code at that commit, usually with a test.
-- **Configured**: a setting in the Helm values, which may differ per environment.
-- **Measured**: a number recorded in the repository, given with the environment it came from.
-- **Not measured**: anything I have no numbers for. I say so rather than estimate.
+I reviewed it against MOKS commit [`4928f09`](https://github.com/mrjithendar/moks/tree/4928f094e1dab364156103234859f7e8efe7072d) on 2 November 2026 and rechecked the live cluster on 6 November. Labels: **Implemented** (in the code, usually tested), **Configured** (Helm values), **Measured** (a recorded number, with its environment) and **Not measured**.
 
 ## The short version
 
-- The reranker is a FastAPI service called `moks-reranker` that runs [`cross-encoder/ms-marco-MiniLM-L6-v2`](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2) with PyTorch on CPU, at a pinned revision baked into the image.
-- MOKS sends it at most 30 passages that already passed authorization and lifecycle checks in PostgreSQL. It gets back ids and scores, never text.
-- Any failure, whether a timeout, overload, wrong model revision or malformed answer, leaves the existing order in place. Search never fails because of the reranker.
-- Exact identifiers stay first and superseded documents stay last, whatever the model prefers. After reranking, PostgreSQL is asked again whether each document is still readable.
-- On the one recorded evaluation, nDCG@5 went from 0.929 to 0.995. That run used a small synthetic dataset, keyword candidates only, on an arm64 Mac. It is a reason to keep testing, not proof that it helps real investigations.
+- `moks-reranker` is a FastAPI service running [`cross-encoder/ms-marco-MiniLM-L6-v2`](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2) with PyTorch on CPU, at a pinned revision baked into the image.
+- MOKS sends it at most 30 passages that already passed authorization and lifecycle checks in PostgreSQL, and gets back ids and scores, never text.
+- Any failure (timeout, overload, wrong model revision, malformed answer) keeps the existing order. Search never fails because of the reranker.
+- Exact identifiers stay first and superseded documents last, whatever the model prefers, and PostgreSQL is asked again afterwards whether each document is still readable.
+- On the one recorded evaluation, nDCG@5 went from 0.929 to 0.995, on a small synthetic dataset with keyword candidates on an arm64 Mac. That is a reason to keep testing, not proof.
+- On mk4 on 6 November, every reranking attempt since the MOKS pods last started had fallen back (7 timeouts, 1 open circuit), although the service logged completed requests in 77 to 247 ms. I have not traced why.
 
 ## The problem: related is not the same as the best evidence
 
-Here is an **illustrative** example. It is not a recorded incident, and none of these documents are in a production index.
+An **illustrative** example, not a recorded incident: "Why are checkout pods failing to access S3?" Suppose the knowledge base holds an S3 access-denied runbook (bucket or KMS key policy), an IRSA passage (`AccessDenied` on `sts:AssumeRoleWithWebIdentity`), an EKS Pod Identity passage (`AWS_ACCESS_KEY_ID` in the pod outranks the association), and a CrashLoopBackOff runbook that says "pods" and "failing" a lot.
 
-> "Why are checkout pods failing to access S3?"
+Keyword search rewards the CrashLoopBackOff runbook for shared words; vector search places the three AWS identity passages close together. MOKS fuses both rankings with reciprocal rank fusion (RRF), which merges rank positions and knows nothing about meaning. A **cross-encoder** reads the question and one passage together and scores how well that passage answers that question. That is the job PyTorch does here.
 
-Suppose the knowledge base holds these four passages, among others:
-
-1. **S3 access denied**: a 403 from S3 with a valid identity is usually a bucket policy or a KMS key policy.
-2. **IRSA**: `AccessDenied` on `sts:AssumeRoleWithWebIdentity` means the role's trust policy does not match the service account.
-3. **EKS Pod Identity**: if `AWS_ACCESS_KEY_ID` is set in the pod, it outranks the Pod Identity association.
-4. **Pods restarting repeatedly**: a CrashLoopBackOff runbook that says "pods" and "failing" several times.
-
-Keyword search rewards shared words, so passage 4 does well on "pods" and "failing" even though it has nothing to do with S3. Vector search places all three AWS identity passages close together, because they are about the same topic. MOKS combines the two rankings with reciprocal rank fusion (RRF), which merges rank positions and knows nothing about meaning. All four are related to the question. Which one is the best evidence depends on how the question's words relate to each passage, and neither ranking looks at that.
-
-A cross-encoder does. It reads the question and one passage together and scores how well that passage answers that question. That is the job I gave PyTorch.
-
-Two details of the example matter for MOKS specifically. First, "S3" is too short to count as an exact identifier: MOKS only extracts identifiers of four characters or more (see [`identifiers`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/rag/service.py#L824-L825)). So nothing in this question is protected from reordering. Second, the recorded synthetic evaluation contains near copies of these passages, and the result there was mixed. The correct passage was already first for all three AWS identity questions, with or without reranking. For "getting 403 reading an encrypted object from the bucket", reranking moved an OpenSearch disk watermark runbook up to second place, presumably because it also mentions a 403. A model trained on web search questions does not know which 403 an operator means.
-
-Where reranking did help in that run, the pattern was this:
+Two details matter. "S3" is too short to protect: MOKS extracts identifiers only from four characters up (see [`identifiers`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/rag/service.py#L824-L825)). And in the recorded synthetic evaluation, which has near copies of these passages, the result was mixed: the right passage was already first for all three AWS identity questions, and for "getting 403 reading an encrypted object from the bucket" reranking lifted an OpenSearch disk watermark runbook to second, presumably for its own 403. A model trained on web search does not know which 403 an operator means. Where it helped, it fixed this pattern:
 
 | Question (synthetic) | Top 3 without reranking | Top 3 with reranking |
 |---|---|---|
 | pod terminated with exit code 137 | crashloop, pod-identity, pending | **oom**, crashloop, selector |
 | ingress returns 503 even though the pods are running | pod-identity, **readiness**, pending | **readiness**, crashloop, pending |
 
-The keyword ranking put the Pod Identity runbook near the top of both questions because it uses the word "pod" a lot. The cross-encoder fixed that.
+The keyword ranking favoured the Pod Identity runbook for its many uses of "pod"; the cross-encoder corrected it.
 
-## Where PyTorch fits, and where it does not
+## Where PyTorch fits
 
-Several pieces in a RAG system are easy to mix up, so here is each one and what it does in MOKS.
+- **The embedding model** turns each text into a vector separately, so passage vectors can be computed at indexing time. In MOKS it is an optional external provider; without one, search uses keywords and identifiers only.
+- **The vector index** (pgvector in PostgreSQL, or optional OpenSearch) only suggests candidates. PostgreSQL decides what is readable.
+- **The cross-encoder reranker** reads query and passage *together* and outputs one score. Nothing can be precomputed, so every pair is a fresh forward pass, which is why it only sees a short list.
+- **The LLM** plans tool calls and writes the report at an external provider; the reranker never talks to it. The investigation graph is covered in [LangChain vs LangGraph for an SRE agent](/blog/langchain-vs-langgraph-sre-agent-moks), and search is a tool its `plan` node may request.
+- **Reviewed SRE skills** are chosen by publication state, policy, connectors and permissions, never by reranker scores ([RAG and skills](/blog/moks-rag-and-skills-design)).
 
-- **Embedding model.** It turns a text into a vector, a list of numbers, so that similar texts get nearby vectors. The query and each passage are encoded separately, which is why passage vectors can be computed once at indexing time. In MOKS this is an external provider an administrator configures, and it is optional: without one, search runs on keywords and identifiers only.
-- **Vector index.** It stores those vectors and finds the nearest ones quickly. MOKS uses pgvector in PostgreSQL or an optional OpenSearch index. Either way, the index only suggests candidates. PostgreSQL decides what is readable.
-- **Cross-encoder reranker.** One transformer reads the query and a passage *together* and outputs a single relevance score. It sees how words in the question relate to words in the passage, which separate vectors cannot. The cost is that nothing can be precomputed: every query and passage pair is a fresh forward pass. That is why it only ever sees a short list.
-- **The LLM.** It plans which tools to call and writes the report. It runs at an external provider, and the reranker never talks to it.
-- **LangGraph and LangChain.** The investigation is a LangGraph state machine (`triage → logs → skills → plan ⇄ act → correlate → report`), and langchain-core provides thin adapters. I covered that in [LangChain vs LangGraph for an SRE agent](/blog/langchain-vs-langgraph-sre-agent-moks). Search, including reranking, is an ordinary tool the `plan` node may ask for.
-- **Reviewed SRE skills.** These are versioned `SKILL.md` playbooks, selected by publication state, environment policy, connectors and permissions. Reranker scores play no part in selecting them. The [RAG and skills article](/blog/moks-rag-and-skills-design) describes how that works.
-
-PyTorch runs the cross-encoder's forward pass, and nothing else in MOKS. It does not replace the vector index, the agent, authorization or any remediation control.
+PyTorch runs the cross-encoder's forward pass and nothing else in MOKS.
 
 ### The actual model
 
-The repository pins [`cross-encoder/ms-marco-MiniLM-L6-v2`](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2) at revision `233902d25c440f23af6f7d6e94d2946bac0bee0a` in [`reranker/model.lock.json`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/reranker/model.lock.json). I checked its [`config.json` at that revision](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2/blob/233902d25c440f23af6f7d6e94d2946bac0bee0a/config.json) rather than assume a structure:
+[`reranker/model.lock.json`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/reranker/model.lock.json) pins revision `233902d25c440f23af6f7d6e94d2946bac0bee0a`. From its [`config.json` at that revision](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2/blob/233902d25c440f23af6f7d6e94d2946bac0bee0a/config.json):
 
 | Property | Value |
 |---|---|
@@ -112,28 +92,26 @@ The repository pins [`cross-encoder/ms-marco-MiniLM-L6-v2`](https://huggingface.
 | Language | English |
 | License | Apache-2.0, according to the model card |
 
-The model card reports NDCG@10 74.30 on TREC DL 2019 and MRR@10 39.01 on MS MARCO dev. Its throughput figure of 1,800 documents per second was measured on a V100 GPU and says nothing about CPU inference in a pod.
-
-The service loads the model through sentence-transformers' `CrossEncoder` (6.2.0) on `torch==2.15.0+cpu`, pinned in [`reranker/requirements.txt`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/reranker/requirements.txt).
+The model card reports NDCG@10 74.30 on TREC DL 2019 and MRR@10 39.01 on MS MARCO dev; its 1,800 documents per second was measured on a V100 GPU and says nothing about CPU in a pod. The service loads it through sentence-transformers' `CrossEncoder` (6.2.0) on `torch==2.15.0+cpu`, pinned in [`reranker/requirements.txt`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/reranker/requirements.txt).
 
 ![MOKS architecture with the PyTorch reranker and its trust boundaries. Outside the cluster are the engineer's browser, an LLM provider chosen by an admin, and an optional embedding API. In namespace moks, moks-api serves FastAPI knowledge search and moks-worker runs a LangGraph investigation whose plan node requests the kb_search tool. Both call rag.service.search, which takes candidates from an optional OpenSearch index, runs the authoritative access and lifecycle check in PostgreSQL, and exchanges authorized ids and text for ids and scores with moks-reranker. moks-reranker sits in its own trust boundary: FastAPI and PyTorch on CPU, ms-marco-MiniLM-L6-v2 at revision 233902d, ClusterIP port 8090 with a bearer token, and no egress, database access or ServiceAccount token. Reviewed skills are chosen by policy and rules, never by reranker scores, and cited passages in the report are documentation, not live state.](/images/moks-pytorch-reranking/moks-reranker-architecture.svg)
 
 ## The end-to-end request flow
 
-The order below follows [`search()`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/rag/service.py#L983-L1070) in `backend/moks/rag/service.py`. The function's docstring lists the same order, and I checked it line by line.
+The order follows [`search()`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/rag/service.py#L983-L1070) in `backend/moks/rag/service.py`, checked line by line against its docstring:
 
-1. **Question and authorized scope.** The `plan` node asks for [`kb_search`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/tools/phase2.py#L169-L184), which passes the investigation's principal, environment and focus namespace. `access.grants()` turns that into the bindings the caller holds for this scope. No grants means an empty answer.
-2. **Candidate retrieval.** [`_rankings`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/rag/service.py#L908-L947) collects a keyword ranking, an exact-identifier ranking that is counted twice, optional ranked sub-questions, and a vector ranking when embeddings are available. RRF fuses them. The pool starts at `max(k * 4, 20)` and grows threefold, up to 400, when unreadable or retired rows crowd out the readable ones.
-3. **Authorization and lifecycle.** PostgreSQL returns only chunks whose document and source are active and in the current realm. Each one then passes `access.can_read` and `access.in_request` for the requested environment and namespace, and stale documents are dropped where the source's policy says to exclude them. The comment in the code says it directly: "what the index said is only a suggestion."
-4. **Small scoring signals.** [`_score`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/rag/service.py#L1081-L1109) adds small adjustments to the fused score: `+0.03` per exact identifier found, smaller boosts for service, resource type, scope and reviewed authority, and penalties for stale or superseded documents.
-5. **Candidate preparation.** [`_prepare`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/rag/service.py#L1115-L1125) fills a window of up to 30 rows, with at most 4 chunks from any one document and no identical text twice. Rows that do not fit stay in their existing order after the window.
-6. **Internal reranker request.** The client sends each chunk's heading and text with an opaque id. It clips the query to 1,000 characters and each passage to 2,000, and sets a 1,500 ms deadline.
-7. **Model scoring.** The service scores every pair and returns ids, scores and the model revision.
-8. **Validation and context selection.** The answer is refused unless it scores exactly the ids that were sent. The order is then constrained, and [`_select`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/rag/service.py#L1170-L1194) keeps at most 3 passages per document and drops near duplicates within one scope.
-9. **Final access and content check.** [`_finish_reranking`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/rag/service.py#L1149-L1167) reloads the documents from PostgreSQL. The round trip took time, and a document may have been quarantined or had its access changed meanwhile. Anything no longer usable is removed and counted in `removed_after_recheck`. This runs only when reranking was applied, because only then has extra time passed.
-10. **Citations and the LLM.** `kb_search` removes the per-chunk ranking details before the passages go to the model (`# for the evidence view, not for the model`). It returns passages with citations to the source, path, revision and lines. The prompt builder wraps them in `<untrusted_data>` blocks, and the evidence layer classifies them as documentation rather than observations of the live system. One small wrinkle: each passage still carries its `score` from before reranking, so after reranking the scores the model sees are no longer in descending order. The order of the list is what changed, not the numbers.
+1. **Scope.** [`kb_search`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/tools/phase2.py#L169-L184) passes the investigation's principal, environment and namespace; `access.grants()` turns them into bindings, and no grants means an empty answer.
+2. **Candidates.** [`_rankings`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/rag/service.py#L908-L947) fuses a keyword ranking, an exact-identifier ranking counted twice, optional sub-questions and a vector ranking with RRF. The pool starts at `max(k * 4, 20)` and triples, up to 400, when unreadable rows crowd it.
+3. **Authorization and lifecycle.** PostgreSQL returns only active chunks in the current realm, each checked with `access.can_read` and `access.in_request`; as the code says, "what the index said is only a suggestion."
+4. **Small signals.** [`_score`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/rag/service.py#L1081-L1109) adds `+0.03` per exact identifier, smaller boosts for service, resource type, scope and reviewed authority, and penalties for stale or superseded documents.
+5. **Window.** [`_prepare`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/rag/service.py#L1115-L1125) takes up to 30 rows, at most 4 per document and no identical text twice; the rest keep their order after it.
+6. **Request.** The client sends heading and text with opaque ids, clipping the query to 1,000 characters and passages to 2,000, with a 1,500 ms deadline.
+7. **Scoring.** The service returns ids, scores and the model revision.
+8. **Validation and selection.** The answer must score exactly the ids sent. The order is constrained (below), and [`_select`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/rag/service.py#L1170-L1194) keeps at most 3 passages per document and drops near duplicates in one scope.
+9. **Recheck.** [`_finish_reranking`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/rag/service.py#L1149-L1167) reloads the documents, because one may have been quarantined or had access changed during the round trip, and counts removals in `removed_after_recheck`.
+10. **To the LLM.** `kb_search` strips per-chunk ranking details (`# for the evidence view, not for the model`), returns passages with citations to source, path, revision and lines, inside `<untrusted_data>` blocks classified as documentation. Each passage keeps its pre-rerank `score`, so the numbers the model sees are no longer in descending order; only the list order changed.
 
-The decision to rerank is three lines in `search()`:
+The decision to rerank is three lines:
 
 ```python
 # backend/moks/rag/service.py
@@ -146,11 +124,11 @@ The decision to rerank is three lines in `search()`:
         results = await _finish_reranking(db, principal, results, applied, environment, namespace)
 ```
 
-`reranking.active()` returns `None` unless the feature is enabled and a URL, model id and revision are all set. With no client, search runs exactly as it did before the feature existed.
+`reranking.active()` returns `None` unless the feature is enabled and a URL, model id and revision are set, and then search runs exactly as before the feature existed.
 
 ### What the model is not allowed to override
 
-[`_apply_reranker`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/rag/service.py#L1128-L1146) does not simply sort by the model's score:
+[`_apply_reranker`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/rag/service.py#L1128-L1146) does not simply sort by score:
 
 ```python
 # backend/moks/rag/service.py
@@ -161,19 +139,13 @@ The decision to rerank is three lines in `search()`:
     final = pinned + [r for r in held if r[6] not in ("superseded", "deprecated")] + [r for r in held if r[6] in ("superseded", "deprecated")] + rest
 ```
 
-Any passage that literally contains an identifier from the question stays ahead of everything else, in its original order. If an engineer pastes `ERR_PAY_4071` or `FailOnSharedResource`, matching that string is the whole reason the passage was found, and a model trained on web queries should not argue with it. Superseded and deprecated documents go after current ones. Ties fall back to the previous order, so the result is deterministic.
-
-There is a trade-off. The pin is a substring match, so a question containing a common identifier such as `AccessDenied` pins every passage that mentions it, and the model can only reorder whatever is left.
+A passage that literally contains an identifier from the question, such as `ERR_PAY_4071`, stays ahead in its original order, because matching that string is why it was found. Superseded and deprecated documents go last, and ties keep the previous order, so the result is deterministic. The trade-off: the pin is a substring match, so a common identifier such as `AccessDenied` pins every passage that mentions it.
 
 ![Retrieval, reranking and context selection sequence in MOKS, including fallback. 1: kb_search in moks-worker sends the query and scope to search() in rag/service.py, which resolves grants and fuses keyword, identifier and vector candidates with RRF. 2 and 3: search asks PostgreSQL for chunk rows by id and gets back only active, readable ones. It applies small scoring signals and prepares at most 30 candidates, 4 per document, with no repeats. 4: it posts them to moks-reranker with a bearer token, ids, text and a 1500 ms deadline. The service gate allows 1 worker and 4 queued requests, answers 429 when full and 504 at the deadline, and scores in batches of 16 as raw logits. 5: it returns ids, scores, model and revision; on a timeout, 429 or 5xx, search falls back. Search accepts only the exact ids with finite scores and the same revision, and otherwise keeps the existing order. It then pins exact identifiers, places superseded documents last, and selects at most 3 passages per document with no near repeats. 6 and 7: only if reranking was applied, it rechecks access and lifecycle in PostgreSQL. 8: it returns passages with citations to kb_search.](/images/moks-pytorch-reranking/moks-rerank-sequence.svg)
 
 ## The inference service
 
-The whole service is three files under [`reranker/`](https://github.com/mrjithendar/moks/tree/4928f094e1dab364156103234859f7e8efe7072d/reranker): `app.py` for HTTP, `engine.py` for the model and capacity, and `schemas.py` for the wire format. `engine.py` has no web framework in it, so the capacity logic can be tested without one.
-
-### Endpoints and request schema
-
-There are three routes, and the generated OpenAPI and docs pages are turned off:
+The service is three files under [`reranker/`](https://github.com/mrjithendar/moks/tree/4928f094e1dab364156103234859f7e8efe7072d/reranker): `app.py` (HTTP), `engine.py` (model and capacity, framework-free so it can be tested alone) and `schemas.py` (wire format). OpenAPI and docs pages are off.
 
 | Route | Purpose |
 |---|---|
@@ -181,7 +153,7 @@ There are three routes, and the generated OpenAPI and docs pages are turned off:
 | `GET /readyz` | Readiness: 200 with the model id and revision once loaded and warmed up, otherwise 503 with the error type |
 | `POST /rerank` | Score candidates; needs `Authorization: Bearer <token>` |
 
-The service refuses to start without `RERANKER_TOKEN`; it has no unauthenticated mode. Requests are strict Pydantic models with `extra="forbid"`, so a request cannot add a `model`, `model_path` or `trust_remote_code` field. Ids must match `^[A-Za-z0-9_-]+$` and must be unique. [`schemas.py`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/reranker/schemas.py) sets hard ceilings that deployment settings can lower but never raise:
+The service will not start without `RERANKER_TOKEN`. Requests are strict Pydantic models (`extra="forbid"`), so nobody can add `model`, `model_path` or `trust_remote_code`, and ids must be unique and match `^[A-Za-z0-9_-]+$`. [`schemas.py`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/reranker/schemas.py) sets ceilings that deployment settings can lower but not raise:
 
 | Limit | Ceiling in code | Configured on mk4 |
 |---|---:|---:|
@@ -190,11 +162,11 @@ The service refuses to start without `RERANKER_TOKEN`; it has no unauthenticated
 | Passage characters | 8,000 | 2,000 |
 | `timeout_ms` | 10 to 30,000 | client sends 1,500 |
 
-FastAPI's default validation error echoes the rejected input, and here the input is operational documentation. The service replaces that handler with one that returns only the location and type of each error. A test checks that rejected text never appears in the response.
+FastAPI's default validation error echoes rejected input, which here is operational documentation, so the service returns only each error's location and type, and a test checks the text never appears.
 
 ### Model loading and warm-up
 
-The model loads in FastAPI's lifespan handler, off the event loop with `asyncio.to_thread`. A warm-up call follows, so the first real request does not pay for lazy initialization. If loading fails, the process stays up, `/readyz` returns 503 with the exception type, and a load-failure counter goes up. That way a broken image shows up in the probe output instead of as a crash loop with no explanation.
+The model loads in FastAPI's lifespan, off the event loop with `asyncio.to_thread`, followed by a warm-up call. If loading fails, the process stays up and `/readyz` returns 503 with the exception type, so a broken image is visible in probe output instead of an unexplained crash loop.
 
 ```python
 # reranker/engine.py
@@ -209,14 +181,11 @@ The model loads in FastAPI's lifespan handler, off the event loop with `asyncio.
         self._encoder.eval()
 ```
 
-Here is what each setting does:
-
-- `torch.set_num_threads` sets the threads used *within* one operation, such as a matrix multiply ("intraop parallelism" in the [PyTorch docs](https://docs.pytorch.org/docs/2.15/generated/torch.set_num_threads.html)). It comes from `RERANKER_THREADS` and is 2 by default.
-- `torch.set_num_interop_threads(1)` limits parallelism *between* independent operations. PyTorch allows it to be set only once, before any inter-op work starts, which is why a `RuntimeError` is tolerated.
-- `device="cpu"` is reinforced by the install. torch comes from the CPU wheel index, so no CUDA libraries are in the image.
-- `local_files_only=True` and `trust_remote_code=False`: the weights must already be on disk, and no Python code from a model repository is ever executed.
-- `use_safetensors=True`: the weights are read from `model.safetensors`, a format that stores tensors [without pickle](https://huggingface.co/docs/safetensors/index). Loading a pickled PyTorch checkpoint can execute code. Loading safetensors cannot.
-- `activation_fn=Identity` keeps raw logits. The [CrossEncoder docs](https://sbert.net/docs/package_reference/cross_encoder/cross_encoder.html) say that when no activation is given, a sigmoid is used for single-label models. A sigmoid squeezes scores into 0 to 1, which makes them look like probabilities when they are not. This model's `config.json` at the pinned revision already declares an identity activation, so the explicit setting mainly guarantees the same behaviour across library versions.
+- `torch.set_num_threads` (from `RERANKER_THREADS`, default 2) sets threads *within* one operation ("intraop parallelism" in the [PyTorch docs](https://docs.pytorch.org/docs/2.15/generated/torch.set_num_threads.html)); `set_num_interop_threads(1)` limits parallelism *between* operations and can be set only once, hence the tolerated `RuntimeError`.
+- `device="cpu"` matches the install: torch comes from the CPU wheel index, with no CUDA in the image.
+- `local_files_only=True` and `trust_remote_code=False`: weights must be on disk, and no model-repository code ever runs.
+- `use_safetensors=True` reads `model.safetensors`, which stores tensors [without pickle](https://huggingface.co/docs/safetensors/index); a pickled checkpoint can execute code on load.
+- `activation_fn=Identity` keeps raw logits. The [CrossEncoder docs](https://sbert.net/docs/package_reference/cross_encoder/cross_encoder.html) apply a sigmoid by default for single-label models, which makes scores look like probabilities. The pinned `config.json` already declares identity, so this guarantees the same behaviour across library versions.
 
 ### Scoring, batching and truncation
 
@@ -234,13 +203,11 @@ Here is what each setting does:
             scores += [float(s) for s in out]
 ```
 
-Candidates are scored in batches of `RERANKER_BATCH_SIZE`, 16 by default, so 30 candidates make two forward passes. The deadline is checked between batches. A batch that has started cannot be interrupted, so the worst-case overrun is about one batch.
+Candidates are scored in batches of `RERANKER_BATCH_SIZE` (16), so 30 candidates take two forward passes, with the deadline checked between batches; the worst overrun is about one batch. Query and passage share 512 tokens: the service reports which ids will be cut, MOKS records its own clipping separately (`clipped` versus `truncated`), and such passages are marked `partially_scored`. The token count assumes only the passage is cut, which holds for short questions.
 
-The model takes 512 tokens for the query and passage together. Before scoring, the service counts tokens and reports which ids will not fit, and the tokenizer then cuts those pairs. MOKS has already clipped passages to 2,000 characters, and it records both kinds of cut separately: `clipped` for its own and `truncated` for the service's. The result marks such passages as `partially_scored`. One limitation of the report is that the token count assumes only the passage is cut. That holds when the question is short.
+### Bounded capacity, deadlines and cancellation
 
-### Bounded capacity
-
-The service accepts at most `RERANKER_CONCURRENCY` running requests plus `RERANKER_QUEUE` waiting ones, 1 and 4 by default. Beyond that it answers `429` with `Retry-After: 1` immediately, rather than letting requests pile up behind a CPU-bound model.
+At most `RERANKER_CONCURRENCY` running plus `RERANKER_QUEUE` waiting requests are accepted (1 and 4); beyond that the answer is an immediate `429` with `Retry-After: 1`.
 
 ```python
 # reranker/engine.py
@@ -260,9 +227,7 @@ The service accepts at most `RERANKER_CONCURRENCY` running requests plus `RERANK
         return future
 ```
 
-The important line is the last callback: a slot is released when the *computation* finishes, not when the HTTP request ends.
-
-### Deadlines, timeouts and cancellation
+The key line is the last callback: a slot is released when the *computation* finishes, not when the HTTP request ends.
 
 ```python
 # reranker/app.py
@@ -280,25 +245,17 @@ The important line is the last callback: a slot is released when the *computatio
             raise HTTPException(504, "deadline exceeded") from None
 ```
 
-When the deadline passes, the handler stops waiting and returns `504`. The model thread keeps running, because Python cannot stop a thread inside a native PyTorch call. That is why a timed-out request must not free its slot. If the slot followed the HTTP request, every timeout would admit a new request while the CPU was still busy with the old one. Under load, a service with "one worker" would then run many computations on the same two threads, every one would get slower, more would time out, and the cycle would feed itself. Tying the slot to the computation keeps the service's real concurrency at what was configured.
+At the deadline the handler returns `504`, but the model thread keeps running, because Python cannot stop a thread inside a native PyTorch call. If the slot followed the HTTP request, every timeout would admit new work while the CPU was still busy, each request would slow down, more would time out, and the cycle would feed itself. Tying the slot to the computation keeps real concurrency at the configured value. `asyncio.shield` means a disconnecting client cancels only the wait, and queued work past its deadline never starts. Tests cover all three: [`test_a_timed_out_request_keeps_its_slot_until_the_work_ends`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/reranker/tests/test_service.py#L179-L198), `test_a_cancelled_caller_does_not_free_a_running_slot` and `test_work_past_its_deadline_never_starts`. Output needs exactly one finite score per candidate, or the answer is a `500`.
 
-The same reasoning covers a client that disconnects. `asyncio.shield` means cancelling the handler cancels only the wait, not the work. Work that waited in the queue past its deadline never starts: the `work` function checks the deadline before it calls the model. Tests cover all three cases: [`test_a_timed_out_request_keeps_its_slot_until_the_work_ends`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/reranker/tests/test_service.py#L179-L198), `test_a_cancelled_caller_does_not_free_a_running_slot` and `test_work_past_its_deadline_never_starts`.
+### Shutdown, metrics and logging
 
-The output is checked before it leaves the service. There must be exactly one score per candidate, and none may be NaN or infinite. Otherwise the answer is a `500`, not a ranking.
+Uvicorn's `timeout_graceful_shutdown` comes from `RERANKER_DRAIN_SECONDS` (20), with `terminationGracePeriodSeconds` 10 higher; on shutdown the service marks itself unready and `gate.close()` refuses new work and waits for accepted work. One gap: as I read Uvicorn's shutdown order, it stops accepting connections before the lifespan shutdown, and the chart has no `preStop` delay, so Kubernetes may briefly send connections to a pod no longer listening. MOKS treats a refused connection as `unavailable` and keeps its order, so this is harmless, but it is not a strict drain.
 
-### Graceful shutdown
-
-Uvicorn runs with `timeout_graceful_shutdown` set from `RERANKER_DRAIN_SECONDS`, 20 by default, and the pod's `terminationGracePeriodSeconds` is that plus 10. On shutdown, the lifespan handler marks the service not ready and calls `gate.close()`, which refuses new work and waits for accepted work to finish.
-
-One gap. As I read Uvicorn's shutdown order, it stops accepting connections before the lifespan shutdown runs, and the chart has no `preStop` delay. So for a moment, Kubernetes may still send connections to a pod that is no longer listening. In MOKS this is harmless, because the client treats a refused connection as `unavailable` and keeps the existing order. Still, it is not a strict drain, and I would add a short `preStop` sleep before calling it one.
-
-### Metrics and logging
-
-The service exposes Prometheus metrics on port 9464: `reranker_requests_total{outcome}`, `reranker_queue_wait_seconds`, `reranker_inference_seconds`, `reranker_candidates`, `reranker_truncated_passages_total`, `reranker_slots_held` and `reranker_model_load_failures_total`. Logs are JSON events with a request id, counts and durations. Queries and passages are never logged and never appear in a metric label, and [a test](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/reranker/tests/test_service.py#L139-L143) checks that.
+Prometheus metrics on port 9464: `reranker_requests_total{outcome}`, `reranker_queue_wait_seconds`, `reranker_inference_seconds`, `reranker_candidates`, `reranker_truncated_passages_total`, `reranker_slots_held` and `reranker_model_load_failures_total`. On 6 November Prometheus had no series for them, so the service itself is not yet scraped. Logs are JSON with request id, counts and durations; queries and passages are never logged or used as labels, and [a test](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/reranker/tests/test_service.py#L139-L143) checks it.
 
 ## Model artifacts and reproducibility
 
-The model is part of the image, not something a pod downloads. [`fetch_model.py`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/reranker/fetch_model.py) runs once, at build time. It downloads exactly the files listed in the lock file at the pinned revision and compares each file's SHA-256 with the lock. A mismatch fails the build.
+The model is part of the image. At build time, [`fetch_model.py`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/reranker/fetch_model.py) downloads exactly the files in the lock file at the pinned revision and fails the build if any SHA-256 differs.
 
 ```dockerfile
 # reranker/Dockerfile
@@ -308,39 +265,24 @@ RUN PYTHONPATH="$(python -c 'import site,sys;print("/install/lib/python%d.%d/sit
  && rm -rf /opt/model/.cache && cp model.lock.json /opt/model/
 ```
 
-The runtime stage copies the installed packages and `/opt/model`, sets `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`, and runs as UID 10001. At startup, `Model.load()` refuses to continue if `model.lock.json` is missing, and the service reports the lock's model id and revision on `/readyz` and in every response. MOKS compares those with its own configuration, which is described below.
+The runtime stage sets `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` and runs as UID 10001. `Model.load()` refuses to continue without `model.lock.json`, and the lock's model id and revision appear on `/readyz` and in every response for MOKS to compare. Pinned: the model revision and every file hash, every Python package with `==`, torch as CPU-only. Not pinned: the `python:3.12-slim` base is a tag, and `pip install` has no `--require-hashes`, so package versions are reproducible but their bytes are not verified.
 
-What is pinned, and what is not:
+The CI job `reranker-image` builds on an arm64 runner for every push to `master`, starts the image with `--network none`, `--read-only` and the non-root user, waits for `/readyz` (so a runtime download would fail), and pushes a commit-SHA tag and `latest`. Only arm64 is built, because every mk4 node is arm64.
 
-- **Pinned:** the model revision and the hash of every model file; every Python package with `==`, including transitive ones; torch as a CPU-only build.
-- **Not pinned:** the `python:3.12-slim` base image is a tag, not a digest, and `pip install` does not use `--require-hashes`. So the package *versions* are reproducible, but the package *bytes* are not verified. Both would be easy to tighten.
-
-The CI job `reranker-image` runs on every push to `master` on an arm64 runner. It builds the image and starts it with `--network none`, `--read-only` and the non-root user, then waits for `/readyz`, so a model that tried to download at runtime would fail here. It then pushes a commit-SHA tag and `latest`. Only arm64 is built, because every node in my Minikube cluster is arm64.
-
-**Updating the model,** as documented in [`docs/RERANKING.md`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/docs/RERANKING.md): put the new revision and hashes in `model.lock.json`, rerun the evaluation, push, set `reranker.model.revision` in the Helm values, and restart the reranker, the API and the worker. Until the revisions agree, MOKS refuses the service's answers and keeps its existing order. A half-finished upgrade therefore turns reranking off rather than mixing models.
-
-**Rolling back** means pointing `latest` at an earlier commit tag and restarting, or setting `reranker.image.digest`. With `latest` and `imagePullPolicy: Always`, two replicas can run different builds until both restart. Setting a digest avoids that.
-
-On licensing: the model card states Apache-2.0. I have not reviewed the terms of the MS MARCO training data. If that matters for how you use the model, check them yourself.
+To update the model ([`docs/RERANKING.md`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/docs/RERANKING.md)): put the new revision and hashes in `model.lock.json`, rerun the evaluation, push, set `reranker.model.revision`, and restart the reranker, API and worker. Until the revisions agree, MOKS refuses the answers, so a half-finished upgrade turns reranking off instead of mixing models. To roll back, point `latest` at an earlier commit tag and restart; with `imagePullPolicy: Always`, two replicas can run different builds until both restart. The model card states Apache-2.0; I have not reviewed the MS MARCO training-data terms.
 
 ## MOKS integration and fallback
 
-The client lives in [`backend/moks/rag/rerank.py`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/rag/rerank.py). Its docstring sets the rule: "never a reason for a search to fail".
-
-### Two switches
+The client is [`backend/moks/rag/rerank.py`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/rag/rerank.py), whose docstring sets the rule: "never a reason for a search to fail".
 
 | Helm value | Effect | Default | mk4 at 4928f09 |
 |---|---|---|---|
 | `reranker.enabled` | Deploys the service and writes its URL, model and revision into MOKS's ConfigMap | `false` | `true` |
 | `reranker.client.enabled` | Sets `MOKS_RAG_RERANK_ENABLED`, so search actually calls the service | `false` | `true` |
 
-They are separate so the service can run and be evaluated before anyone's results change. Turning only the client off, or stopping the service, is a complete rollback.
+The two switches let the service run and be evaluated before anyone's results change; turning off the client, or stopping the service, is a complete rollback. Both were still on for mk4 on 6 November.
 
-### Authentication
-
-The service checks the bearer token with `hmac.compare_digest`, a constant-time comparison. The token lives in a Kubernetes Secret, `moks-reranker-secrets`, under the key `MOKS_CRED_RERANKER_TOKEN`, and the same value goes into the API and worker Secret. Because there is one shared token, rotating it means changing both Secrets and restarting all three components. Calls in between fail with `401` and fall back.
-
-### Response validation
+The service compares the bearer token with `hmac.compare_digest`. The token lives in Secret `moks-reranker-secrets` under `MOKS_CRED_RERANKER_TOKEN`, and the same value in the API and worker Secret, so rotation means changing both Secrets and restarting all three; calls in between fail with `401` and fall back.
 
 ```python
 # backend/moks/rag/rerank.py
@@ -361,9 +303,7 @@ The service checks the bearer token with `hmac.compare_digest`, a constant-time 
         return scores if set(scores) == set(sent) else "invalid_output"
 ```
 
-MOKS checks everything the service already checks, because it does not trust the service either. The answer is all or nothing: a missing id, an extra id, a duplicate, a non-finite score or a different model revision rejects the whole answer.
-
-### The circuit breaker
+MOKS rechecks everything the service checks, all or nothing: a missing, extra or duplicate id, a non-finite score or a different model revision rejects the whole answer.
 
 ```python
 # backend/moks/rag/rerank.py
@@ -375,33 +315,21 @@ MOKS checks everything the service already checks, because it does not trust the
         return Outcome(reason=reason)
 ```
 
-After 5 consecutive failures, the client stops calling for 30 seconds. Or, if the last failure was a `429`, for the service's `Retry-After`, capped at 30 seconds. While open, searches skip the call and report `circuit_open`. After the window, the next search tries again. The failure count resets only on success, so one more failure reopens the circuit straight away, which works much like a half-open state.
+After 5 consecutive failures the client stops calling for 30 seconds, or for the service's `Retry-After` (capped at 30) if the last failure was a `429`, and searches report `circuit_open`. The count resets only on success, so one more failure reopens it at once, much like a half-open state. The breaker is per process, a single `429` does not pause calls, and there are no retries: a failed call costs one search its reranking.
 
-Three details are worth knowing:
-
-- The breaker lives in each process, so every API and worker process has its own count.
-- A single `429` does not pause calls. `Retry-After` only sets the length of the pause once the fifth failure opens the circuit.
-- There are no retries. A failed call costs one search the reranking, nothing more.
-
-### What fallback looks like
-
-Every search response carries a `reranking` block. Its `state` is `applied` or `fallback`, with a reason such as `timeout`, `overload`, `unavailable`, `auth`, `model_mismatch`, `invalid_output` or `circuit_open`, along with the model, the revision and timings. The public knowledge API shows ordinary users only `state` and the standard note. Index administrators see the rest, plus a status page backed by `GET /knowledge/reranking`.
-
-Fallback is tested, not just assumed. In the backend tests, `test_service_refusals_keep_the_existing_order` covers `429`, `504`, `503`, `500` and `401`, and `test_a_malformed_answer_changes_nothing` and `test_a_changed_model_revision_is_not_trusted` cover bad answers. Each compares the chunk ids with a search that has reranking off. The RAG evaluation gates do the same for its first five labelled questions, using a reranker that always times out.
+Every search response carries a `reranking` block with `state` (`applied` or `fallback`), a reason (`timeout`, `overload`, `unavailable`, `auth`, `model_mismatch`, `invalid_output`, `circuit_open`), model, revision and timings. Ordinary users see only `state` and a standard note; index administrators see the rest and a status page backed by `GET /knowledge/reranking`. Fallback is tested: `test_service_refusals_keep_the_existing_order` covers `429`, `504`, `503`, `500` and `401`, and `test_a_malformed_answer_changes_nothing` and `test_a_changed_model_revision_is_not_trusted` cover bad answers, each comparing chunk ids with reranking off.
 
 ## Kubernetes deployment
 
-Everything is in one Helm template, [`deploy/helm/moks/templates/reranker.yaml`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/deploy/helm/moks/templates/reranker.yaml). It belongs to the `reranker` resource group, so one Argo CD Application can render just those resources. When `reranker.enabled` is true, it creates:
+[`deploy/helm/moks/templates/reranker.yaml`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/deploy/helm/moks/templates/reranker.yaml) belongs to the `reranker` resource group, so one Argo CD Application can render it alone. With `reranker.enabled` it creates:
 
-- **ServiceAccount** `moks-reranker` with `automountServiceAccountToken: false`. The pod has no Kubernetes API credentials.
-- **Service** `moks-reranker`, type `ClusterIP`, port 8090. There is no Ingress and no VirtualService.
-- **Deployment** `moks-reranker`, running as UID and GID 10001 with a `RuntimeDefault` seccomp profile, a read-only root filesystem, all capabilities dropped and a 64 MiB `emptyDir` for `/tmp`.
-- **NetworkPolicy** that admits only pods labelled as the MOKS API or worker on 8090, and the configured metrics namespaces on 9464, with `egress: []`. The pod can open no outbound connections at all.
-- **AuthorizationPolicy**, only when Istio mTLS is enabled, naming the API and worker service accounts.
+- **ServiceAccount** `moks-reranker` with `automountServiceAccountToken: false`: no Kubernetes API credentials.
+- **Service** `moks-reranker`, `ClusterIP` on 8090, with no Ingress or VirtualService.
+- **Deployment** running as UID and GID 10001 with `RuntimeDefault` seccomp, a read-only root, all capabilities dropped and a 64 MiB `emptyDir` for `/tmp`.
+- **NetworkPolicy** admitting only the MOKS API and worker on 8090 and the metrics namespaces on 9464, with `egress: []`.
+- **AuthorizationPolicy**, only when Istio mTLS is on, naming the API and worker service accounts.
 
-The template refuses to render without an image tag or a well-formed digest.
-
-The base values set the service's knobs and its resources:
+The template refuses to render without an image tag or a well-formed digest. The base values:
 
 ```yaml
 # deploy/helm/moks/values.yaml
@@ -421,9 +349,7 @@ The base values set the service's knobs and its resources:
     limits: {cpu: "2", memory: 1Gi}
 ```
 
-The comment says "provisional", and it means it. The requests and limits came from a laptop. The only in-cluster number I have is a single `kubectl top` reading at idle: 3m CPU and 443 MiB of memory, taken while writing this. That is a snapshot, not a load measurement, but it does say the pod sits close to its 512 MiB request with no work at all.
-
-Probes:
+"Provisional" is meant: the requests and limits came from a laptop. On 2 November a single idle `kubectl top` reading showed 3m CPU and 443 MiB; on 6 November it was 3m and 454 MiB, close to the 512 MiB request with no work at all.
 
 | Probe | Path | Settings |
 |---|---|---|
@@ -431,11 +357,7 @@ Probes:
 | readiness | `/readyz` | every 10 s |
 | liveness | `/healthz` | every 20 s |
 
-Liveness uses `/healthz`, not `/readyz`, on purpose. A pod whose model failed to load stays up and unready, so the error stays readable instead of being restarted away.
-
-### Minikube and EKS
-
-On my Minikube cluster (profile `mk4`), [`values-minikube.yaml`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/deploy/helm/moks/values-minikube.yaml) turns both switches on:
+Liveness uses `/healthz` on purpose, so a pod whose model failed to load stays up and unready with its error readable. On mk4, [`values-minikube.yaml`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/deploy/helm/moks/values-minikube.yaml) turns both switches on:
 
 ```yaml
 # deploy/helm/moks/values-minikube.yaml
@@ -448,15 +370,11 @@ reranker:
     enabled: true
 ```
 
-The Argo CD Application [`moks-reranker`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/deploy/argocd/minikube/apps/moks-reranker.yaml) renders the chart with `resourceGroup: reranker` and is synced by hand, never with prune. `values-eks.yaml` keeps `reranker.enabled: false`, and the EKS Application sits in `deploy/argocd/eks/optional/`, to be moved into `apps/` only when it is enabled. The EKS configuration exists but has never run the reranker.
-
-`docs/RERANKING.md` says NetworkPolicy enforcement on mk4's CNI is unverified. Until it is checked, the bearer token is the control I know holds there.
+The Argo CD Application [`moks-reranker`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/deploy/argocd/minikube/apps/moks-reranker.yaml) is synced by hand, never with prune. `values-eks.yaml` keeps the reranker off, and the EKS configuration has never run it. `docs/RERANKING.md` says NetworkPolicy enforcement on mk4's CNI is unverified, so the bearer token is the control known to hold there.
 
 ### Building and enabling
 
-These steps come from the repository. Building and configuring come first, and enabling is separate.
-
-**Build and test locally** (needs a container runtime; `<model-dir>` is a directory produced by `fetch_model.py`):
+**Build and test locally** (needs a container runtime; `<model-dir>` comes from `fetch_model.py`):
 
 ```bash
 cd reranker
@@ -468,42 +386,27 @@ docker run --rm -e RERANKER_TOKEN=dev -e RERANKER_METRICS_PORT=0 \
 python benchmark.py <model-dir>   # CPU latency and memory on your machine
 ```
 
-**Configure** (cluster-specific values are placeholders):
+**Configure** (placeholders for cluster values):
 
 1. Create the ECR repository `moks-reranker` (Terraform in my case) and let CI push an image.
-2. Generate a token (`openssl rand -hex 32`), then fill in a copy of [`deploy/secrets/moks-reranker-secrets.example.yaml`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/deploy/secrets/moks-reranker-secrets.example.yaml) and apply it to namespace `moks`. Put the same value under `MOKS_CRED_RERANKER_TOKEN` in the API and worker Secret.
-3. Set `reranker.enabled: true` and `reranker.image.repository: <account>.dkr.ecr.<region>.amazonaws.com/moks-reranker`, and preferably `reranker.image.digest`.
-4. Sync the foundation and `moks-reranker` Applications, restart the API and worker so they read the new ConfigMap, and check the **Reranking** panel under **Knowledge**, **Index health**.
+2. Generate a token (`openssl rand -hex 32`), fill in a copy of [`deploy/secrets/moks-reranker-secrets.example.yaml`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/deploy/secrets/moks-reranker-secrets.example.yaml), apply it to namespace `moks`, and put the same value under `MOKS_CRED_RERANKER_TOKEN` in the API and worker Secret.
+3. Set `reranker.enabled: true` and `reranker.image.repository: <account>.dkr.ecr.<region>.amazonaws.com/moks-reranker`.
+4. Sync the foundation and `moks-reranker` Applications, restart the API and worker, and check **Knowledge → Index health → Reranking**.
 
 **Enable for searches**, only after evaluating:
 
-5. Run the `rerank` evaluation (next section), and measure real CPU and memory.
+5. Run the `rerank` evaluation (next section) and measure real CPU and memory.
 6. Set `reranker.client.enabled: true`, restart the API and worker, and watch `moks_rerank_calls_total` by outcome.
 
 ![Kubernetes deployment and model-loading lifecycle of moks-reranker. Build, on GitHub Actions with ubuntu-24.04-arm on a push to master: pip install with pinned versions and CPU-only torch; fetch_model.py at revision 233902d with a SHA-256 check per file; a smoke test with no network and a read-only root that waits for readyz 200; and a push to ECR tagged with the commit SHA and latest. Git and Argo CD: the moks repo's master branch with values-minikube.yaml is rendered by Helm into the Argo CD Application moks-reranker, resource group reranker, synced manually. In namespace moks on Minikube mk4: a Secret moks-reranker-secrets holding the bearer token feeds the Deployment moks-reranker, which runs 1 replica as user 10001 with a read-only root, requests of 250m CPU and 512Mi memory and limits of 2 CPU and 1Gi. A ClusterIP Service listens on 8090, and a NetworkPolicy admits the API and worker on 8090 and monitoring on 9464 with no egress. Pod lifecycle: load from local files only, safetensors, no remote code; warm up with one scoring call while readyz stays 503; ready with readyz 200 within a startup probe of up to 180 seconds; on SIGTERM, refuse new work, finish accepted work and drain for up to 20 seconds. A load failure leaves the pod up but not ready, with the error type shown in readyz. Startup and readiness probes use readyz, and liveness uses healthz.](/images/moks-pytorch-reranking/moks-reranker-deployment.svg)
 
 ## Evaluation and results
 
-### How the comparison works
+[`backend/moks/evals/rerank_eval.py`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/evals/rerank_eval.py) runs the same questions through `search()` with reranking off and on, in an isolated evaluation realm: it indexes the dataset under throwaway sources, proves operational searches cannot see them, and deletes them afterwards. It reports document-level **Recall@3 and @5**, **MRR** (1 divided by the first relevant position, averaged), **nDCG@5** (relevant documents near the top score higher), **diversity** (distinct documents in the top 5) and p50/p95 **latency**.
 
-[`backend/moks/evals/rerank_eval.py`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/evals/rerank_eval.py) runs the same questions through `search()` twice, once with reranking off and once with a real service. It does this in an isolated evaluation realm: it indexes the dataset's documents under throwaway sources, first proves that operational searches cannot see them, and deletes them afterwards. The rankings are compared at the document level:
+Five safety gates must pass on every run: no forbidden document appears, citations present in both modes are unchanged, exact-identifier questions put the right document first, abstention does not change, and nothing falls back unexpectedly. Rollout thresholds ask for nDCG and MRR gains of at least 0.02, no recall loss, at most 0.02 diversity loss and at most 300 ms of added p95. A pass marks reranking "eligible to enable"; nothing in the evaluation turns it on.
 
-- **Recall@k**: the share of relevant documents that appear in the top k (k = 3 and 5).
-- **MRR**, mean reciprocal rank: 1 divided by the position of the first relevant document, averaged over the questions.
-- **nDCG@5**, normalized discounted cumulative gain: rewards relevant documents near the top, with yes-or-no relevance.
-- **Diversity**: distinct documents in the top 5.
-- **Latency**: end-to-end search time p50 and p95 for both modes, plus inference time reported by the service.
-
-Five safety gates must pass on every run: no forbidden document appears, citations of passages present in both modes are unchanged, exact-identifier questions put the right document first, the abstention decision does not change, and no case fell back unexpectedly. The dataset also sets rollout thresholds: nDCG and MRR gains of at least 0.02, no recall loss, at most 0.02 diversity loss and at most 300 ms of added p95 latency. A pass marks reranking "eligible to enable". Nothing in the evaluation turns it on.
-
-### Recorded results
-
-The repository holds one recorded run, [`docs/examples/rerank-evaluation-2026-11-02.json`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/docs/examples/rerank-evaluation-2026-11-02.json). Its context first:
-
-- **Dataset:** [`rerank.yaml`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/evals/datasets/rerank.yaml), with 29 short synthetic runbook passages and 30 questions, 27 of which have relevance labels. They were written for this evaluation, not collected from operators.
-- **Model:** `cross-encoder/ms-marco-MiniLM-L6-v2` at `233902d`, the same pin as production.
-- **Environment:** arm64 macOS, torch 2.15.0, Python 3.11, 2 threads. The service ran on a laptop, not in the cluster.
-- **Candidates:** keyword search only. The evaluation realm has no vectors, and production uses them.
+The one recorded run is [`docs/examples/rerank-evaluation-2026-11-02.json`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/docs/examples/rerank-evaluation-2026-11-02.json): the synthetic [`rerank.yaml`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/backend/moks/evals/datasets/rerank.yaml) dataset (29 short runbook passages, 30 questions, 27 with relevance labels, written for this evaluation), the production model pin, arm64 macOS with torch 2.15.0, Python 3.11 and 2 threads, and keyword candidates only.
 
 | 27 labelled questions | Reranking off | Reranking on |
 |---|---:|---:|
@@ -515,20 +418,13 @@ The repository holds one recorded run, [`docs/examples/rerank-evaluation-2026-11
 | Search latency p50 / p95 | 2.7 / 4.6 ms | 35.0 / 68.8 ms |
 | Inference p50 / p95 | | 20.8 / 39.7 ms |
 
-Every gate passed. Only four questions changed their scores, and all four improved: the exit-code-137 and 503 questions shown earlier, "services sometimes fail to resolve hostnames inside the cluster", and "sync fails because two apps own the same resource". Many other questions had lower positions reordered without affecting the metrics. `docs/RERANKING.md` also records that with the service stopped, the same run returned exactly the reranking-off results and the gates said "keep disabled".
+Every gate passed. Four questions changed scores, all upwards: the exit-code-137 and 503 questions above, "services sometimes fail to resolve hostnames inside the cluster", and "sync fails because two apps own the same resource". With the service stopped, the same run returned exactly the reranking-off results and the gates said "keep disabled".
 
-I read this as a reason to test further and nothing more:
-
-- Thirty synthetic questions written alongside the feature cannot represent what engineers actually type during an incident.
-- Keyword-only candidates leave out the vector candidates that production retrieval also uses.
-- The passages are short, so the latency here is far below what long passages cost (see below).
-- The `long_passage` case was meant to test truncation, but the chunker had already split that document. `truncated_passages` was 0, so the effect of truncation on quality is unmeasured.
-- The rollout thresholds are starting values, not derived from anything.
-- The evaluation client uses the 5,000 ms timeout ceiling, not the 1,500 ms production setting, so it would not show production timeouts.
+I read this as a reason to test further, nothing more. Thirty synthetic questions cannot represent what engineers type during an incident, keyword-only candidates leave out production's vectors, short passages make latency look small, the `long_passage` case never truncated (the chunker had split it), the thresholds are starting values, and the evaluation client used the 5,000 ms timeout ceiling instead of production's 1,500 ms.
 
 ### Recorded CPU benchmarks
 
-`docs/RERANKING.md` records [`benchmark.py`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/reranker/benchmark.py) results from the same arm64 Mac, with 2 threads and batch size 16:
+`docs/RERANKING.md` records [`benchmark.py`](https://github.com/mrjithendar/moks/blob/4928f094e1dab364156103234859f7e8efe7072d/reranker/benchmark.py) on the same Mac, 2 threads, batch 16:
 
 | Candidates × passage length | p50 | p95 |
 |---|---:|---:|
@@ -538,68 +434,40 @@ I read this as a reason to test further and nothing more:
 | 50 × 800 characters | 439 ms | 443 ms |
 | 30 × 2,000 characters | 891 ms | 1,080 ms |
 
-Model load took about 2.7 to 3.9 s and peak resident memory was about 480 MiB. With 1 thread, 30 × 800 took 388 ms; with 4 threads, 211 ms. Passage length matters more than candidate count. At the configured maximum of 30 passages of 2,000 characters, the laptop's p95 is already 1,080 ms against a 1,500 ms deadline. A slower CPU or a busy node would push real searches into fallback.
+Model load took about 2.7 to 3.9 s, with peak resident memory about 480 MiB. With 1 thread, 30 × 800 took 388 ms; with 4, 211 ms. Passage length matters more than count: at the configured maximum of 30 × 2,000 characters, the laptop's p95 is already 1,080 ms against a 1,500 ms deadline, so a slower CPU or busy node pushes searches into fallback. A load test with 1 worker and 4 queue places gave 5 answers and 7 `429`s for 12 simultaneous requests, and 120 ms deadlines all returned `504` while the service stayed ready.
 
-A load test against the live service is also recorded: with 1 worker and 4 queue places, 12 simultaneous requests gave 5 answers and 7 `429`s, and requests with 120 ms deadlines all returned `504` while the service stayed ready.
+### Live fallback, and what is not measured
 
-### Not measured
+On 6 November, `moks_rerank_calls_total` on mk4 held 7 `timeout` and 1 `circuit_open`, and no `applied`, across the MOKS pods' current lifetime. The reranker's own log over its four days of uptime shows 14 completed requests of 1 to 5 candidates in 77 to 247 ms. Its service metrics are not scraped, so I cannot match the two; the client-side timeouts are unexplained.
 
-- Linux container CPU and memory under load, on any cluster.
-- Relevance on real operator questions, or with vector candidates.
-- The effect of truncation on ranking quality.
-- How often production searches fall back, and why. The metrics exist (`moks_rerank_calls_total{outcome}`), but I have not analysed them.
-- Whether reranking changes the quality of the investigation reports the LLM writes.
+Not measured: Linux CPU and memory under load on any cluster; relevance on real operator questions or with vector candidates; the effect of truncation; and whether reranking changes the reports the LLM writes.
 
-### Reproducing the comparison
+To reproduce the comparison, deploy with `reranker.enabled: true` (the evaluation does not need `client.enabled`), start a run as an administrator with `POST /evals/runs` and `{"dataset": "rerank"}`, and replace the synthetic dataset with reviewed real questions before treating results as evidence. I would not use `moks eval DATASET` for this dataset yet: reading the code, its printer expects per-case `checks` and `score` fields that rerank rows lack (not run).
 
-1. Deploy the service with `reranker.enabled: true`. The evaluation needs a running service, but not `client.enabled`.
-2. Start a run of the `rerank` dataset as an administrator with `POST /evals/runs` and the body `{"dataset": "rerank"}`, then read the run's gates and metrics.
-3. Replace the synthetic dataset with real, reviewed questions and relevance labels before treating the result as evidence.
-
-The CLI has a `moks eval DATASET` command, but I would not use it for this dataset yet. Its result printer expects per-case `checks` and `score` fields that rerank rows do not have, so I expect it to fail after the run has been saved. That is from reading the code, and I have not run it.
-
-### What reranking cannot fix
-
-A reranker reorders what retrieval found. If the right runbook is not among the 30 candidates in the window, because keyword and vector search missed it, because the caller may not read it, or because it was never indexed, no reranker can bring it back. In the recorded run, recall@5 without reranking was already 0.982, which means the candidates nearly always contained the answer. On a larger, real corpus, retrieval recall is the first thing I would measure.
+A reranker only reorders what retrieval found. If the right runbook is not among the 30 candidates, because search missed it, the caller may not read it or it was never indexed, no reranker brings it back. Recall@5 without reranking was already 0.982 here; on a real corpus, retrieval recall is the first thing I would measure.
 
 ## Security and operational boundaries
 
-- **Authorization comes first.** Only passages that passed PostgreSQL's lifecycle and access checks are sent, and PostgreSQL is asked again after the round trip. A backend test, `test_only_authorized_passages_reach_the_model`, inspects the request body to check this.
-- **Scores are relevance signals, not confidence.** They are raw logits that order one list. They are not probabilities and cannot be compared across searches. They feed nothing except position: not `evidence.state`, abstention, claim validation, skill selection, severity or any approval. Search adds a note saying so to every response.
-- **Relevance is not support.** A passage that scores highly may still not support the claim an investigation report makes. MOKS's claim validation is a separate, rule-based check, and it says plainly that it only verifies that identifiers a sentence names occur in what it cites.
-- **Retrieved text stays untrusted.** The reranker never changes text or citations, because it never returns them. The LLM still sees passages inside `<untrusted_data>` blocks, with instructions not to follow anything written there.
-- **The reranker has no authority.** It cannot execute tools, publish or select skills, verify a cause or approve remediation. It has no egress, no database access and no Kubernetes API token. It cannot even choose its own model: requests cannot name one.
-- **Logs and caches.** Queries and passages are never logged. There is no cache, so there is no cross-scope cache to get wrong.
+- **Authorization comes first.** Only passages that passed PostgreSQL's checks are sent, and PostgreSQL is asked again afterwards; `test_only_authorized_passages_reach_the_model` inspects the request body.
+- **Scores order one list.** They are raw logits, not probabilities, not comparable across searches, and feed nothing but position: not `evidence.state`, abstention, claim validation, skill selection, severity or approval.
+- **Relevance is not support.** MOKS's claim validation is a separate rule-based check that only verifies cited identifiers occur in what is cited.
+- **Retrieved text stays untrusted.** The reranker never returns text or citations, and the LLM still sees passages inside `<untrusted_data>`.
+- **No authority.** No tools, skills, cause verification or approvals; no egress, database or Kubernetes token; it cannot even choose its own model. No query or passage is logged, and there is no cache.
 
 ## Trade-offs
 
-**CPU latency against relevance.** On the recorded run, reranking added about 64 ms of p95 search time for short passages. With long passages it costs most of a second on a laptop. Everything runs on CPU because the cluster has no GPUs, and a small six-layer model is what makes that viable.
-
-**Candidate count against inference cost.** More candidates give the model more to choose from and cost roughly linear time: 30 to 50 passages of 800 characters went from 262 to 439 ms. The window allows at most 4 chunks per document, so one long runbook cannot take every place.
-
-**Input truncation.** 2,000 characters per passage and 512 tokens per pair mean a long chunk is judged on its beginning. Truncated passages are reported, but the effect on quality is unmeasured.
-
-**Domain mismatch.** MS MARCO consists of web search queries. "Exit code 137" means something precise to an SRE and nothing special to a web search model. The OpenSearch 403 example shows how a surface match can still win. The model is also English only.
-
-**Model maintenance.** A pinned revision means nothing changes silently. It also means nothing improves without a deliberate update, a new evaluation and a coordinated restart.
-
-**Evaluation coverage.** The gates are the right shape, but the data under them is thin. Until there is a dataset of real questions, "eligible to enable" is a statement about a test fixture.
-
-## Implemented, configured, measured and future work
+**CPU latency against relevance:** about 64 ms of added p95 for short passages, most of a second for long ones on a laptop, all on CPU because the cluster has no GPUs. **Candidates against cost:** time grows roughly linearly (30 to 50 passages of 800 characters went from 262 to 439 ms), and 4 chunks per document stops one runbook taking every place. **Truncation:** a long chunk is judged on its beginning, with the effect unmeasured. **Domain mismatch:** MS MARCO is web search, so "exit code 137" means nothing special to it, the 403 example shows a surface match winning, and it is English only. **Maintenance:** a pinned revision changes nothing silently, and improves nothing without an update, an evaluation and a coordinated restart. **Evaluation coverage:** the gates have the right shape, but until real questions exist, "eligible to enable" describes a test fixture.
 
 | Status | What |
 |---|---|
 | Implemented | CPU cross-encoder service with strict schemas, token auth, bounded capacity, deadlines, computation-owned slots, drain on shutdown, no-logging policy; MOKS client with full validation, model-revision match, circuit breaker and fallback; exact-identifier pinning, superseded demotion, per-document limits, PostgreSQL recheck; evaluation harness with safety and rollout gates |
-| Configured | Off by default; both switches on for mk4 at 4928f09; EKS values off |
+| Configured | Off by default; both switches on for mk4 (still on 6 November); EKS values off |
 | Measured (laptop, synthetic) | nDCG, MRR, recall and latency on 30 synthetic cases; CPU latency per candidate count and passage length; overload and timeout behaviour |
-| Not measured | Cluster CPU and memory under load; real questions; vector candidates; truncation effect; production fallback rate; report quality |
-| Gaps found | Reranking is on for mk4 although the doc's own rollout steps say to wait for real questions; no `preStop` delay; base image and pip packages not hash-pinned; CLI printer does not fit rerank results; provisional resource requests; result `score` values no longer match the order after reranking |
+| Measured (mk4, 6 November) | Idle memory 454 MiB; every client attempt since the MOKS pods started fell back |
+| Not measured | Cluster CPU and memory under load; real questions; vector candidates; truncation effect; report quality |
+| Gaps found | Reranking is on for mk4 although the doc's own rollout steps say to wait for real questions; live calls time out; service metrics not scraped; no `preStop` delay; base image and pip packages not hash-pinned; CLI printer does not fit rerank results; provisional resource requests; result `score` values no longer match the order after reranking |
 | Possible future work | A dataset of reviewed operator questions; measuring retrieval recall separately; fine-tuning on that dataset if the general model plateaus; a smaller or quantized model if CPU cost becomes the limit |
 
-One idea I have deliberately kept out is using reranker scores for skill selection. Skills change what an investigation does, and that decision belongs to reviewed rules and permissions, not to a relevance model trained on web search.
+I deliberately keep reranker scores out of skill selection: skills change what an investigation does, and that belongs to reviewed rules and permissions, not a relevance model trained on web search.
 
-## Closing
-
-Adding PyTorch to MOKS was not about the model. The model is small, public and needed about ten lines to load. The work was in deciding what the model may see, what it may influence, and what happens on the many occasions when it is slow, missing or wrong. If I had to keep only one rule, it would be the fallback: when anything about the answer is unexpected, keep the order you had. A reranker that can only make search better or leave it unchanged is easy to run and easy to remove.
-
-For the rest of the retrieval pipeline, see [How we implemented RAG and skills in MOKS](/blog/moks-rag-and-skills-design). The [MOKS project page](/projects/moks) links the code.
+The model was the easy part: small, public and about ten lines to load. The work was deciding what it may see, what it may influence, and what happens when it is slow, missing or wrong. If I kept one rule, it would be the fallback: when anything about the answer is unexpected, keep the order you had. For the rest of the pipeline, see [How MOKS works: RAG and SKILL.md playbooks](/blog/moks-rag-and-skills-design); the [MOKS project page](/projects/moks) links the code.

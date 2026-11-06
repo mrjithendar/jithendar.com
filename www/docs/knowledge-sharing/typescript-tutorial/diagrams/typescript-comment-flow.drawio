@@ -1,0 +1,66 @@
+<mxfile host="app.diagrams.net" agent="build_diagrams.py" version="24.7.17" type="device">
+  <diagram id="typescript-comment-flow-0" name="Posting a comment">
+    <mxGraphModel dx="800" dy="800" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="620" pageHeight="728" background="#ffffff" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="z0" value="Browser: client components" style="rounded=1;arcSize=2;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=left;verticalAlign=top;spacingLeft=8;spacingRight=8;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=wrap;html=0;" vertex="1" parent="1">
+          <mxGeometry x="15" y="12" width="590" height="196" as="geometry" />
+        </mxCell>
+        <mxCell id="z1" value="Server: Next.js" style="rounded=1;arcSize=2;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=left;verticalAlign=top;spacingLeft=8;spacingRight=8;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=wrap;html=0;" vertex="1" parent="1">
+          <mxGeometry x="15" y="220" width="590" height="364" as="geometry" />
+        </mxCell>
+        <mxCell id="z2" value="Database" style="rounded=1;arcSize=2;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=right;verticalAlign=bottom;spacingLeft=8;spacingRight=8;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=wrap;html=0;" vertex="1" parent="1">
+          <mxGeometry x="15" y="596" width="590" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="composer" value="Composer.tsx&#10;body: useState(initial), a string&#10;onSubmit: ComposerSubmit" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f8fafc;strokeColor=#334155;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="40" width="270" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="discussion" value="Discussion.tsx&#10;post(body, clientKey, parentId)&#10;reads r.id only when r.ok" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f8fafc;strokeColor=#334155;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="320" y="40" width="270" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="result" value="CommentResult (compile time)&#10;{ ok: true, id, status, thread }&#10;| { ok: false, error }" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#94a3b8;fontColor=#475569;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="30" y="128" width="300" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="action" value="postCommentAction  (_actions/comments.ts, &quot;use server&quot;)&#10;signedIn(): the user comes from the session cookie, never from the arguments&#10;return type inferred, and step 2 relies on it" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e3a8a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="248" width="560" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="submit" value="submitComment(input: SubmitInput)  (lib/comments.ts)&#10;runtime checks: cleanBody(body: unknown) for type and length&#10;isUuid and a database read: the post exists, is published, not deleted&#10;assertOpen: discussion not closed or locked; client key /^[A-Za-z0-9_-]{8,64}$/&#10;status from the user's role on the server" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#ecfdf5;strokeColor=#047857;fontColor=#064e3b;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="346" width="560" height="112" as="geometry" />
+        </mxCell>
+        <mxCell id="drizzle" value="Drizzle insert  (db/schema.ts)&#10;.notNull() columns are string, the rest string | null&#10;a missing required column does not compile" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#ecfdf5;strokeColor=#047857;fontColor=#064e3b;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="486" width="560" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="pg" value="PostgreSQL table comment&#10;unique index on user and client key; foreign keys keep a reply on its parent's post" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#fffbeb;strokeColor=#b45309;fontColor=#451a03;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="618" width="560" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" value="onSubmit" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="composer" target="discussion">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="0" y="-12" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e1" value="server action call" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.759;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="discussion" target="action">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="-70" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e2" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="action" target="submit">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#b45309;strokeWidth=2.2;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="submit" target="drizzle">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="insert" style="edgeStyle=none;rounded=0;html=0;strokeColor=#b45309;strokeWidth=2.2;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="drizzle" target="pg">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="30" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e5" value="result" style="edgeStyle=none;rounded=0;html=0;strokeColor=#64748b;strokeWidth=1.4;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.161;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;dashed=1;dashPattern=6 4;" edge="1" parent="1" source="action" target="result">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="26" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
