@@ -1,5 +1,20 @@
 # Progress log — jithendar.com
 
+## Push MDX drafts through the API, no image build (2026-11-06, owner request)
+
+New `scripts/push-post.ts` (`npm run push-post -- <file.mdx>… [--dry-run] [--update-live]`) sends
+`content/{blog,news,projects}/*.mdx` to the live site via the existing `/api/v1/posts` (API key with posts:read +
+posts:write): new slugs become drafts, drafts/review posts update in place, live posts only with `--update-live`
+(status never changes). Never publishes. Refuses posts whose `/images/…` files are not on the site yet. Docs:
+`docs/EDITOR.md` "Sending MDX files without a build". `tsx` 4.23.15 pinned as a direct devDependency (it was
+already installed through drizzle-kit; lockfile only gains `dev` flags).
+
+- **Checked:** `tests/push-post.test.ts` (5 tests, real API handlers on PGlite: create, update, live skip and
+  `--update-live`, dry run, image gate, validation errors); `npm run lint`, `npm run typecheck`, `npm test`
+  (45 files, 458 passed), `npm run build` (pass); `--dry-run` against https://jithendar.com for two real articles (no key, so no lookup).
+- **Not checked:** a real push to production: needs an API key the owner creates in Admin → API keys.
+- **Open:** media upload has no API, so new images still need Admin → Media or a build.
+
 ## Grafana dashboards in this repo; k8s/ is now minikube/ (2026-11-04, owner request)
 
 **Dashboards.** New top-level `grafana/` (README, kustomization → ConfigMap `monitoring/grafana-dashboards-jithendar`)

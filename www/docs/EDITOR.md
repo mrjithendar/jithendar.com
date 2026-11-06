@@ -61,6 +61,32 @@ stored Markdown ─parse─▶ editor document ─serialize─▶ stored Markdow
 - Previews (`/preview/<token>`): staff only, 1-hour tokens, `noindex`, `private, no-store`; the Preview dialog renders
   the unsaved document with the real site components at mobile/tablet/desktop widths.
 
+## Sending MDX files without a build (`npm run push-post`)
+
+Files in `content/{blog,news,projects}/` reach Admin → Posts only through the image (`bundled-posts.ts`), so a new
+file used to mean a build and deploy. `scripts/push-post.ts` sends them to the live site through `/api/v1/posts`
+instead:
+
+```sh
+export JITHENDAR_API_KEY=jk_…        # Admin → API keys, scopes posts:read + posts:write
+npm run push-post -- content/blog/my-post.mdx [more.mdx] --dry-run   # check, send nothing
+npm run push-post -- content/blog/my-post.mdx
+```
+
+- New slug → created as a **draft**, whatever the file's `status`/`publishedAt` say; the byline is the key's owner.
+  Review and publish in the editor (the script prints the `/admin/posts/<id>` link).
+- Slug already a draft or in review → updated in place from the file (overwrites editor changes to the same fields;
+  the previous version stays in Revisions).
+- Published, scheduled or archived → skipped (exit 1) unless `--update-live`, which changes the content but never the
+  status or publication date; the live page changes at once.
+- Everything is validated before anything is sent (frontmatter schema, slug = file name; then the API's own checks).
+- Images: `/images/…` files ship only with an image build. The script refuses a post whose `/images/` file answers
+  non-2xx on the site; upload it in Admin → Media and use its `/media/…` URL, or deploy once. `/media/…` URLs need no
+  build. Media uploads have no API yet, and the media library rejects SVG.
+- `--site=https://…` or `JITHENDAR_SITE_URL` targets another site (default `https://jithendar.com`).
+
+Code and design changes still need the image; only articles skip it. Tests: `tests/push-post.test.ts`.
+
 ## Dashboards
 
 Posts: status tabs (all, drafts, review, scheduled, published, archived, trash) with counts, search, pagination,
