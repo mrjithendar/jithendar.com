@@ -2,8 +2,8 @@ name: jithendar.com
 
 # check   → pull requests: lint, typecheck, test, build, render manifests
 # release → default branch: npm ci once; lint, tests and the production build (in turn); package the
-#           build into an arm64 image, smoke-test the image, push jithendar-com:<commit-sha> and move
-#           jithendar-com:latest to it in Harbor (registry.jithendar.com/jithendar), then
+#           build into an arm64 image, smoke-test the image, push it to Harbor as
+#           registry.jithendar.com/jithendar/jithendar-com:latest (the only tag), then
 #           `kubectl rollout restart deploy/jithendar-com` so the cluster pulls the new :latest
 #
 # CI's only cluster access is that restart (kubeconfig template .github/jithendar-ci-deployer.yaml, filled
@@ -12,8 +12,9 @@ name: jithendar.com
 # runs :latest; there is no digest pinning.
 #
 # Both jobs run on GitHub-hosted runners, never on the mk4 server: builds there competed with the cluster
-# for memory and disk and froze the host (2026-10-29). The release job logs in to Harbor with secrets
-# HARBOR_USER and HARBOR_PWD.
+# for memory and disk and froze the host (2026-10-29). The release job logs in to Harbor as robot
+# robot$jithendar+jithendar-com (repository secrets HARBOR_USERNAME and HARBOR_PASSWORD, set by the tools
+# repository's deploy/minikube/harbor/registry.py ci-robots; push and pull in project jithendar only).
 
 on:
   workflow_dispatch:
@@ -110,20 +111,18 @@ jobs:
         run: kubectl kustomize ../minikube > /dev/null
       - name: Log in to Harbor
         env:
-          HARBOR_USER: ${{ secrets.HARBOR_USER }}
-          HARBOR_PWD: ${{ secrets.HARBOR_PWD }}
+          HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+          HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
         run: |
           set -euo pipefail
-          [[ -n "$HARBOR_USER" && -n "$HARBOR_PWD" ]] || { echo "::error::Secrets HARBOR_USER and HARBOR_PWD must be set"; exit 1; }
-          echo "$HARBOR_PWD" | docker login registry.jithendar.com -u "$HARBOR_USER" --password-stdin
+          [[ -n "$HARBOR_USERNAME" && -n "$HARBOR_PASSWORD" ]] || { echo "::error::Secrets HARBOR_USERNAME and HARBOR_PASSWORD must be set"; exit 1; }
+          printf '%s' "$HARBOR_PASSWORD" | docker login registry.jithendar.com --username "$HARBOR_USERNAME" --password-stdin
       - name: Package image
-        env:
-          IMAGE: ${{ env.REGISTRY_IMAGE }}:${{ github.sha }}
-        run: docker build --platform linux/arm64 --provenance=false -f Dockerfile.ci --build-arg "GIT_SHA=$GITHUB_SHA" -t "$IMAGE" .
+        run: docker build --platform linux/arm64 --provenance=false -f Dockerfile.ci --build-arg "GIT_SHA=$GITHUB_SHA" -t "$REGISTRY_IMAGE:latest" .
       # Never push an image that cannot start or optimise images.
       - name: Smoke-test the image
         env:
-          IMAGE: ${{ env.REGISTRY_IMAGE }}:${{ github.sha }}
+          IMAGE: ${{ env.REGISTRY_IMAGE }}:latest
         run: |
           set -euo pipefail
           name="jithendar-smoke-$GITHUB_RUN_ID"
@@ -137,12 +136,8 @@ jobs:
           [[ "$type" == image/avif* || "$type" == image/webp* ]] || { echo "Image optimiser returned: $type" >&2; exit 1; }
           echo "Image healthy; optimiser served $type"
       - name: Push
-        # The commit tag is kept for history; the cluster runs :latest.
-        run: |
-          set -euo pipefail
-          docker push --quiet "$REGISTRY_IMAGE:$GITHUB_SHA"
-          docker tag "$REGISTRY_IMAGE:$GITHUB_SHA" "$REGISTRY_IMAGE:latest"
-          docker push --quiet "$REGISTRY_IMAGE:latest"
+        # One tag, latest; the commit is inside the image (/api/health reports it).
+        run: docker push --quiet "$REGISTRY_IMAGE:latest"
       # The live deployment runs jithendar-com:latest with imagePullPolicy Always, so a restart pulls the image
       # just pushed. Signs in as ServiceAccount jithendar/github-ci-deployer, which may only restart and watch
       # deployment/jithendar-com: the template .github/jithendar-ci-deployer.yaml filled in with the values that
@@ -167,11 +162,11 @@ jobs:
           fi
       - name: Record image
         run: |
-          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$REGISTRY_IMAGE:$GITHUB_SHA")"
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$REGISTRY_IMAGE:latest")"
           {
             echo '### jithendar.com image'
             echo
-            echo "- Tags: \`$REGISTRY_IMAGE:$GITHUB_SHA\`, \`$REGISTRY_IMAGE:latest\`"
+            echo "- Tag: \`$REGISTRY_IMAGE:latest\` (commit \`$GITHUB_SHA\`)"
             echo "- Digest: \`$digest\`"
             echo
             echo "Deployed: deploy/jithendar-com restarted on \`:latest\`"

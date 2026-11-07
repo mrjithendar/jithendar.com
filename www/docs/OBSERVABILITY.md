@@ -98,8 +98,8 @@ identical labels, so one `rate()` over both failed with "vector cannot contain m
 
 ### Site down
 
-1. `kubectl --context mk4 -n jithendar get pods -l app=jithendar-com` — `ImagePullBackOff` with ECR 403 means the
-   `ecr-pull` Secret expired (see `docs/DEPLOYMENT.md`); `OOMKilled` means memory (limit 1Gi).
+1. `kubectl --context mk4 -n jithendar get pods -l app=jithendar-com` — `ImagePullBackOff` with 401 from
+   registry.jithendar.com means the `harbor-pull` Secret is wrong or its robot was removed (see `docs/DEPLOYMENT.md`); `OOMKilled` means memory (limit 1Gi).
 2. `curl -s https://jithendar.com/api/health` — answers `{status, version}`; `version` is the running commit.
 3. If pods are up but the alert fires, the metrics port is the problem: Prometheus → Status → Targets, job
    `jithendar-com`; the NetworkPolicy admits only `monitoring/app=roboshop-prometheus` on 9464.

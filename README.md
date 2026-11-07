@@ -16,7 +16,7 @@ Built with Next.js, MDX, PostgreSQL, Cloudflare R2 and Kubernetes.
 
 ## Release
 
-Push to `master`. CI tests, builds, pushes `jithendar-com:latest` (and `:<commit-sha>` for history) to ECR and
+Push to `master`. CI tests, builds, pushes `registry.jithendar.com/jithendar/jithendar-com:latest` (Harbor) and
 restarts the site, which always runs `:latest` with `imagePullPolicy: Always`. That is the whole release.
 
 Run `./deploy.sh` only after changing `minikube/` (it applies the manifests and restarts the site). It needs

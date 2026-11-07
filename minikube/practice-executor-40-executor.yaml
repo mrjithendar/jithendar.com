@@ -13,14 +13,14 @@ data:
   EXECUTOR_SANDBOX_NAMESPACE: jithendar
   EXECUTOR_RUNTIME_CLASS: gvisor-nonet
   EXECUTOR_SANDBOX_SERVICE_ACCOUNT: practice-sandbox
-  EXECUTOR_IMAGE_PULL_SECRET: ecr-pull
+  EXECUTOR_IMAGE_PULL_SECRET: harbor-pull
   EXECUTOR_DISPATCHER_CONCURRENCY: "4"
   EXECUTOR_PER_USER_CONCURRENCY: "2"
   EXECUTOR_PER_USER_PER_MINUTE: "30"
   EXECUTOR_MAX_QUEUE: "200"
   # Runtime id → sandbox image (ids must match Admin → Python practice → Runtimes). Always :latest; the dispatcher
   # starts sandbox pods with imagePullPolicy Always, and CI moves :latest on every release.
-  EXECUTOR_RUNTIMES: '{"python-3.13": "881026659929.dkr.ecr.us-east-1.amazonaws.com/practice-sandbox:latest"}'
+  EXECUTOR_RUNTIMES: '{"python-3.13": "registry.jithendar.com/jithendar/practice-sandbox:latest"}'
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -38,11 +38,11 @@ spec:
       serviceAccountName: practice-api
       automountServiceAccountToken: false
       enableServiceLinks: false
-      imagePullSecrets: [{ name: ecr-pull }]
+      imagePullSecrets: [{ name: harbor-pull }]
       securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: api
-          image: 881026659929.dkr.ecr.us-east-1.amazonaws.com/practice-executor:latest
+          image: registry.jithendar.com/jithendar/practice-executor:latest
           command: ["python", "-m", "app.main"]
           envFrom:
             - configMapRef: { name: practice-executor-config }
@@ -70,11 +70,11 @@ spec:
     spec:
       serviceAccountName: practice-dispatcher
       enableServiceLinks: false
-      imagePullSecrets: [{ name: ecr-pull }]
+      imagePullSecrets: [{ name: harbor-pull }]
       securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: dispatcher
-          image: 881026659929.dkr.ecr.us-east-1.amazonaws.com/practice-executor:latest
+          image: registry.jithendar.com/jithendar/practice-executor:latest
           command: ["python", "-m", "app.dispatcher"]
           envFrom:
             - configMapRef: { name: practice-executor-config }

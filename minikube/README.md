@@ -71,8 +71,8 @@ creates the first three.
 
 - `jithendar-postgres` (key `password`), `jithendar-redis` (key `password`)
 - `jithendar-com-env` (site configuration; its `DATABASE_URL`/`REDIS_URL` passwords match the two above)
-- `harbor-pull` (pull secret for `registry.jithendar.com`, used by the site; `scripts/create-harbor-pull-secret.sh`)
-- `ecr-pull` (image pull secret for the practice executor and sandbox, refreshed by the `ecr-refresh` CronJob from the tools repository)
+- `harbor-pull` (pull secret for `registry.jithendar.com`, used by the site, the practice executor and sandbox pods;
+  written by the tools repository's `deploy/minikube/harbor/registry.py pull-secrets`)
 
 ## Deploy
 

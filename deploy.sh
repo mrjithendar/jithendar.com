@@ -24,7 +24,7 @@ for s in jithendar-postgres jithendar-redis jithendar-com-env; do
   }
 done
 k -n jithendar get secret harbor-pull >/dev/null 2>&1 || {
-  echo "Secret jithendar/harbor-pull is missing. Run scripts/create-harbor-pull-secret.sh first." >&2
+  echo "Secret jithendar/harbor-pull is missing. Create it with the tools repository's deploy/minikube/harbor/registry.py pull-secrets first." >&2
   exit 1
 }
 

@@ -54,14 +54,15 @@ browser ─► jithendar-com (Next.js)                       executor           
 1. **Install gVisor on every mk4 node** (on the mk4 host): `scripts/install-gvisor-mk4.sh` (dry run), then
    `scripts/install-gvisor-mk4.sh --apply`. It verifies the release checksums, adds the containerd handler
    `runsc-nonet` with `network = "none"` and restarts containerd node by node. *Not run by the agent.*
-2. **ECR repositories** `practice-executor` and `practice-sandbox` and CI's push rights come from Terraform
-   (`infra/`, see [infra/README.md](../../infra/README.md)); once it has applied, merge to `master` so `.github/workflows/ci-practice-executor.yml` builds the images (it also moves
-   `practice-executor:latest`, which the manifests start from).
+2. **Images** `registry.jithendar.com/jithendar/practice-executor:latest` and `practice-sandbox:latest` live in
+   Harbor (tools repository, `deploy/minikube/harbor`). CI's secrets `HARBOR_USERNAME`/`HARBOR_PASSWORD` come from
+   the tools repository's `registry.py ci-robots`; merge to `master` so `.github/workflows/ci-practice-executor.yml`
+   builds and pushes them.
 3. **Apply the manifests:** `scripts/manifests.sh practice-executor | kubectl --context mk4 apply -f -` (namespace `jithendar`),
    `kubectl --context mk4 apply -f minikube/80-ci-deployer.yaml` (lets the site's CI account roll out the executor),
    then `scripts/create-practice-executor-secrets.sh mk4`: it creates `practice-executor-env` and writes
    `PRACTICE_EXECUTOR_URL`/`PRACTICE_EXECUTOR_TOKEN` into `jithendar-com-env` directly (nothing to copy by hand).
-   `ecr-pull` already exists in `jithendar`.
+   `harbor-pull` must exist in `jithendar` (tools `registry.py pull-secrets`); sandbox pods pull with it too.
 4. **Verify isolation:** `scripts/verify-practice-sandbox.sh` must print PASS for every check (gVisor kernel,
    loopback only, no token, API server / metadata / internet / DNS unreachable, a sandbox pod without gVisor is
    rejected, the dispatcher cannot start a pod reading the site's Secret or delete the site's pods).

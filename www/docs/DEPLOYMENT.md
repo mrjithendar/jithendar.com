@@ -4,11 +4,11 @@
 
 | Piece | Where |
 |---|---|
-| Image | `881026659929.dkr.ecr.us-east-1.amazonaws.com/jithendar-com` (arm64, immutable tags = commit SHA except `latest`, scan on push, last 30 kept; created by Terraform in `infra/`, CI pushes as OIDC role `github-jithendar-com-ci`) |
-| Pipeline | `.github/workflows/ci-jithendar-com.yml`: `check` on pull requests; on `master`, `release` pushes `jithendar-com:latest` (and `:<commit-sha>` for history) and runs `kubectl rollout restart` |
+| Image | `registry.jithendar.com/jithendar/jithendar-com:latest` in Harbor (arm64, `latest` is the only tag, last 10 builds kept; CI pushes as robot `robot$jithendar+jithendar-com`, secrets `HARBOR_USERNAME`/`HARBOR_PASSWORD`) |
+| Pipeline | `.github/workflows/ci-jithendar-com.yml`: `check` on pull requests; on `master`, `release` pushes `jithendar-com:latest` (the only tag) and runs `kubectl rollout restart` |
 | Deploy | Automatic on push to `master`. `./deploy.sh` for manifest changes, run by a person with the `mk4` kubeconfig |
 | Manifests | `minikube/` at the repository root, one file per component (see `minikube/README.md`); the image is `jithendar-com:latest` |
-| Image pulls | Secret `jithendar/ecr-pull`, refreshed every 6 h by CronJob `roboshop-ai/ecr-refresh` |
+| Image pulls | Secret `jithendar/harbor-pull` (read-only robot `robot$k8s-pull`, never expires), written by the tools repository's `deploy/minikube/harbor/registry.py pull-secrets` |
 | TLS | ClusterIssuers `letsencrypt-prod`/`-staging` (`minikube/45-jithendar-letsencrypt.yaml`) → Certificate `jithendar/jithendar-com` (apex + www, `minikube/50-certificate.yaml`) → Secret `jithendar-com-tls`. `TLSStore default` (`minikube/55-tlsstore.yaml`) makes it Traefik's default certificate, which also serves `/argocd`, `/grafana`, `/prometheus` and `/roboshop`. **Do not delete it.** |
 
 ## Data services (namespace `jithendar`, deployed by the same `kubectl apply -k`)

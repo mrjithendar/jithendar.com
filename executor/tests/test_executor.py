@@ -113,7 +113,7 @@ def test_local_backend_is_refused_in_production():
 
 
 def test_sandbox_pod_is_hardened():
-    pod = pod_spec("run-x", "job", "img", "payload", 60, settings(image_pull_secret="ecr-pull"))
+    pod = pod_spec("run-x", "job", "img", "payload", 60, settings(image_pull_secret="harbor-pull"))
     spec = pod["spec"]
     assert spec["runtimeClassName"] == "gvisor-nonet"
     assert spec["automountServiceAccountToken"] is False
