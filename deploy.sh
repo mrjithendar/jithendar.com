@@ -23,6 +23,10 @@ for s in jithendar-postgres jithendar-redis jithendar-com-env; do
     exit 1
   }
 done
+k -n jithendar get secret harbor-pull >/dev/null 2>&1 || {
+  echo "Secret jithendar/harbor-pull is missing. Run scripts/create-harbor-pull-secret.sh first." >&2
+  exit 1
+}
 
 echo "→ Validating against the cluster"
 k apply -k minikube --dry-run=server >/dev/null

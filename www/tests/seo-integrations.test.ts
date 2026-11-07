@@ -10,7 +10,10 @@ import { submitIndexNow } from "@/lib/indexnow";
 import { backoffMs, enqueue, runDueJobs, PermanentJobError } from "@/lib/jobs";
 import { articleMetadata } from "@/lib/pages/article";
 import { createPost, publishPost, updatePost, type Actor } from "@/lib/posts";
-import { serializeJsonLd } from "@/lib/seo/jsonld";
+import { listingMetadata } from "@/lib/pages/listing";
+import { collectionListing } from "@/lib/pages/listings";
+import { articleLd, serializeJsonLd } from "@/lib/seo/jsonld";
+import { seoTitle } from "@/lib/seo/metadata";
 import { buildSitemap } from "@/lib/seo/sitemap";
 import { proxy } from "@/proxy";
 import { freshDb } from "./db-helpers";
@@ -160,6 +163,40 @@ describe("metadata, sitemap and structured data", () => {
     const urls = (await buildSitemap()).map((e) => e.url);
     expect(urls.some((u) => /draft-post|scheduled-post|syndicated-post/.test(u))).toBe(false);
     expect(await getPublishedArticle("blog", "scheduled-post")).toBeUndefined();
+  });
+
+  it("drops the site-name suffix only when the full title would exceed 60 characters", async () => {
+    expect(await seoTitle("Contact")).toBe("Contact");
+    const long = "Python vs Go vs TypeScript: one service written three ways";
+    expect(await seoTitle(long)).toEqual({ absolute: long });
+    const p = await createPost(author, post({ slug: "long-title", title: long, featuredImage: undefined }));
+    await publishPost(author, p.id, {});
+    invalidateContent();
+    const meta = await articleMetadata("blog", { params: Promise.resolve({ slug: "long-title" }) });
+    expect(meta.title).toEqual({ absolute: long });
+    expect(meta.openGraph?.title).toBe(long); // social cards keep the full title
+    // No image of its own: the site-wide card, still as a large Twitter/X card.
+    expect(meta.openGraph?.images).toEqual([expect.objectContaining({ url: "https://jithendar.com/opengraph-image", width: 1200, height: 630 })]);
+    expect(meta.twitter).toMatchObject({ card: "summary_large_image", images: ["https://jithendar.com/opengraph-image"] });
+  });
+
+  it("gives listings a short search description, a keyword title and the site-wide share image", async () => {
+    const meta = await listingMetadata(await collectionListing("blog"));
+    expect(meta.title).toBe("AI, Cloud and Kubernetes Engineering Guides"); // + " | Jithendar.com" = 59
+    expect(String(meta.description).length).toBeLessThanOrEqual(160);
+    expect(meta.openGraph?.images).toEqual([expect.objectContaining({ url: "https://jithendar.com/opengraph-image" })]);
+    expect(meta.twitter).toMatchObject({ card: "summary_large_image" });
+    expect((await listingMetadata(await collectionListing("blog"), 2)).title).toEqual({ absolute: "AI, Cloud and Kubernetes Engineering Guides (page 2)" });
+  });
+
+  it("names the category by its label in article structured data", async () => {
+    const p = await createPost(author, post({ slug: "section-post" }));
+    await publishPost(author, p.id, {});
+    invalidateContent();
+    const article = (await getPublishedArticle("blog", "section-post"))!;
+    const fakeAuthor = { path: "/authors/a", frontmatter: { name: "A" } } as Parameters<typeof articleLd>[1];
+    expect(articleLd(article, fakeAuthor, "Kubernetes").articleSection).toBe("Kubernetes");
+    expect(articleLd(article, fakeAuthor).articleSection).toBe("kubernetes");
   });
 
   it("escapes JSON-LD so content can never close the script tag", async () => {

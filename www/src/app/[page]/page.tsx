@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound, permanentRedirect } from "next/navigation";
 import { absoluteUrl, site } from "@/config/site";
 import { getPage } from "@/lib/content";
+import { seoTitle, shareImages } from "@/lib/seo/metadata";
 import { ContactForm } from "@/components/ContactForm";
 import { PageView } from "@/lib/pages/page-view";
 import { getSettings } from "@/lib/settings";
@@ -28,8 +29,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { frontmatter: fm, path } = await load((await params).page);
   const title = fm.seoTitle ?? fm.title;
   const description = fm.seoDescription ?? fm.description;
+  const images = shareImages(fm.featuredImage && { url: absoluteUrl(fm.featuredImage.src), width: fm.featuredImage.width, height: fm.featuredImage.height, alt: fm.featuredImage.alt });
   return {
-    title,
+    title: await seoTitle(title),
     description,
     alternates: { canonical: absoluteUrl(path) },
     openGraph: {
@@ -39,9 +41,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       locale: site.locale,
       title,
       description,
-      ...(fm.featuredImage ? { images: [{ url: absoluteUrl(fm.featuredImage.src), width: fm.featuredImage.width, height: fm.featuredImage.height, alt: fm.featuredImage.alt }] } : {}),
+      images: images.og,
     },
-    ...(fm.featuredImage ? { twitter: { card: "summary_large_image", images: [absoluteUrl(fm.featuredImage.src)] } } : {}),
+    twitter: { ...images.twitter, title, description },
     ...(fm.noindex ? { robots: { index: false, follow: true } } : {}),
   };
 }

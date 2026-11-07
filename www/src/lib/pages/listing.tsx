@@ -7,10 +7,14 @@ import { pageHref, Pagination } from "@/components/Pagination";
 import { absoluteUrl, site } from "@/config/site";
 import { paginate, parsePageParam, type Article, type Paged } from "@/lib/content";
 import { breadcrumbLd, type Crumb } from "@/lib/seo/jsonld";
+import { seoTitle, shareImages } from "@/lib/seo/metadata";
 
 export type Listing = {
   title: string;
   description: string;
+  /** Search-result overrides; the visible h1 and intro keep `title` and `description`. */
+  seoTitle?: string;
+  seoDescription?: string;
   basePath: string;
   crumbs: Crumb[];
   articles: Article[];
@@ -39,17 +43,21 @@ export function extraPageParams(articles: Article[], size?: number): { n: string
   return Array.from({ length: Math.max(0, total - 1) }, (_, i) => ({ n: String(i + 2) }));
 }
 
-export function listingMetadata(listing: Listing, page = 1): Metadata {
+export async function listingMetadata(listing: Listing, page = 1): Promise<Metadata> {
   const path = pageHref(listing.basePath, page);
-  const title = page > 1 ? `${listing.title} (page ${page})` : listing.title;
+  const base = listing.seoTitle ?? listing.title;
+  const title = page > 1 ? `${base} (page ${page})` : base;
+  const description = listing.seoDescription ?? listing.description;
+  const images = shareImages();
   return {
-    title,
-    description: listing.description,
+    title: await seoTitle(title),
+    description,
     alternates: {
       canonical: absoluteUrl(path),
       ...(listing.feedHref ? { types: { "application/rss+xml": absoluteUrl(listing.feedHref) } } : {}),
     },
-    openGraph: { type: "website", url: absoluteUrl(path), siteName: site.name, locale: site.locale, title, description: listing.description },
+    openGraph: { type: "website", url: absoluteUrl(path), siteName: site.name, locale: site.locale, title, description, images: images.og },
+    twitter: { ...images.twitter, title, description },
     ...(listing.indexable ? {} : { robots: { index: false, follow: true } }),
   };
 }

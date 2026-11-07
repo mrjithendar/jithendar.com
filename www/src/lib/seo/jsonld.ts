@@ -63,8 +63,8 @@ const articleType: Record<ContentType, string> = {
   project: "CreativeWork",
 };
 
-/** Article markup. Every value mirrors what the article page renders. */
-export function articleLd(article: Article, author: Author): JsonLdObject {
+/** Article markup. Every value mirrors what the article page renders; `section` is the category's display label. */
+export function articleLd(article: Article, author: Author, section: string = article.frontmatter.category): JsonLdObject {
   const fm = article.frontmatter;
   const type = articleType[fm.contentType];
   const isArticle = type !== "CreativeWork";
@@ -84,7 +84,7 @@ export function articleLd(article: Article, author: Author): JsonLdObject {
     author: { "@type": "Person", name: author.frontmatter.name, url: absoluteUrl(author.path) },
     publisher: { "@type": "Organization", name: site.publicationName, url: siteUrl() },
     ...(image ? { image } : {}),
-    ...(isArticle ? { articleSection: fm.category } : {}),
+    ...(isArticle ? { articleSection: section } : {}),
     ...(fm.tags.length > 0 ? { keywords: fm.tags.join(", ") } : {}),
   };
 }
