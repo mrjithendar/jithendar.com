@@ -178,6 +178,9 @@ describe("submissions", () => {
 
   it("grades an independent solve once, awards XP and a badge, and is idempotent", async () => {
     await enableExecution();
+    // The daily pick hashes the date; pin another problem so no daily bonus lands on this solve.
+    const other = await catalog.getProblemRecord("count-word-frequencies");
+    await db.insert(schema.practiceDailyChallenge).values({ day: progress.practiceDay(), problemId: other.problem.id });
     solver = reverse;
     const done = await submitAndWait("ana", "reverse-word-order", "submit", "key-ana-1");
     expect(done.verdict).toBe("accepted");
