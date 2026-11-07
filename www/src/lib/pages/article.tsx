@@ -26,6 +26,7 @@ import { canonicalFor } from "@/lib/seo/canonical";
 import { getSiteConfig } from "@/lib/site-config";
 import { ShareLinks } from "@/components/ShareLinks";
 import { articleLd, breadcrumbLd } from "@/lib/seo/jsonld";
+import { seoTitle, shareImages } from "@/lib/seo/metadata";
 
 export type SlugParams = { params: Promise<{ slug: string }> };
 
@@ -48,14 +49,14 @@ export async function articleMetadata(collection: Collection, { params }: SlugPa
   const fm = article.frontmatter;
   const canonical = canonicalFor(article);
   const cardImage = fm.socialImage ?? fm.featuredImage;
-  const images = cardImage ? [{ url: absoluteUrl(cardImage.src), width: cardImage.width, height: cardImage.height, alt: cardImage.alt }] : undefined;
+  const images = shareImages(cardImage && { url: absoluteUrl(cardImage.src), width: cardImage.width, height: cardImage.height, alt: cardImage.alt });
   // Search results use the SEO overrides; social cards prefer their own, then the SEO ones.
   const title = fm.seoTitle ?? fm.title;
   const description = fm.seoDescription ?? fm.description;
   const socialTitle = fm.socialTitle ?? title;
   const socialDescription = fm.socialDescription ?? description;
   return {
-    title,
+    title: await seoTitle(title),
     description,
     alternates: { canonical },
     authors: [{ name: author.frontmatter.name, url: absoluteUrl(author.path) }],
@@ -71,9 +72,9 @@ export async function articleMetadata(collection: Collection, { params }: SlugPa
       authors: [absoluteUrl(author.path)],
       section: labelOf(await getCategoryMap(), fm.category),
       tags: fm.tags,
-      images,
+      images: images.og,
     },
-    twitter: { card: images ? "summary_large_image" : "summary", title: socialTitle, description: socialDescription },
+    twitter: { ...images.twitter, title: socialTitle, description: socialDescription },
     ...(article.preview ? { robots: { index: false, follow: false } } : fm.noindex ? { robots: { index: false, follow: true } } : {}),
   };
 }
@@ -121,7 +122,7 @@ export async function ArticleView({
   // The cover image is not shown on the article page (it stays in the editor, on cards and in social previews).
   return (
     <article>
-      {!article.preview && <JsonLd data={[articleLd(article, author), breadcrumbLd(crumbs)]} />}
+      {!article.preview && <JsonLd data={[articleLd(article, author, category?.label), breadcrumbLd(crumbs)]} />}
       {notice}
       <Container className="pt-8 sm:pt-12">
         <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,var(--container-reading))_minmax(0,1fr)] lg:gap-x-12">

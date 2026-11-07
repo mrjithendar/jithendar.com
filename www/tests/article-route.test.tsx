@@ -29,6 +29,11 @@ describe("article routes", () => {
   });
 
   it("renders metadata with a self-referencing absolute canonical", async () => {
+    // The title template reads the site configuration from the database: use an empty in-memory one.
+    const { freshDb } = await import("./db-helpers");
+    const { setDbForTests } = await import("@/db");
+    await freshDb();
+    onTestFinished(() => setDbForTests(undefined));
     const meta = await articleMetadata("blog", params("published-tutorial"));
     expect(meta.alternates?.canonical).toBe("https://jithendar.com/blog/published-tutorial");
     expect(meta.title).toBe("Published tutorial fixture for tests");

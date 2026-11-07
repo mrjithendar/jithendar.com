@@ -71,11 +71,12 @@ creates the first three.
 
 - `jithendar-postgres` (key `password`), `jithendar-redis` (key `password`)
 - `jithendar-com-env` (site configuration; its `DATABASE_URL`/`REDIS_URL` passwords match the two above)
-- `ecr-pull` (image pull secret, refreshed by the `ecr-refresh` CronJob from the tools repository)
+- `harbor-pull` (pull secret for `registry.jithendar.com`, used by the site; `scripts/create-harbor-pull-secret.sh`)
+- `ecr-pull` (image pull secret for the practice executor and sandbox, refreshed by the `ecr-refresh` CronJob from the tools repository)
 
 ## Deploy
 
-The site always runs `jithendar-com:latest` with `imagePullPolicy: Always`. CI pushes `:latest` and restarts
+The site always runs `registry.jithendar.com/jithendar/jithendar-com:latest` (Harbor) with `imagePullPolicy: Always`. CI pushes `:latest` and restarts
 the Deployment on every push to `master`, so new code needs nothing here.
 
 ```sh

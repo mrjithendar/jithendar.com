@@ -3,8 +3,8 @@ name: jithendar.com
 # check   → pull requests: lint, typecheck, test, build, render manifests
 # release → default branch: npm ci once; lint, tests and the production build (in turn); package the
 #           build into an arm64 image, smoke-test the image, push jithendar-com:<commit-sha> and move
-#           jithendar-com:latest to it in ECR, then `kubectl rollout restart deploy/jithendar-com` so the
-#           cluster pulls the new :latest
+#           jithendar-com:latest to it in Harbor (registry.jithendar.com/jithendar), then
+#           `kubectl rollout restart deploy/jithendar-com` so the cluster pulls the new :latest
 #
 # CI's only cluster access is that restart (kubeconfig template .github/jithendar-ci-deployer.yaml, filled
 # from variables MK4_API_SERVER, MK4_CA_DATA and secret MK4_CI_TOKEN set by scripts/setup-ci-deployer.sh); it
@@ -12,9 +12,9 @@ name: jithendar.com
 # runs :latest; there is no digest pinning.
 #
 # Both jobs run on GitHub-hosted runners, never on the mk4 server: builds there competed with the cluster
-# for memory and disk and froze the host (2026-10-29). The release job signs in to AWS through GitHub OIDC as
-# role github-jithendar-com-ci (repository variable AWS_CI_ROLE_ARN; ECR push/pull on this site's repositories
-# only, master only), created by infra/ (Terraform). No AWS key is stored in GitHub.
+# for memory and disk and froze the host (2026-10-29). The release job logs in to Harbor as a project robot
+# with push and pull on project jithendar only: secret HARBOR_ROBOT_SECRET, and variable HARBOR_ROBOT_USER when
+# the robot is not robot$jithendar+ci (see tools/deploy/minikube/harbor/README.md, "Projects and robot accounts").
 
 on:
   workflow_dispatch:
@@ -76,10 +76,8 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-      id-token: write
     env:
-      AWS_REGION: us-east-1
-      REPOSITORY: jithendar-com
+      REGISTRY_IMAGE: registry.jithendar.com/jithendar/jithendar-com
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -111,23 +109,23 @@ jobs:
           journalctl --no-pager -u systemd-oomd --since "-30 min" 2>/dev/null | tail -20 || true
       - name: Render production manifests
         run: kubectl kustomize ../minikube > /dev/null
-      - name: Sign in to AWS
-        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
-        with:
-          role-to-assume: ${{ vars.AWS_CI_ROLE_ARN }}
-          role-session-name: jithendar-com-ci-${{ github.run_id }}
-          aws-region: ${{ env.AWS_REGION }}
-      - name: Log in to Amazon ECR
-        id: ecr
-        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
+      # Single quotes in the default: `$jithendar` is part of the robot's name, not a variable.
+      - name: Log in to Harbor
+        env:
+          HARBOR_ROBOT_USER: ${{ vars.HARBOR_ROBOT_USER || 'robot$jithendar+ci' }}
+          HARBOR_ROBOT_SECRET: ${{ secrets.HARBOR_ROBOT_SECRET }}
+        run: |
+          set -euo pipefail
+          [[ -n "$HARBOR_ROBOT_SECRET" ]] || { echo "::error::Secret HARBOR_ROBOT_SECRET is not set (Harbor robot for project jithendar)"; exit 1; }
+          echo "$HARBOR_ROBOT_SECRET" | docker login registry.jithendar.com -u "$HARBOR_ROBOT_USER" --password-stdin
       - name: Package image
         env:
-          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.REPOSITORY }}:${{ github.sha }}
+          IMAGE: ${{ env.REGISTRY_IMAGE }}:${{ github.sha }}
         run: docker build --platform linux/arm64 --provenance=false -f Dockerfile.ci --build-arg "GIT_SHA=$GITHUB_SHA" -t "$IMAGE" .
       # Never push an image that cannot start or optimise images.
       - name: Smoke-test the image
         env:
-          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.REPOSITORY }}:${{ github.sha }}
+          IMAGE: ${{ env.REGISTRY_IMAGE }}:${{ github.sha }}
         run: |
           set -euo pipefail
           name="jithendar-smoke-$GITHUB_RUN_ID"
@@ -141,8 +139,6 @@ jobs:
           [[ "$type" == image/avif* || "$type" == image/webp* ]] || { echo "Image optimiser returned: $type" >&2; exit 1; }
           echo "Image healthy; optimiser served $type"
       - name: Push
-        env:
-          REGISTRY_IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.REPOSITORY }}
         # The commit tag is kept for history; the cluster runs :latest.
         run: |
           set -euo pipefail
@@ -172,8 +168,6 @@ jobs:
             exit 1
           fi
       - name: Record image
-        env:
-          REGISTRY_IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.REPOSITORY }}
         run: |
           digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$REGISTRY_IMAGE:$GITHUB_SHA")"
           {
