@@ -12,9 +12,8 @@ name: jithendar.com
 # runs :latest; there is no digest pinning.
 #
 # Both jobs run on GitHub-hosted runners, never on the mk4 server: builds there competed with the cluster
-# for memory and disk and froze the host (2026-10-29). The release job logs in to Harbor as a project robot
-# with push and pull on project jithendar only: secret HARBOR_ROBOT_SECRET, and variable HARBOR_ROBOT_USER when
-# the robot is not robot$jithendar+ci (see tools/deploy/minikube/harbor/README.md, "Projects and robot accounts").
+# for memory and disk and froze the host (2026-10-29). The release job logs in to Harbor with secrets
+# HARBOR_USER and HARBOR_PWD.
 
 on:
   workflow_dispatch:
@@ -109,15 +108,14 @@ jobs:
           journalctl --no-pager -u systemd-oomd --since "-30 min" 2>/dev/null | tail -20 || true
       - name: Render production manifests
         run: kubectl kustomize ../minikube > /dev/null
-      # Single quotes in the default: `$jithendar` is part of the robot's name, not a variable.
       - name: Log in to Harbor
         env:
-          HARBOR_ROBOT_USER: ${{ vars.HARBOR_ROBOT_USER || 'robot$jithendar+ci' }}
-          HARBOR_ROBOT_SECRET: ${{ secrets.HARBOR_ROBOT_SECRET }}
+          HARBOR_USER: ${{ secrets.HARBOR_USER }}
+          HARBOR_PWD: ${{ secrets.HARBOR_PWD }}
         run: |
           set -euo pipefail
-          [[ -n "$HARBOR_ROBOT_SECRET" ]] || { echo "::error::Secret HARBOR_ROBOT_SECRET is not set (Harbor robot for project jithendar)"; exit 1; }
-          echo "$HARBOR_ROBOT_SECRET" | docker login registry.jithendar.com -u "$HARBOR_ROBOT_USER" --password-stdin
+          [[ -n "$HARBOR_USER" && -n "$HARBOR_PWD" ]] || { echo "::error::Secrets HARBOR_USER and HARBOR_PWD must be set"; exit 1; }
+          echo "$HARBOR_PWD" | docker login registry.jithendar.com -u "$HARBOR_USER" --password-stdin
       - name: Package image
         env:
           IMAGE: ${{ env.REGISTRY_IMAGE }}:${{ github.sha }}
