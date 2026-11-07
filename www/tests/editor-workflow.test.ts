@@ -102,6 +102,17 @@ describe("content fidelity (Markdown is canonical)", () => {
     const r = fidelity("Inline <kbd>Ctrl</kbd> and <span style=\"color:red\">styled</span> HTML.");
     expect(r.lossless).toBe(false);
   });
+
+  it("treats a list directly under a paragraph as unchanged, but a loose list made tight as a change", () => {
+    expect(fidelity("**Label**\n- one\n- two")).toEqual({ lossless: true });
+    expect(fidelity("Steps:\n1. first\n2. second")).toEqual({ lossless: true });
+    expect(fidelity("1. first\n\n2. second").lossless).toBe(false);
+  });
+
+  it("treats a literal ~ the editor escapes as unchanged, but not a strikethrough", () => {
+    expect(fidelity("About ~30% headroom.")).toEqual({ lossless: true });
+    expect(serializeMarkdown(parseMarkdown("~~gone~~ text"))).toBe("~~gone~~ text");
+  });
 });
 
 describe("unsafe links and stored XSS", () => {

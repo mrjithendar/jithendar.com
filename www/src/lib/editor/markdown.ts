@@ -129,11 +129,14 @@ export function normalizeMarkdown(source: string): string {
     .map((l) => l.replace(/[ \t]+$/, "").replace(/^(\s*)[*+] /, "$1- "))
     // An escaped underscore inside a word renders the same as a plain one (GFM: no intraword emphasis).
     .map((l) => l.replace(/(\w)\\_(?=\w)/g, "$1_"))
-    // Escaped square brackets render as the same literal brackets.
-    .map((l) => l.replace(/\\([[\]])/g, "$1"))
+    // Escaped square brackets and tildes render as the same literal characters (the editor escapes a lone ~).
+    .map((l) => l.replace(/\\([[\]~])/g, "$1"))
     // Table cell padding is cosmetic.
     .map((l) => (l.startsWith("|") ? l.replace(/[ \t]*\|[ \t]*/g, "|").replace(/\|:?-+:?(?=\|)/g, (c) => c.replace(/-+/, "-")) : l))
     .join("\n")
+    // A bullet list (or one starting at 1.) may follow a paragraph line directly; the editor adds a blank line,
+    // which renders the same (CommonMark: such a list interrupts the paragraph). Indented lines are left alone.
+    .replace(/^(?!\s|- |\d+\. )(.+)\n(?=- |1\. )/gm, "$1\n\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }

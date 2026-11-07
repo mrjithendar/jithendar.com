@@ -413,7 +413,6 @@ aws s3 ls s3://my-app-bucket/ --debug 2>&1 | tail -20
 ```
 
 2. **A timeout is the network.** Does the subnet's route table have a NAT route or an S3 gateway endpoint? If there's an endpoint, does its policy allow this bucket? Do the security group and NACL allow outbound HTTPS?
-
 3. **AccessDenied is policy.** Simulate the role's identity policy:
 
 ```bash
@@ -424,7 +423,6 @@ aws iam simulate-principal-policy \
 ```
 
 4. **Then the other side:** the bucket policy (an explicit deny, or an `aws:SourceVpce` condition that doesn't match), an SCP, and, for objects encrypted with a customer-managed KMS key, whether the role can call `kms:Decrypt`. The KMS one catches people constantly.
-
 5. **Confirm in CloudTrail,** which records the denied call, the principal, and often which policy type denied it.
 
 The least-privilege policy for this workload:
