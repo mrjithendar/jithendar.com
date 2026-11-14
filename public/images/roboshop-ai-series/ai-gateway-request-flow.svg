@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 836" width="620" height="836" role="img" aria-labelledby="ai-gateway-request-flow-title ai-gateway-request-flow-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="ai-gateway-request-flow-title">AI gateway internal request flow for POST /api/chat</title>
+<desc id="ai-gateway-request-flow-desc">Ten numbered steps run from web through the Moks widget adapter into ai-gateway: transport limits, general rate limit and origin checks, session lookup, service token and role check, chat rate limit and schema, history and provider snapshot, catalogue and stock, two admission slots, the call to the moks engine, then stock re-application and saving the turn. Each step shows the response it returns when it refuses the request.</desc>
+<rect width="620" height="836" fill="#ffffff"/>
+<defs>
+<marker id="ai-gateway-request-flow-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+<marker id="ai-gateway-request-flow-write" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b45309"/></marker>
+<marker id="ai-gateway-request-flow-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#be123c"/></marker>
+<marker id="ai-gateway-request-flow-reject" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b91c1c"/></marker>
+<marker id="ai-gateway-request-flow-dashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+<marker id="ai-gateway-request-flow-life" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#cbd5e1"/></marker>
+</defs>
+<rect x="15" y="12" width="590" height="96" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="28" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Moks widget adapter (browser-facing)</text>
+<rect x="15" y="120" width="590" height="704" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="136" text-anchor="start" font-size="12" font-weight="600" fill="#475569">ai-gateway process (asgi_app.py, then server.py)</text>
+<polyline points="380,64.0 440,64.0" fill="none" stroke="#b91c1c" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ai-gateway-request-flow-reject)"/>
+<polyline points="380,174.0 440,174.0" fill="none" stroke="#b91c1c" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ai-gateway-request-flow-reject)"/>
+<polyline points="380,242.0 440,242.0" fill="none" stroke="#b91c1c" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ai-gateway-request-flow-reject)"/>
+<polyline points="380,310.0 440,310.0" fill="none" stroke="#b91c1c" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ai-gateway-request-flow-reject)"/>
+<polyline points="380,378.0 440,378.0" fill="none" stroke="#b91c1c" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ai-gateway-request-flow-reject)"/>
+<polyline points="380,446.0 440,446.0" fill="none" stroke="#b91c1c" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ai-gateway-request-flow-reject)"/>
+<polyline points="380,514.0 440,514.0" fill="none" stroke="#b91c1c" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ai-gateway-request-flow-reject)"/>
+<polyline points="380,582.0 440,582.0" fill="none" stroke="#b91c1c" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ai-gateway-request-flow-reject)"/>
+<polyline points="380,650.0 440,650.0" fill="none" stroke="#b91c1c" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ai-gateway-request-flow-reject)"/>
+<polyline points="380,718.0 440,718.0" fill="none" stroke="#b91c1c" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ai-gateway-request-flow-reject)"/>
+<polyline points="345.0,92 345.0,146" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#ai-gateway-request-flow-sync)"/>
+<polyline points="205.0,202 205.0,214" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#ai-gateway-request-flow-sync)"/>
+<polyline points="205.0,270 205.0,282" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#ai-gateway-request-flow-sync)"/>
+<polyline points="205.0,338 205.0,350" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#ai-gateway-request-flow-sync)"/>
+<polyline points="205.0,406 205.0,418" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#ai-gateway-request-flow-sync)"/>
+<polyline points="205.0,474 205.0,486" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#ai-gateway-request-flow-sync)"/>
+<polyline points="205.0,542 205.0,554" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#ai-gateway-request-flow-sync)"/>
+<polyline points="205.0,610 205.0,622" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#ai-gateway-request-flow-sync)"/>
+<polyline points="205.0,678 205.0,690" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#ai-gateway-request-flow-sync)"/>
+<polyline points="205.0,746 205.0,758" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#ai-gateway-request-flow-sync)"/>
+<rect x="30" y="36" width="350" height="56" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="205.0" y="63.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">1. Widget checks</text>
+<text x="205.0" y="79.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Origin, 30/min, session, 8 KiB, 4 slots</text>
+<rect x="440" y="44" width="150" height="40" rx="7" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.4"/>
+<text x="515.0" y="71.0" text-anchor="middle" font-size="14" font-weight="600" fill="#7f1d1d">403, 429, 401, 413</text>
+<rect x="30" y="146" width="350" height="56" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="205.0" y="173.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">2. dispatch: transport</text>
+<text x="205.0" y="189.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">64 KiB, 10 s body, 8 workers, 23 s</text>
+<rect x="440" y="154" width="150" height="40" rx="7" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.4"/>
+<text x="515.0" y="181.0" text-anchor="middle" font-size="14" font-weight="600" fill="#7f1d1d">413, 408, 503</text>
+<rect x="30" y="214" width="350" height="56" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="205.0" y="241.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">3. route: shared guards</text>
+<text x="205.0" y="257.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">300/min per address, Origin</text>
+<rect x="440" y="222" width="150" height="40" rx="7" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.4"/>
+<text x="515.0" y="249.0" text-anchor="middle" font-size="14" font-weight="600" fill="#7f1d1d">429, 403</text>
+<rect x="30" y="282" width="350" height="56" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="205.0" y="309.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">4. Session lookup</text>
+<text x="205.0" y="325.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">user-service /internal/session</text>
+<rect x="440" y="290" width="150" height="40" rx="7" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.4"/>
+<text x="515.0" y="309.0" text-anchor="middle" font-size="14" font-weight="600" fill="#7f1d1d">503</text>
+<text x="515.0" y="325.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">fails closed</text>
+<rect x="30" y="350" width="350" height="56" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="205.0" y="377.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">5. /api/chat authorization</text>
+<text x="205.0" y="393.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">service token, then require_role</text>
+<rect x="440" y="358" width="150" height="40" rx="7" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.4"/>
+<text x="515.0" y="385.0" text-anchor="middle" font-size="14" font-weight="600" fill="#7f1d1d">403, 401</text>
+<rect x="30" y="418" width="350" height="56" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="205.0" y="445.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">6. Limit and contract</text>
+<text x="205.0" y="461.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">10/min per address, ChatRequest</text>
+<rect x="440" y="426" width="150" height="40" rx="7" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.4"/>
+<text x="515.0" y="453.0" text-anchor="middle" font-size="14" font-weight="600" fill="#7f1d1d">429, 400</text>
+<rect x="30" y="486" width="350" height="56" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="205.0" y="513.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">7. History and LLM snapshot</text>
+<text x="205.0" y="529.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">chat_history, llm_configuration</text>
+<rect x="440" y="494" width="150" height="40" rx="7" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.4"/>
+<text x="515.0" y="513.0" text-anchor="middle" font-size="14" font-weight="600" fill="#7f1d1d">200</text>
+<text x="515.0" y="529.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">not-configured</text>
+<rect x="30" y="554" width="350" height="56" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="205.0" y="581.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">8. Catalogue and stock</text>
+<text x="205.0" y="597.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">2 s read, unavailableSkus</text>
+<rect x="440" y="562" width="150" height="40" rx="7" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.4"/>
+<text x="515.0" y="589.0" text-anchor="middle" font-size="14" font-weight="600" fill="#7f1d1d">503</text>
+<rect x="30" y="622" width="350" height="56" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="205.0" y="649.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">9. Admission</text>
+<text x="205.0" y="665.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">2 chat slots</text>
+<rect x="440" y="630" width="150" height="40" rx="7" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.4"/>
+<text x="515.0" y="649.0" text-anchor="middle" font-size="14" font-weight="600" fill="#7f1d1d">429</text>
+<text x="515.0" y="665.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">assistant-busy</text>
+<rect x="30" y="690" width="350" height="56" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="205.0" y="717.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">10. Call moks /internal/chat</text>
+<text x="205.0" y="733.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">payload under 16 KiB, 18 s, no retry</text>
+<rect x="440" y="698" width="150" height="40" rx="7" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.4"/>
+<text x="515.0" y="717.0" text-anchor="middle" font-size="14" font-weight="600" fill="#7f1d1d">503</text>
+<text x="515.0" y="733.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">feature-unavailable</text>
+<rect x="30" y="758" width="560" height="54" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="310.0" y="784.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">11. Re-apply live stock, save the turn</text>
+<text x="310.0" y="800.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">validate ChatResponse, return buffered JSON</text>
+</svg>

@@ -1,0 +1,245 @@
+---
+title: "How I Built jithendar.com: CrewAI Pipelines, Istio Mesh and Gateway, and EKS-Style Patterns on Minikube"
+slug: how-i-built-jithendar-com
+description: "How I run jithendar.com on minikube with EKS-style patterns: Istio gateway and STRICT mTLS, CrewAI flows with human review, and PR-tagged releases."
+seoTitle: "Building jithendar.com: Istio, CrewAI and EKS on Minikube"
+seoDescription: "How I run my blog on minikube with EKS-style patterns: Istio gateway and STRICT mTLS, CrewAI flows with human review, and PR-tagged releases."
+author: jithendar-dharmapuri
+category: kubernetes
+tags: [Kubernetes, Istio, CrewAI, Platform Engineering, CI/CD]
+contentType: tutorial
+status: review
+featuredImage:
+  src: /images/how-i-built-jithendar-com/platform-architecture.png
+  alt: "Architecture of jithendar.com on minikube: Cloudflare DNS, HAProxy and the Istio ingress gateway in front of the Next.js site, seo-agent with CrewAI flows, CronJob triggers, a human review step, PostgreSQL, Valkey and monitoring."
+  width: 1922
+  height: 1898
+related:
+  - blog/istio-service-mesh-minikube-features-setup-troubleshooting
+  - blog/caching-isr-ssg-image-optimisation-nextjs
+  - blog/logging-tracing-observability-jithendar-com
+---
+
+I could have started this blog on WordPress or Ghost in an afternoon. I didn't, because the blog was never the only point. I wanted somewhere to practise the platform work I talk about, on a cluster I own, with real traffic and real failures. A blog is a small, honest workload: it needs a database, a cache, TLS, a deploy pipeline, monitoring and backups. And once an AI content pipeline sits on top of it, it has every problem a bigger platform has, just smaller.
+
+This post walks through what is actually in the repository: the manifests, the CI workflows, the CrewAI flows, and the admin dashboard that analyses search data. Where something is planned but not live, I say so.
+
+## The architecture in one picture
+
+The site is a Next.js app (`services/www`) with content in MDX and PostgreSQL. Two Python services sit next to it: a sandboxed Python practice executor and `seo-agent`, which runs every AI workflow as a CrewAI Flow. Everything runs in one namespace, `jithendar`, on a multi-node minikube cluster I call mk4.
+
+![How a request reaches jithendar.com and how the content pipeline fits around it. A reader looks up the name in Cloudflare DNS, which does no proxying, and connects on port 80 or 443 to HAProxy on the cluster host, which forwards TCP with a PROXY protocol v2 header to a NodePort of the Istio ingress gateway. The gateway terminates TLS with a wildcard certificate, redirects www to the apex and HTTP to HTTPS, and routes through a root VirtualService kept in the cluster repository. A delegate VirtualService sends the site's traffic to the two jithendar-com Next.js pods in namespace jithendar, which runs STRICT mTLS with sidecars. Next to the site are the practice executor with gVisor sandboxes and no network, and seo-agent, which runs CrewAI Flows and Crews with an internal API on port 8080 and an MCP port on 8090. CronJobs named seo-flow-* only post a kickoff to seo-agent. seo-agent writes drafts to the site's callback port, and a person approving in /admin/review is the only publish trigger. A /mcp/* route to port 8090 is documented as a Kong decK file or an Istio match but is not applied. Prometheus scrapes port 9464 over mTLS, traces go through OpenTelemetry to Jaeger and logs through Alloy to Loki, and Grafana dashboards come from services/grafana through Argo CD. seo-agent uses the shared CloudNativePG PostgreSQL with pgvector and calls the Anthropic API under a budget guard. The site uses the shared Valkey for a pub/sub cache bus, Cloudflare R2 for media, backups and report PDFs, and Google's Search Console and GA4 APIs.](/images/how-i-built-jithendar-com/platform-architecture.svg)
+
+The content pipeline has two edges into the site. CronJobs or admin buttons start flows. Flows write **drafts** back through the site's internal callback port (9465, never routed publicly). Publishing only happens when I approve a draft in the admin.
+
+## Edge and networking: Istio is the edge, not Kong
+
+The edge has changed twice, and the commit history shows both changes.
+
+It started on **Traefik**. In early November I prepared a **Kong Gateway** migration. The `kong migration` commit moved the Traefik manifests into a `traefik-backup-conf/` folder, and the plan was a Kong instance in DB mode with its entities managed by decK. The SEO agent's MCP routes were even written as a decK file:
+
+```yaml
+# minikube/kong/seo-agent-mcp.deck.yaml (excerpt)
+routes:
+  - name: jithendar-mcp-public
+    protocols: [https]
+    # Exactly /mcp/public and /mcp/public/… (a plain prefix would also match /mcp/publicXYZ).
+    paths: ["~/mcp/public(/.*)?$"]
+    strip_path: false
+    # The MCP server validates Host (DNS-rebinding protection), so Kong must forward the original one.
+    preserve_host: true
+    # Do not buffer: SSE events must reach the client as they are written.
+    request_buffering: false
+    response_buffering: false
+```
+
+That file's own header reads "NOT APPLIED BY ANYTHING." Kong never became the site's edge. Traefik was uninstalled on 2026-11-09, and the **Istio ingress gateway became the only edge**, with its own wildcard certificate issued over DNS-01. The Kong plan was dropped. I kept the decK file because the routing ideas still apply (an exact-path regex, `preserve_host`, no buffering for SSE). The equivalent Istio route for `/mcp/*` is documented, but nobody has applied it yet.
+
+Running one component as both ingress and mesh made the rest simpler. The site doesn't own the Gateway. It only contributes a **delegate VirtualService**: the root routing table (in the separate cluster repo) handles hosts, TLS, redirects and compression, and the site adds its default route:
+
+```yaml
+# minikube/60-istio-routing.yaml (excerpt)
+spec:
+  http:
+  - name: site
+    headers:
+      request:
+        remove:          # a visitor must not choose their own trace id
+        - traceparent
+        - tracestate
+        - baggage
+    route:
+    - destination:
+        host: <site-service>  # in-cluster Service, redacted
+        port:
+          number: 80
+```
+
+Inside the namespace, mTLS is **STRICT** with no plain-text port. Even Prometheus scrapes `:9464` through its own sidecar. An `allow-known-callers` AuthorizationPolicy admits only the gateway, the monitoring namespace and the namespace itself. It runs with `istio.io/dry-run: "true"` first, so it only counts what it would deny. It gets enforced once that count stays at zero.
+
+## EKS-style patterns on minikube
+
+I spend my days on AWS EKS, so I copied the habits that matter there, even where minikube doesn't force them.
+
+**Namespaces and least-privilege CI.** CI has two ServiceAccounts. `github-ci-deployer` may only patch (set the image of, or restart) and watch specific Deployments. `github-ci-applier` may apply application objects (Deployments, Services, ConfigMaps, NetworkPolicies, PDBs, VirtualServices) but never RBAC, Secrets, Namespaces or PeerAuthentications. That way a commit can't widen CI's own access. Nothing is ever pruned.
+
+**Secrets never in Git.** `scripts/create-secrets.sh` creates the site Secret. Database and Valkey credentials are written by Terraform in the cluster repo. Every script that changes the cluster sources `scripts/lib/kube-context.sh`, which prints the target context and API server and asks for confirmation unless `KUBE_CONTEXT` is set. On a laptop with several kubeconfigs, that guard has saved me more than once.
+
+**Availability basics.** Two replicas, a PodDisruptionBudget, and a topology spread that is *required*:
+
+```yaml
+# minikube/30-jithendar-com.yaml (excerpt)
+topologySpreadConstraints:
+- labelSelector:
+    matchLabels:
+      app: jithendar-com
+  matchLabelKeys:
+  - pod-template-hash
+  nodeTaintsPolicy: Honor
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+  # Required: with ScheduleAnyway both replicas once landed on one node,
+  # so one node failure was a full outage.
+  whenUnsatisfiable: DoNotSchedule
+```
+
+**Hardened pods.** Non-root, `seccompProfile: RuntimeDefault`, read-only root filesystems on the agent's trigger pods, dropped capabilities, and a NetworkPolicy per workload. Practice sandboxes run under a gVisor RuntimeClass with no network, pinned down by ValidatingAdmissionPolicies.
+
+**Observability.** The site sends traces through `@vercel/otel` to an OpenTelemetry collector and on to Jaeger. JSON logs go to Loki through Alloy, and metrics go to Prometheus. Grafana dashboards live in the repo (`services/grafana/`) and reach Grafana through Argo CD. The collector keeps only allowlisted log fields and drops URLs, queries and SQL from traces.
+
+**Backups.** Admin → Backups writes zip files to Cloudflare R2, optionally AES-256 encrypted with a passphrase only I know. They contain content, configuration and accounts, but no password hashes, sessions or stored credentials.
+
+**Where minikube differs from EKS.** There's no managed control plane, so I restart the cluster after a host reboot myself (`scripts/protect-host.sh` installs a systemd unit for it). There's no IRSA: pods get credentials from Kubernetes Secrets, not IAM roles. The registry is a self-hosted Harbor, not ECR; the unused ECR Terraform was removed in November 2026. Every node shares one physical host, so "spread across nodes" protects against a node failing, not against the host failing. And Argo CD is only used for dashboards. The site itself deploys through CI (`ci-jithendar-com.yml` for the image, `deploy-minikube.yml` for manifests), not GitOps.
+
+## The AI content pipeline with CrewAI
+
+`seo-agent` runs CrewAI 1.15. The design rule is in `FLOWS.md`: **Flows orchestrate, Crews do the reasoning, plain Python does the data work.** There's no other workflow engine. An earlier version used LangGraph, and v4 replaced it. Kubernetes CronJobs only *trigger* flows.
+
+### Crews and agents
+
+![The CrewAI content pipeline. Three triggers, CronJobs seo-flow-*, the admin Run now button and the MCP kickoff_flow tool, all call the same FlowRunner endpoint, POST /flows/{name}/kickoff, which allows one active run per flow and target through a partial unique index and an advisory lock. optimize_article_flow runs the Optimization Crew (analyst, editor, reviewer), validates the draft and retries once. new_article_flow runs the Editorial Crew (researcher, writer, reviewer, SEO editor), where the SEO editor returns metadata only. Crew guardrails: a read-only tool allowlist, no delegation or code execution, max_iter 4 per agent, 150k tokens and 600 seconds per run, and a monthly budget cap. Optimization drafts land in seo_drafts and wait in the review queue, where a person accepts each change in a word diff and fact-check flags can block approval. Calendar articles go into a CMS draft post and wait for the editor's Publish button. A single-use approval starts publish_flow, which runs apply_changes, cms_publish, verify_live, submit_search and reindex, offers a rollback if the live check fails, and schedules an outcome measurement at 28 days. Every run is recorded in seo_flow_runs, every model call in seo_llm_usage, and each crew agent as an OpenTelemetry span.](/images/how-i-built-jithendar-com/crewai-content-pipeline.svg)
+
+
+| Crew | Agents (sequential) | Used by |
+|---|---|---|
+| Optimization | analyst → editor → reviewer | `optimize_article_flow` |
+| Editorial | researcher → technical writer → technical reviewer → SEO editor | `new_article_flow` |
+| Report | narrates weekly/monthly numbers | `report_flow` |
+| Promotion | copywriter, strategist (no tools) | `promotion_flow`, `content_ideas_flow` |
+
+Every crew shares the same guardrails (`app/crews/common.py`). `allow_delegation=False`, no code execution, no memory. Per-agent `max_iter` is 4, with a 150k-token cap per run and a 600-second wall clock. Tools come from a read-only allowlist: `read_article`, `vector_search`, Search Console queries, the style guide, and an SSRF-checked docs fetcher. **No agent can write anything.** Creating a draft is a flow step, never a tool. Article text and tool results reach the model wrapped as `<data>` blocks, and every backstory says that material is reference, not instructions.
+
+The Editorial Crew has one detail I like: the SEO editor returns metadata only. The body that ships is the technical reviewer's corrected body, so the last agent can't rewrite the text after it has been checked.
+
+### Scheduling
+
+Each scheduled flow has its own CronJob running `python -m app.trigger <flow>`. That script posts to `/flows/{name}/kickoff` with a service token, and that is all it does:
+
+```yaml
+# minikube/seo-agent-60-flow-triggers.yaml (excerpt)
+spec:
+  schedule: "10 6 * * *"        # daily Search Console sync
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      template:
+        spec:
+          containers:
+            - name: trigger
+              command: ["python", "-m", "app.trigger", "gsc_sync_flow"]
+```
+
+Search Console and GA4 sync run daily. The technical audit, weekly recommendations, internal linking and reports run on Mondays. Reindexing and the ML jobs run on Sundays, and the news desk runs every 15 minutes. "Run now" buttons in the admin and the MCP `kickoff_flow` tool call the same endpoint, so there is one way to start a flow.
+
+### Run history and logs
+
+Every run is a row in `seo_flow_runs`: status (`queued`, `running`, `succeeded`, `failed`, `cancelled`, `paused_budget`), the current step, the persisted state after each step, tokens, cost and the trigger. CrewAI's default local SQLite persistence is replaced by a Postgres-backed `FlowPersistence`. A partial unique index and a Postgres advisory lock allow only one active run per flow and target. If a pod crashes mid-run, the run isn't resumed. On startup it is marked failed, and because every step is idempotent, a rerun starts clean. Every model call writes a `seo_llm_usage` row and an OTel span named `crew.<crew>.<agent>`.
+
+### The human gate
+
+This is the part I care about most. Drafting flows end at **"draft awaiting review."** `publish_flow` can only start from a human approval, and it checks that again itself:
+
+```python
+# services/seo-agent/app/flows/publish.py (excerpt)
+@start()
+async def apply_changes(self) -> None:
+    async with self.step("apply_changes"):
+        s = self.state
+        if s.triggered_by != "approval":
+            # Defence in depth: the runner already refuses this;
+            # a flow must never publish on any other trigger.
+            raise PermissionError("publish_flow runs only from a human approval")
+```
+
+The review queue shows each draft as numbered changes in a word-level diff, with the evidence behind each one. I accept or reject them one at a time. There is no bulk approve. A "Needs fact check" flag marks commands or versions without a cited source, and a "Blocks approval" flag must be resolved before publishing. After approval, the flow publishes, verifies the live page, and offers a rollback if that check fails. New articles from the editorial calendar go into a CMS **draft** post and wait for the editor's own Publish button.
+
+## The SEO dashboard (formerly /admin/seo)
+
+The dashboard started at `/admin/seo`. It has since been merged into the main CMS, so those URLs now redirect to pages like `/admin/search`, `/admin/keywords`, `/admin/recommendations`, `/admin/technical` and `/admin/review`.
+
+It reads **Google Search Console and GA4**, runs a **technical audit** with an SSRF-safe crawler limited to my own host, and turns the data into scored recommendations. The score is a weighted average over up to six normalised inputs: search opportunity (30), ranking opportunity (20), relevance (20), quality gap (15), trend (10) and effort (5). Inputs a rule can't compute are left out and the remaining weights renormalised, and the UI shows which inputs were used. The rules behind those inputs cover low CTR, striking-distance queries (positions 5–20), decay, content gaps, outdated content and internal links.
+
+For content suggestions, the weekly flow takes the top-scoring articles without an open draft and fans out at most two optimization runs at once. The Promotion page scores each article per channel, with drafted posts I copy and post myself (there is no posting code). It also suggests *new* topics with evidence from Search Console demand and Reddit threads. An idea goes to the editorial calendar and then through the Editorial Crew to my review.
+
+## CI/CD: tagged by PR number, built only on merge
+
+![How releases work. Opening, updating or reopening a pull request runs the check job: lint, typecheck, test, build, and rendering the production manifests with kubectl kustomize. A push straight to master runs nothing, because there is no push trigger. When the pull request is merged into master, the release job runs on a GitHub-hosted arm64 runner from the merge commit: scope checks whether image files changed, then lint, test and build run one step at a time, an image size gate fails above 15 percent over the baseline, a smoke test checks that /api/health reports the commit and that the image optimiser serves AVIF or WebP, and two tags are pushed, pr-number and latest. The Harbor registry keeps every pr tag. A least-privilege deployer identity that may only patch and watch runs ci-rollout.py, which sets deploy/jithendar-com to moks-cms:pr-number, so the Deployment records which release is live. Rollback is kubectl set image to the last good pr tag. Other workflows: ci-content.yml on push checks MDX, builds a content image and restarts the site only for published changes; deploy-minikube.yml applies application objects with the applier identity when a merged pull request touches minikube/; ci-seo-agent.yml and ci-practice-executor.yml release their own images the same way.](/images/how-i-built-jithendar-com/release-pipeline.svg)
+
+Every workflow runs on `pull_request` and starts its release job only when the PR is merged into the default branch:
+
+```yaml
+# .github/workflows/ci-jithendar-com.yml (excerpt)
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+# ...
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+        && github.event.pull_request.merged == true
+        && github.event.pull_request.base.ref == github.event.repository.default_branch
+# ...
+    env:
+      PR_TAG: pr-${{ github.event.pull_request.number }}
+      RELEASE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+```
+
+The release job builds from the merge commit, not the PR's test merge. It runs lint, tests and the production build on a native arm64 runner, fails if the image grew more than 15% over a stored baseline, and smoke-tests the container (health version must match the commit, the image optimiser must return AVIF or WebP). Then it pushes `moks-cms:pr-<number>` and `:latest`, and points the Deployment at `:pr-<number>` (`scripts/ci-rollout.py`).
+
+There's **no `push` trigger**, on purpose. Every release maps to a reviewed PR, and its tag is the rollback handle: `kubectl set image ... :pr-<n>`. A stray push to `master` deploys nothing. One exception runs on push: `ci-content.yml`, which ships articles and images as a small content image.
+
+## What broke
+
+**CI froze the host (2026-10-29).** Builds ran on self-hosted runners on the same machine as the cluster, and they competed for memory and disk until the host froze. Capping the runners' cgroup wasn't enough, because `docker build` runs inside dockerd, outside that cgroup. The fix was to move builds to GitHub-hosted runners. `protect-host.sh` also adds swap, a persistent journal and a cluster-start unit.
+
+**Both replicas on one node.** With `whenUnsatisfiable: ScheduleAnyway`, the scheduler put both pods on the same worker, so one node failure meant a full outage. The fix was `DoNotSchedule` plus `matchLabelKeys: [pod-template-hash]` and `nodeTaintsPolicy: Honor`.
+
+**Sidecars that never got ready (2026-11-08).** Once NetworkPolicies isolated the pods, a pod with no DNS egress rule of its own timed out resolving istiod, and its sidecar never became ready. With `holdApplicationUntilProxyStarts`, the app never started either. The fix was a shared `istio-sidecars` NetworkPolicy allowing DNS to kube-dns and port 15012 to istiod.
+
+**A squash merge corrupted `uv.lock`.** PR #33 appended a second identical copy of the scikit-learn and scipy blocks, so `uv sync --frozen` failed and every seo-agent CI run broke at install. The broken install also hid a real bug: a forced reindex never deleted chunks of unpublished articles, and the test that would have caught it never ran. Both were fixed in PR #35.
+
+**OOM headroom.** At a 1Gi limit, the site used 780–874Mi, too close to the limit, since an OOM kill drops a replica mid-request. The limit is now 1536Mi.
+
+## Cost and what I'd do differently
+
+The repo tracks LLM spend, not hardware spend. The admin AI budget defaults to **$15 a month**, against an estimate of about $8–10.50. That breaks down to roughly $0.12–0.15 per article optimisation and $0.25–0.45 per new-article draft, with reports under a cent. Ask the Blog has a separate $1/day cap. A call that could cross the cap is never sent: the run ends `paused_budget` and an alert fires at 80%. The crews cost about 3–4× the earlier single-call drafting. That's the price of the researcher/writer/reviewer split, and the per-agent model override (the analyst runs on Haiku) is the lever for lowering it.
+
+What I'd do differently:
+
+- **Build off the cluster host from day one.** The freeze was avoidable.
+- **Pick the edge once.** Moving from Traefik to Kong to Istio cost a branch, a backup folder and an unapplied decK file.
+- **Make topology spread required from the start.** "Soft" spreading looks fine until you check where the pods actually landed.
+
+## What's next
+
+From the repo's own TODOs: take the `allow-known-callers` AuthorizationPolicy out of dry-run, add the `/mcp/*` routes to the Istio root VirtualService so the MCP servers become reachable, and move the LLM budget reservation to work across replicas (today it is in-process only).
+
+## Key takeaways
+
+1. A personal site is a good way to rehearse platform work, because it has every production concern at a scale you can reason about.
+2. Use one edge you understand. Istio as both ingress and mesh removed a whole layer for me.
+3. Give CI the narrowest RBAC that works, and keep RBAC, Secrets and mesh policy changes for a person.
+4. In an AI pipeline, agents should only *read*. Writes are flow steps, and publishing needs a human trigger, checked twice.
+5. Tag images by PR number and release only on merge. Every deploy then has a review, a commit and a rollback tag.

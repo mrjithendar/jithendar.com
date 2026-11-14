@@ -1,0 +1,283 @@
+---
+title: "System Design from the 1990s to 2026, Part 1: From Client-Server Applications to Microservices"
+slug: system-design-evolution-1990s-to-microservices
+description: "How system design moved from mainframes and client-server apps to the web, SOA, the cloud and microservices, and why each change happened. Part 1 of 2."
+seoTitle: "System Design Evolution, Part 1: 1990s to Microservices"
+seoDescription: "System design evolution from 1990s client-server apps to three-tier web, SOA, cloud and microservices: what changed, why it changed, and what each era traded."
+socialTitle: "System Design Then vs Now: 35 Years of Software Architecture (Part 1)"
+socialDescription: "Mainframes, fat clients, three-tier web shops, SOA, Dynamo, Docker and Kubernetes: why architecture kept changing, told through the constraints of each era."
+author: jithendar-dharmapuri
+category: devops-sre
+tags: [System Design, Software Architecture, Distributed Systems, Client-Server Architecture, Microservices, Cloud Native, History]
+contentType: analysis
+status: review
+featuredImage:
+  src: /images/system-design-evolution/system-design-timeline.png
+  alt: "Timeline of system design milestones from 1989 to 2026: the Web proposal at CERN, the Web software released into the public domain in 1993, Apache httpd and Java in 1995, HTTP/1.0 in 1996, the CAP keynote and REST thesis in 2000, the Google File System and MapReduce papers, Amazon S3 and EC2 in 2006, the Dynamo paper in 2007, Docker in 2013, Kubernetes in 2014 and 2015, the Borg paper, OpenTelemetry in 2019, the RAG paper in 2020, Argo graduating in the CNCF in 2022 and the Model Context Protocol in 2024."
+  width: 1922
+  height: 1174
+related:
+  - blog/system-design-evolution-cloud-native-ai-2026
+  - blog/kubernetes-history-origins-evolution-milestones
+  - blog/roboshop-ai-microservices-architecture
+  - blog/devops-interview-preparation-guide
+sources:
+  - title: "IBM System/360"
+    url: https://www.ibm.com/history/system-360
+    publisher: IBM
+  - title: "Sabre: the first online reservation system"
+    url: https://www.ibm.com/history/sabre
+    publisher: IBM
+  - title: "A short history of the Web"
+    url: https://home.cern/science/computing/the-birth-of-the-web/short-history-web/
+    publisher: CERN
+  - title: "CERN puts the World Wide Web in the public domain"
+    url: https://timeline.web.cern.ch/cern-puts-world-wide-web-public-domain
+    publisher: CERN
+  - title: "About the Apache HTTP Server Project"
+    url: https://httpd.apache.org/ABOUT_APACHE.html
+    publisher: Apache Software Foundation
+  - title: "Java and the Internet (Revolution exhibit)"
+    url: https://www.computerhistory.org/revolution/the-web/20/391/2093
+    publisher: Computer History Museum
+  - title: "RFC 1945: Hypertext Transfer Protocol, HTTP/1.0"
+    url: https://www.rfc-editor.org/rfc/rfc1945
+    publisher: IETF
+  - title: "RFC 3875: The Common Gateway Interface (CGI) Version 1.1"
+    url: https://www.rfc-editor.org/rfc/rfc3875
+    publisher: IETF
+  - title: "Simple Object Access Protocol (SOAP) 1.1, W3C Note"
+    url: https://www.w3.org/TR/2000/NOTE-SOAP-20000508/
+    publisher: W3C
+  - title: "Architectural Styles and the Design of Network-based Software Architectures (Fielding, 2000)"
+    url: https://ics.uci.edu/~fielding/pubs/dissertation/top.htm
+    publisher: University of California, Irvine
+  - title: "The Google File System (SOSP 2003)"
+    url: https://research.google/pubs/the-google-file-system/
+    publisher: Google Research
+  - title: "MapReduce: Simplified Data Processing on Large Clusters (OSDI 2004)"
+    url: https://research.google/pubs/mapreduce-simplified-data-processing-on-large-clusters/
+    publisher: Google Research
+  - title: "Bigtable: A Distributed Storage System for Structured Data (OSDI 2006)"
+    url: https://research.google/pubs/bigtable-a-distributed-storage-system-for-structured-data/
+    publisher: Google Research
+  - title: "Amazon's Dynamo (SOSP 2007)"
+    url: https://www.allthingsdistributed.com/2007/10/amazons_dynamo.html
+    publisher: All Things Distributed
+  - title: "Brewer's Conjecture and the Feasibility of Consistent, Available, Partition-Tolerant Web Services"
+    url: https://groups.csail.mit.edu/tds/papers/Gilbert/Brewer2.pdf
+    publisher: MIT CSAIL
+  - title: "CAP Twelve Years Later: How the \"Rules\" Have Changed"
+    url: https://www.infoq.com/articles/cap-twelve-years-later-how-the-rules-have-changed/
+    publisher: InfoQ
+  - title: "Announcing Amazon S3 - Simple Storage Service"
+    url: https://aws.amazon.com/about-aws/whats-new/2006/03/13/announcing-amazon-s3---simple-storage-service/
+    publisher: Amazon Web Services
+  - title: "Announcing Amazon Elastic Compute Cloud (Amazon EC2) - beta"
+    url: https://aws.amazon.com/about-aws/whats-new/2006/08/24/announcing-amazon-elastic-compute-cloud-amazon-ec2---beta/
+    publisher: Amazon Web Services
+  - title: "The Twelve-Factor App"
+    url: https://12factor.net/
+    publisher: 12factor.net
+  - title: "Docker: Nine Years YOUNG"
+    url: https://www.docker.com/blog/docker-nine-years-young/
+    publisher: Docker
+  - title: "10 Years of Kubernetes"
+    url: https://kubernetes.io/blog/2024/06/06/10-years-of-kubernetes/
+    publisher: Kubernetes
+  - title: "Large-scale cluster management at Google with Borg (EuroSys 2015)"
+    url: https://research.google/pubs/large-scale-cluster-management-at-google-with-borg/
+    publisher: Google Research
+---
+
+<Todo>Draft for author review. Fact sources and open items: sites/jithendar.com/docs/knowledge-sharing/system-design-evolution/README.md. Diagrams are draw.io exports; edit the .drawio files beside build_diagrams.py and rerun export.sh. Add your own commentary, then set status and publishedAt. Publish Part 1 and Part 2 together: each links to the other.</Todo>
+
+Imagine it is 1992 and you work on the software team of a regional bank. Tellers in every branch use terminals connected to a mainframe at head office. That mainframe runs the core ledger: accounts, balances, overnight interest. Your team has just built something new, a loan-processing application for the head-office staff. It runs on desktop PCs and talks to a relational database, Oracle or DB2, on a server down the corridor.
+
+Shipping version 2.1 means walking from desk to desk with installation disks. The servers live in a room you can touch. If the database is slow, someone raises a purchase order for a bigger machine and waits weeks for delivery. Every night a tape drive copies the database, and once a week the tapes go to another building. Disaster recovery is a binder of procedures and, if the budget allowed, a contract for standby hardware somewhere else.
+
+Now move the same team to 2026. The loan application is a set of services in containers on Kubernetes, in AWS, Azure or Google Cloud. An API gateway sits in front of them. The database is a managed PostgreSQL with replicas in three availability zones. Redis caches hot data, and Kafka carries events such as `loan-approved` to the services that care. Terraform describes the infrastructure, and a GitOps controller deploys whatever is merged to the main branch. OpenTelemetry, Prometheus and Grafana show what every request did. There might even be a language model answering customers' questions about their statements, behind careful controls.
+
+It is tempting to read that as "old bad, new good". It isn't. The 1992 team had problems we no longer have, such as version drift on hundreds of desktops. They also lacked problems we now have every day: forty services that can each fail on their own, a network between every pair of them, and a cloud bill that grows when nobody is watching. Each generation of architecture solved the constraints of its time and introduced new trade-offs. Plenty of banks and airlines still run core transaction systems on mainframes, for good reasons.
+
+This two-part series follows those constraints. Part 1 covers the early 1990s through the 2010s: mainframes, client-server, the web, distributed systems and the cloud. [Part 2](/blog/system-design-evolution-cloud-native-ai-2026) covers platform engineering and AI-native systems in 2026. It then builds the same online shop three times, in 1992, 2012 and 2026, and reviews a real project, RoboShop AI.
+
+A note on accuracy: the architecture figures are illustrations of typical designs, not diagrams of any one company's system. Every dated milestone comes from a primary source listed at the end of the article.
+
+## System design in the early 1990s
+
+### Mainframes: one large, very reliable computer
+
+IBM announced the System/360 family on 7 April 1964 ([IBM](https://www.ibm.com/history/system-360)), and its descendants still run many of the world's transaction systems. The model is centralised. One large machine holds the data and the programs. Users sit at terminals that send screens of input and receive screens of output. A transaction monitor, such as IBM's CICS, runs many short transactions at once, each one touching a few records. Long jobs, such as statements, interest and reports, run as batch work overnight.
+
+Airline reservations are the classic example. American Airlines and IBM built Sabre, and by the mid-1960s it was handling 7,500 reservations an hour, cutting the time to process a booking from about 90 minutes to a few seconds ([IBM](https://www.ibm.com/history/sabre)).
+
+Mainframes gave you things distributed systems still work hard for: one copy of the data, one clock, strong consistency, and an operations team with complete control of the machine. The costs were hardware price, dependence on one vendor, slow change and vertical scaling. When you ran out of capacity, you bought a bigger mainframe.
+
+### Two-tier client-server
+
+By the early 1990s, desktop PCs were powerful enough to run real applications, and office local area networks (LANs) connected them. That made a cheaper split possible. The **client**, a "fat" desktop program, drew the screens and held most of the business rules. The **server**, a relational database, stored the data and often ran stored procedures for the rules that had to be enforced centrally.
+
+:::figure{caption="Figure 1. A typical early-1990s two-tier application. Numbered markers show where it usually failed."}
+![Early-1990s two-tier client-server application. Three desktop PCs on an office floor run a fat client with screens and business rules; two are on version 2.1 and one is still on version 1.9 (failure point 1, version drift). They connect to a shared Ethernet or Token Ring LAN segment (failure point 2). In the server room, an application and file server running NetWare or Unix handles files, printing and some logic, and a single database server running Oracle7 or DB2 with stored procedures receives SQL directly from each PC (failure point 3). Overnight batch jobs produce statements and reports, and a tape drive takes a nightly dump that goes offsite weekly (failure point 4). The batch jobs send a file over a leased line to a mainframe at head office (failure point 5).](/images/system-design-evolution/1990s-client-server.svg)
+:::
+
+This was a real improvement. Users got responsive graphical screens, and a department could buy a database server for a fraction of the cost of mainframe capacity. The weaknesses show up in Figure 1:
+
+- **Deployment.** Every change had to be installed on every desk. Someone always ran an old version, and old clients sent old SQL to a new schema.
+- **Connections.** Each running client held its own database connection. A database that served 50 users comfortably could struggle at 500.
+- **Duplicated rules.** Business logic lived partly in the client and partly in stored procedures. Two teams could implement the same rule twice, differently.
+- **Security.** Database credentials, or at least database access, sat on every desktop.
+- **Scaling.** The database server was the bottleneck and the single point of failure, and the only fix was a bigger one.
+
+### Monolithic applications
+
+Most applications of the period, on the mainframe or on a server, were **monoliths**. All modules are built and deployed as one unit and share one database. A monolith has real advantages. A call between modules is a function call, not a network request. A business operation can be one database transaction. You debug it on one machine with one debugger, and there is one thing to deploy.
+
+The pain arrives with size. Many teams must coordinate one release. A memory leak in reporting can take down order entry. You cannot scale the busy module without scaling everything.
+
+None of that makes a monolith outdated. Many successful products in 2026 are well-structured monoliths. When a monolith hurts, the cause is usually missing module boundaries, not the fact that it is deployed as one unit. We will come back to this when we reach microservices.
+
+## The late 1990s: the Internet changes everything
+
+Tim Berners-Lee proposed the World Wide Web at CERN in March 1989. On 30 April 1993, CERN put the Web software into the public domain, so anyone could use and build on it ([CERN](https://timeline.web.cern.ch/cern-puts-world-wide-web-public-domain)). The building blocks of web applications arrived quickly:
+
+- **CGI** let a web server run a program for each request and return its output. RFC 3875 later documented it and notes it had been in use on the Web since 1993 ([RFC 3875](https://www.rfc-editor.org/rfc/rfc3875)).
+- **Apache HTTP Server** made its first public release, 0.6.2, in April 1995, and Apache 1.0 followed on 1 December 1995 ([Apache](https://httpd.apache.org/ABOUT_APACHE.html)).
+- **Java** was announced at SunWorld on 23 May 1995 ([Computer History Museum](https://www.computerhistory.org/revolution/the-web/20/391/2093)), and it became one of the main languages for server-side business logic.
+- **HTTP/1.0** was documented as RFC 1945 in May 1996 ([RFC 1945](https://www.rfc-editor.org/rfc/rfc1945)).
+- **Cookies** gave a stateless protocol a way to remember a visitor between requests; the mechanism is standardised today as RFC 6265.
+
+The browser solved client-server's worst problem. It was a universal thin client: update the server, and every user gets the new version on their next page load. But it created new problems. The users were no longer a few hundred employees. They were customers, in unknown numbers, arriving whenever they liked over a network that included attackers.
+
+### Three-tier architecture
+
+The common answer was to split the server side into three tiers. Take a simple online shop:
+
+- **Presentation tier.** Web servers return HTML: catalogue pages, a cart page, a checkout form. Static files such as images are served directly.
+- **Logic tier.** Application servers run the business rules: price the cart, check stock, take the order. In Java shops these were servlets and Enterprise JavaBeans; others used ASP, Perl or PHP.
+- **Data tier.** One relational database holds customers, products and orders.
+
+:::figure{caption="Figure 2. A late-1990s three-tier web shop. The load balancer spreads traffic, and firewalls separate the tiers."}
+![Late-1990s three-tier web shop. Web browsers at home and at work connect over dial-up or office links through the Internet. In the data centre DMZ, a firewall admits only HTTP on port 80 and HTTPS on port 443, and a load balancer with sticky sessions spreads requests across two Apache httpd web servers that serve static HTML and run CGI or modules for dynamic pages. A second firewall lets the web tier call only the application tier on the internal network. Two application servers run Java servlets, EJB, ASP or Perl and keep each user's cart in the session, so a session is lost if its server dies. Both send SQL to a single primary database, Oracle or SQL Server, holding customers, catalogue and orders. Side labels mark tier 1 presentation, tier 2 logic and tier 3 data.](/images/system-design-evolution/late-1990s-three-tier-web.svg)
+:::
+
+A **load balancer** in front of the web tier spread requests across servers and took a dead server out of rotation. Sessions were the awkward part. If your cart lived in the memory of application server 1, every request of yours had to go back to server 1. That is a "sticky session", and if server 1 died, your cart died with it.
+
+**Early caching** mostly meant serving static files without touching the application, plus a few in-memory caches of catalogue data.
+
+Three tiers bought a lot: the web and logic tiers could scale separately, firewalls could isolate the database from the Internet, and different teams could own different tiers. They also brought more machines to run, the session problem, and a database that was still a single point of failure. The shape of public-facing web applications for the next decade was set here.
+
+## The 2000s: distributed systems and service-oriented architecture
+
+Internet traffic kept growing, and the largest sites hit a wall: no single database server could hold their data or handle their writes. Architecture had to become distributed, and not every organisation got there at the same time. Most enterprises spent the decade running three-tier applications on physical servers. The ideas below spread unevenly, starting with the companies whose scale forced them.
+
+### SOA, SOAP and the enterprise service bus
+
+**Service-oriented architecture (SOA)** described a business as a set of services with published contracts: a customer service, a pricing service, an inventory service. Other systems called a service through its contract instead of reading its tables.
+
+**SOAP** and XML were the usual protocol; SOAP 1.1 was published as a W3C Note in May 2000 ([W3C](https://www.w3.org/TR/2000/NOTE-SOAP-20000508/)). Many organisations also adopted an **enterprise service bus (ESB)**, central middleware that routed and transformed messages between services. A common criticism, then and now, is that the bus accumulated business logic, became a bottleneck and was owned by a central team every change had to queue for.
+
+In the same year, Roy Fielding's doctoral dissertation described **REST**, an architectural style built on resources, standard methods and stateless requests ([Fielding, 2000](https://ics.uci.edu/~fielding/pubs/dissertation/top.htm)). Over the decade, many public web APIs moved to REST-style HTTP with JSON payloads, which were lighter to build and call than SOAP.
+
+### Scaling the data, not just the servers
+
+The techniques of this decade are still the backbone of system design interviews:
+
+- **Replication.** One primary takes writes, and read replicas serve reads. Reads scale, but replicas can lag behind the primary.
+- **Partitioning (sharding).** Split data by key across many databases, so writes scale too, at the cost of cross-shard queries and rebalancing.
+- **Distributed caching.** A shared in-memory cache such as Memcached in front of the database absorbs repeated reads. You now own cache invalidation.
+- **Message queues.** Put slow work, such as emails, invoices and warehouse updates, on a queue and let workers process it. The user's request finishes quickly, and a slow downstream system no longer blocks checkout.
+- **Content delivery networks (CDNs).** Copies of static content sit in data centres near users.
+- **Horizontal scaling.** Use many commodity machines instead of a few large ones, and design for any one of them to fail.
+- **Virtualization.** Split a physical server into virtual machines, so a new server takes minutes instead of a purchase order.
+
+### What the big platforms published
+
+A few companies wrote down what they learned, and those papers shaped the industry. Google described the Google File System at SOSP 2003 ([Google Research](https://research.google/pubs/the-google-file-system/)), MapReduce at OSDI 2004 ([Google Research](https://research.google/pubs/mapreduce-simplified-data-processing-on-large-clusters/)) and Bigtable at OSDI 2006 ([Google Research](https://research.google/pubs/bigtable-a-distributed-storage-system-for-structured-data/)). The shared lesson: build reliable systems out of unreliable machines, and let software handle failure.
+
+Amazon's Dynamo paper, presented at SOSP in October 2007, described a key-value store built to stay writable through failures ([All Things Distributed](https://www.allthingsdistributed.com/2007/10/amazons_dynamo.html)). Its motivating example was the shopping cart: a customer should be able to add an item even while disks and networks fail. Dynamo accepted that replicas could briefly disagree and resolved conflicts afterwards, in some cases with help from the application.
+
+Amazon also turned its infrastructure into a product. Amazon S3 was announced on 13 March 2006 ([AWS](https://aws.amazon.com/about-aws/whats-new/2006/03/13/announcing-amazon-s3---simple-storage-service/)), and the EC2 beta on 24 August 2006 ([AWS](https://aws.amazon.com/about-aws/whats-new/2006/08/24/announcing-amazon-elastic-compute-cloud-amazon-ec2---beta/)). Storage and servers became API calls, paid for by usage.
+
+### CAP, partitions and eventual consistency
+
+Eric Brewer presented the CAP conjecture in his keynote at PODC 2000, and Seth Gilbert and Nancy Lynch published a formal proof in 2002 ([Gilbert and Lynch](https://groups.csail.mit.edu/tds/papers/Gilbert/Brewer2.pdf)). In plain terms: when a network partition stops some nodes from talking to others, a replicated system must choose. It can keep answering, and risk returning stale data (availability). Or it can refuse some requests until it can guarantee every read sees the latest write (consistency).
+
+CAP is useful, and it is also widely misused. Brewer himself wrote in 2012 that the "2 of 3" formulation "was always misleading because it tended to oversimplify the tensions among properties" ([InfoQ](https://www.infoq.com/articles/cap-twelve-years-later-how-the-rules-have-changed/)). In practice:
+
+- **Partitions are rare, but they happen,** so the real question is what each operation should do when they do.
+- **The choice can differ per operation.** "Add to cart" can stay available; "charge the card" should be consistent.
+- **Latency is the everyday trade-off.** Waiting for remote replicas on every write costs time even when nothing is broken.
+
+**Distributed transactions**, such as two-phase commit across several databases, give you atomicity, but the coordinator becomes a point of failure and locks are held while it waits. Many systems instead used **eventual consistency**: replicas converge over time, the application tolerates briefly stale reads, and failures are fixed with retries, idempotent operations and compensating actions. That pattern, now often called a saga, comes back in Part 2.
+
+## The 2010s: cloud computing, containers and microservices
+
+### The cloud becomes the default place to start
+
+By the 2010s, a new company could run on rented infrastructure from day one:
+
+- **Infrastructure as a Service (IaaS):** virtual machines, disks and networks through an API, such as EC2.
+- **Platform as a Service (PaaS):** you push code, and the platform builds, runs and scales it.
+- **Managed services:** databases, queues and caches run by the provider, with backups and failover included.
+
+**Infrastructure as Code** tools such as Terraform and CloudFormation described servers, networks and permissions in reviewable files. If you want to see that on a real project, [Learning Terraform with a real project](/blog/learning-terraform-real-project-tools-repository) walks through one. **DevOps** and **CI/CD** shortened the path from commit to production, from quarterly releases to many small deploys a day.
+
+**The Twelve-Factor App**, written by Adam Wiggins ([12factor.net](https://12factor.net/)), summarised habits from running many apps on a platform: keep config in the environment, keep processes stateless, treat logs as event streams, and make processes quick to start and stop. Those rules are why a container can be killed and replaced without anyone noticing.
+
+### Containers and Kubernetes
+
+Solomon Hykes first showed Docker publicly at PyCon on 15 March 2013 ([Docker](https://www.docker.com/blog/docker-nine-years-young/)). A container image packages an application with its dependencies, so "works on my machine" becomes "works on every machine that runs this image".
+
+Running hundreds of containers across many machines needed a scheduler. Kubernetes' first commit landed on 6 June 2014, and version 1.0 was released on 21 July 2015, the same day the Cloud Native Computing Foundation was announced ([Kubernetes](https://kubernetes.io/blog/2024/06/06/10-years-of-kubernetes/)). It drew on Google's experience with Borg, described in a EuroSys 2015 paper ([Google Research](https://research.google/pubs/large-scale-cluster-management-at-google-with-borg/)). Kubernetes schedules containers, restarts them when they fail, gives each Service a stable DNS name, and rolls out new versions gradually. I tell that story in detail in [Kubernetes: how it started and evolved](/blog/kubernetes-history-origins-evolution-milestones).
+
+### Microservices
+
+With cheap environments, containers and automated deploys, splitting an application became practical. In a **microservices** architecture, each service owns one business capability and its own data, and is deployed independently by the team that owns it. Supporting pieces became standard:
+
+- an **API gateway** at the edge for routing, authentication and rate limits
+- **service discovery**, so services find each other by name (in Kubernetes, through DNS)
+- **centralised logging and monitoring**, because a single user request now crosses many processes
+
+:::figure{caption="Figure 3. A typical 2010s cloud-native microservices system. Each service owns its database; Kafka carries events between them."}
+![Cloud-native microservices. Users on browsers and mobile apps reach a cloud load balancer with TLS and health checks across several zones, which forwards HTTPS into a Kubernetes cluster. Inside, an API gateway handles routing, authentication and rate limits and calls six services: users, catalogue, cart, orders, payments and shipping. Each owns its store: PostgreSQL for users, orders, payments and shipping, MongoDB for products and Redis for carts. Orders and payments publish events to a Kafka event log, and shipping consumes them. Below the cluster, a CI pipeline pushes images to a container registry, a GitOps controller (Argo CD) deploys into the cluster, and observability collects metrics, logs and traces.](/images/system-design-evolution/2010s-cloud-native-microservices.svg)
+:::
+
+### Monolith or microservices?
+
+| Area | Monolith | Microservices |
+|---|---|---|
+| Development complexity | Lower: one codebase, one build, local calls | Higher: contracts, versioning, many repositories or pipelines |
+| Deployment independence | One release for everything | Each service ships on its own schedule |
+| Scalability | Scale the whole application | Scale only the busy services |
+| Fault isolation | One bad module can take everything down | A failing service can be isolated, if timeouts and fallbacks exist |
+| Data consistency | One database transaction | Sagas, outboxes and eventual consistency |
+| Network overhead | Function calls | Network calls with latency, retries and serialization |
+| Operational cost | One thing to run and monitor | Many deployments, dashboards, alerts and on-call duties |
+| Observability | One log and one process to debug | Needs distributed tracing to follow a request |
+| Team ownership | Shared code, coordinated releases | Clear ownership per service, if teams match the boundaries |
+
+Microservices mostly solve an organisational problem: many teams changing one system without queueing behind each other. If you don't have that problem, you pay the costs without the benefit.
+
+A **modular monolith** is often the better choice. It is one deployable application whose modules have strict boundaries: each module owns its own tables, and other modules call it only through its public interface. Prefer it when:
+
+- one or two teams own the whole system
+- the domain boundaries are still unclear, because splitting along the wrong line is expensive to undo
+- business operations need strong consistency across several modules
+- the team is not yet ready to run, trace and page on many services
+- cost matters more than independent scaling
+
+Clean module boundaries keep the option open. If a module later needs to scale or ship on its own, it can be extracted along a line that already exists. The [RoboShop AI microservices article](/blog/roboshop-ai-microservices-architecture) shows the opposite trade-off in practice.
+
+## The milestones on one page
+
+:::figure{caption="Figure 4. Milestones from 1989 to 2026. Spacing is not to scale; each date comes from a source listed below."}
+![Timeline of milestones in two rows. 1989 to 1999: March 1989, Berners-Lee proposes the Web at CERN; 30 April 1993, CERN releases the Web software into the public domain; April 1995, Apache httpd 0.6.2 is the first public release; 23 May 1995, Sun announces Java at SunWorld; May 1996, HTTP/1.0 is published as RFC 1945. 2000 to 2009: 2000, Brewer's CAP keynote and Fielding's REST thesis; 2003 and 2004, the Google File System and MapReduce papers; March and August 2006, Amazon S3 launches and the EC2 beta follows; 2007, Amazon's Dynamo paper at SOSP. 2010 to 2019: 15 March 2013, Docker shown publicly at PyCon; 6 June 2014, the first Kubernetes commit; 2015, Google's Borg paper at EuroSys; 21 July 2015, Kubernetes 1.0 and the CNCF announced; May 2019, OpenTracing and OpenCensus merge into OpenTelemetry. 2020 to 2026: May 2020, the retrieval-augmented generation paper; 6 December 2022, Argo graduates in the CNCF; 25 November 2024, Anthropic introduces the Model Context Protocol; 2026, agents, GitOps and platform teams.](/images/system-design-evolution/system-design-timeline.svg)
+:::
+
+Read the timeline as a chain of constraints. Expensive hardware favoured centralisation. Cheap PCs made client-server possible, and the deployment pain it caused made the browser attractive. Public traffic forced horizontal scaling, which made distributed data unavoidable. The cloud made infrastructure programmable, and containers made it portable. Each step solved the previous era's biggest problem and created a new one.
+
+## What comes next in Part 2
+
+By 2015 the pieces of a modern system existed: cloud infrastructure, containers, an orchestrator and a microservices playbook. [Part 2](/blog/system-design-evolution-cloud-native-ai-2026) covers what the 2020s added: platform engineering, GitOps, service meshes, OpenTelemetry and AI components such as RAG, agents and the Model Context Protocol. It compares 1992 with 2026 side by side and builds the same e-commerce shop in three eras. It reviews the real RoboShop AI project, shows how system design interviews changed, and weighs what we have gained and lost.

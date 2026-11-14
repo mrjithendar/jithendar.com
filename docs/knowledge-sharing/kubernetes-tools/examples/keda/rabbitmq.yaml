@@ -1,0 +1,37 @@
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: rabbitmq-monitor
+  namespace: roboshop-ai
+spec:
+  secretTargetRef:
+    - parameter: host
+      name: keda-rabbitmq
+      key: host
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: shipping-worker
+  namespace: roboshop-ai
+spec:
+  scaleTargetRef:
+    name: shipping-worker
+  minReplicaCount: 1
+  maxReplicaCount: 4
+  pollingInterval: 15
+  cooldownPeriod: 300
+  fallback:
+    failureThreshold: 4
+    replicas: 2
+  triggers:
+    - type: rabbitmq
+      authenticationRef:
+        name: rabbitmq-monitor
+      metadata:
+        protocol: http
+        queueName: roboshop.shipping.orders
+        vhostName: /
+        mode: QueueLength
+        value: "20"
+        activationValue: "0"

@@ -1,0 +1,58 @@
+%%{init: {"theme": "base", "flowchart": {"curve": "basis", "nodeSpacing": 24, "rankSpacing": 50, "padding": 12}, "themeVariables": {"fontFamily": "arial, sans-serif", "fontSize": "15px", "primaryTextColor": "#0f172a", "lineColor": "#475569", "clusterBkg": "#ffffff", "clusterBorder": "#cbd5e1", "edgeLabelBackground": "#ffffff"}}}%%
+%% RoboShop AI (Figure 3): checkout (synchronous) and paid-order events (asynchronous).
+%% Evidence: services/ai-gateway/README.md (state machine), services/ai-gateway/events.py,
+%% services/shipping-service/src/main/java/com/roboshop/shipping/OrderEvents.java, services/kafka-bridge/bridge.py.
+flowchart LR
+  subgraph sync["Checkout: synchronous HTTP"]
+    direction TB
+    browser["<b>Browser</b><br/>checkout page"]
+    gw["<b>ai-gateway</b><br/>reserve, verify, commit"]
+    ledger[("<b>Ledger + outbox</b><br/>order state, event ID")]
+    pay["<b>payment-service</b><br/>HMAC + capture checks"]
+    rzp["<b>Razorpay</b><br/>test mode by default"]
+  end
+
+  subgraph async["Paid-order events: asynchronous, at least once"]
+    direction TB
+    ex{{"<b>RabbitMQ</b> exchange<br/>roboshop.orders"}}
+    qShip[["roboshop.shipping.orders"]]
+    qTest[["roboshop.test.orders<br/>(audit, no consumer)"]]
+    qKafka[["roboshop.kafka.orders"]]
+    ship["<b>shipping-service</b><br/>dedupes by event ID"]
+    pg[("<b>PostgreSQL</b><br/>shipment_requests")]
+    dlq[["roboshop.shipping.failed"]]
+    bridge["<b>kafka-bridge</b>"]
+    kafka[("<b>Kafka</b><br/>orders.live.v1 / orders.test.v1")]
+  end
+
+  browser -->|"1. create order<br/>+ Idempotency-Key"| gw
+  gw -->|"2. reserve stock"| ledger
+  gw -->|"3. create / verify"| pay
+  pay --> rzp
+  rzp -->|"signed webhook"| gw
+  gw -->|"4. paid + event"| ledger
+
+  ledger ==>|"publisher confirms"| ex
+  ex ==>|"order.paid"| qShip
+  ex ==>|"order.test-paid"| qTest
+  ex ==>|"both keys"| qKafka
+  qShip ==> ship
+  ship --> pg
+  qShip -.->|"after 5 failures"| dlq
+  qKafka ==> bridge
+  bridge ==> kafka
+
+  classDef client fill:#f8fafc,stroke:#334155,stroke-width:1.5px,color:#0f172a
+  classDef svc fill:#ecfdf5,stroke:#047857,stroke-width:1.5px,color:#064e3b
+  classDef store fill:#fffbeb,stroke:#b45309,stroke-width:1.5px,color:#451a03
+  classDef bus fill:#fff1f2,stroke:#be123c,stroke-width:1.5px,color:#4c0519
+  classDef external fill:#f1f5f9,stroke:#64748b,stroke-width:1.5px,color:#0f172a
+
+  class browser client
+  class gw,pay,ship,bridge svc
+  class ledger,pg,kafka store
+  class ex,qShip,qTest,qKafka,dlq bus
+  class rzp external
+
+  linkStyle 6,7,8,9,10,13,14 stroke:#be123c,stroke-width:3px
+  linkStyle 12 stroke:#be123c,stroke-width:1.5px,stroke-dasharray:5 4

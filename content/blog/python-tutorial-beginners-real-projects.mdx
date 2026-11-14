@@ -1,0 +1,2176 @@
+---
+title: "Learning Python Through Real Projects: From Basics to APIs and AI Tools"
+slug: python-tutorial-beginners-real-projects
+description: "A Python tutorial for beginners that uses real project code: types, collections, functions, files, errors, classes, APIs, FastAPI, async and tests."
+seoTitle: "Python Tutorial for Beginners: Learn With Real Project Code"
+seoDescription: "Learn Python from the basics to APIs and AI tools, with runnable Python examples and real code from MOKS, a FastAPI service. Python for DevOps and AI."
+author: jithendar-dharmapuri
+category: devops-sre
+tags: [Python, Python Tutorial, FastAPI, Pydantic, HTTPX, pytest, asyncio]
+contentType: tutorial
+status: review
+related:
+  - projects/moks
+  - blog/fastapi-and-fastmcp-ai-projects
+  - blog/moks-rag-and-skills-design
+  - projects/roboshop-ai
+sources:
+  - title: "MOKS source at commit ef6908a"
+    url: https://github.com/mrjithendar/moks/tree/ef6908ac90730beac312813f539cd0bc57d94810
+    publisher: GitHub
+  - title: "RoboShop AI source at commit c81e85a"
+    url: https://github.com/mrjithendar/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b
+    publisher: GitHub
+  - title: "The Python Tutorial (3.12)"
+    url: https://docs.python.org/3.12/tutorial/index.html
+    publisher: Python Software Foundation
+  - title: "venv: creation of virtual environments"
+    url: https://docs.python.org/3.12/library/venv.html
+    publisher: Python Software Foundation
+  - title: "asyncio: asynchronous I/O"
+    url: https://docs.python.org/3.12/library/asyncio.html
+    publisher: Python Software Foundation
+  - title: "FastAPI tutorial"
+    url: https://fastapi.tiangolo.com/tutorial/
+    publisher: FastAPI
+  - title: "Pydantic documentation"
+    url: https://docs.pydantic.dev/latest/
+    publisher: Pydantic
+  - title: "HTTPX documentation"
+    url: https://www.python-httpx.org/
+    publisher: Encode
+  - title: "pytest documentation"
+    url: https://docs.pytest.org/en/stable/
+    publisher: pytest
+---
+
+This Python tutorial for beginners goes from the first `print()` to a small FastAPI service with tests. Each topic starts with a small example you run on your own computer, then shows the same idea in [MOKS](/projects/moks), the Python SRE portal I run at `jithendar.com/moks`, which answers questions such as "Why is checkout returning 502 errors?" from Kubernetes, Prometheus and Loki evidence.
+
+You need basic computer knowledge, a terminal and Python 3.11 or newer. No example needs a cloud account, an API key or a network connection once the packages are installed. Project excerpts were checked against [MOKS at commit ef6908a](https://github.com/mrjithendar/moks/tree/ef6908ac90730beac312813f539cd0bc57d94810), and each block is labelled **Actual project code** (copied line for line, linked to the exact lines), **Simplified from project code** (the label says what was left out) or **Standalone teaching example** (save it under the file name in its first line and run it).
+
+::toc
+
+## Which of my projects use Python
+
+In MOKS, the backend (API, worker and CLI, on Python 3.12) and the PyTorch reranker are Python; the frontend is TypeScript. In RoboShop AI, `ai-gateway` (FastAPI), `mcp-server` (FastMCP), the shop's `moks` chat widget, `cart-service`, `user-service` and `kafka-bridge` are Python, while catalogue, payment and web are Node.js, currency is Go and shipping is Java. This article follows the MOKS backend for continuity, with one RoboShop AI example for MCP.
+
+## 1. What Python is
+
+Python is a programming language. You write instructions in a `.py` file, and the **Python interpreter** carries them out from top to bottom. MOKS uses it for a command-line tool, a web API, background workers and calls to language models.
+
+*Standalone teaching example.* Save this as `hello.py`.
+
+```python
+# hello.py
+name = "MOKS"
+print("Hello from", name)
+```
+
+```text
+$ python3 hello.py
+Hello from MOKS
+```
+
+`python3 hello.py` starts the interpreter on that file. A line starting with `#` is a **comment**, which Python ignores. `name = "MOKS"` stores text under a name, and `print(...)` writes values separated by spaces.
+
+### Indentation is part of the syntax
+
+Python groups lines by **indentation** instead of braces: lines indented under an `if` belong to it.
+
+*Standalone teaching example.*
+
+```python
+# indentation.py
+pods_restarting = 3
+if pods_restarting > 0:
+    print("Some pods restarted")
+    print("Check their logs")
+print("Done")
+```
+
+```text
+$ python3 indentation.py
+Some pods restarted
+Check their logs
+Done
+```
+
+The colon ends the `if` line and starts a block; the indented lines run only when the condition is true, and `print("Done")` runs either way. Use four spaces per level, as MOKS does.
+
+**Common mistake:** forgetting to indent the block.
+
+*Standalone teaching example.*
+
+```python
+# bad_indent.py
+pods_restarting = 3
+if pods_restarting > 0:
+print("Some pods restarted")
+```
+
+```text
+$ python3 bad_indent.py
+  File "/home/you/python-tutorial/bad_indent.py", line 4
+    print("Some pods restarted")
+    ^
+IndentationError: expected an indented block after 'if' statement on line 3
+```
+
+Python refuses to run the file and points at line 4 (the comment on line 1 counts). The fix is four spaces before `print`.
+
+### The language, the standard library and packages
+
+**The language** is the syntax and built-in types. **The standard library** ships with Python (`json`, `pathlib`, `re`, `logging`, `asyncio`). **Third-party packages** are installed separately; MOKS's [`backend/pyproject.toml`](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/pyproject.toml) lists FastAPI, Pydantic, SQLAlchemy, HTTPX, LangGraph, boto3 and others. When a framework does something, I name it.
+
+## 2. Setting up Python
+
+MOKS declares `requires-python = ">=3.11"`, builds from `python:3.12-slim` and runs CI on 3.12. Use 3.12 if you can; everything here also works on 3.11. MOKS uses the standard `venv` and `pip` tools, not Poetry or uv.
+
+A **virtual environment** is a folder with its own package list, so installs do not affect other projects or the system Python:
+
+```bash
+# working directory: your home folder
+mkdir -p ~/python-tutorial
+cd ~/python-tutorial
+python3 --version
+python3 -m venv .venv
+source .venv/bin/activate        # Windows PowerShell: .venv\Scripts\Activate.ps1
+python --version
+python -m pip install fastapi==0.162.0 httpx==0.28.1 httpx2==2.16.0 pytest==9.2.0 uvicorn==0.54.0
+```
+
+- `python3 --version` checks your Python; on macOS and Linux plain `python` may be missing or Python 2.
+- `python3 -m venv .venv` creates the environment (`-m` runs a standard-library module as a program), and `source .venv/bin/activate` switches the terminal to it, usually showing `(.venv)`.
+- `python -m pip install ...` installs into that environment. FastAPI, HTTPX and Uvicorn are MOKS's pinned versions and pytest the one I tested with. `httpx2` is not imported, but Starlette's test client warns without it.
+
+Run `deactivate` to leave, and `source .venv/bin/activate` again in each new terminal.
+
+MOKS keeps supported ranges in `pyproject.toml` (`fastapi>=0.115`) and exact pins in `requirements.txt` (`fastapi==0.162.0`). Its README installs both:
+
+```bash
+# working directory: the moks repository, inside an active virtual environment
+cd backend
+python -m pip install -r requirements.txt
+python -m pip install --no-deps -e .
+```
+
+`-e .` installs MOKS in **editable** mode, so edits take effect without reinstalling, and `--no-deps` skips the ranges because the pins are installed. The full service and its tests also need PostgreSQL; the beginner examples do not.
+
+## 3. Variables and basic data types
+
+A **variable** is a name for a value, created with `=`. The basic types are `str` (text in quotes), `int` (whole numbers), `float` (decimals), `bool` (`True` or `False`) and `None` ("nothing here yet").
+
+*Standalone teaching example.*
+
+```python
+# types_demo.py
+service = "checkout"        # str
+replicas = 3                # int
+cpu_cores = 0.5             # float
+healthy = True              # bool
+owner = None                # NoneType
+
+print(type(service), type(replicas), type(cpu_cores), type(healthy), type(owner))
+replicas = replicas + 1
+print(f"{service} has {replicas} replicas, healthy={healthy}")
+print(f"CPU per replica: {cpu_cores:.2f} cores")
+```
+
+```text
+$ python3 types_demo.py
+<class 'str'> <class 'int'> <class 'float'> <class 'bool'> <class 'NoneType'>
+checkout has 4 replicas, healthy=True
+CPU per replica: 0.50 cores
+```
+
+`type(x)` shows what a value is. You never declared `replicas` as an integer; Python infers it, which is **dynamic typing**. An **f-string** (`f"..."`) replaces each `{...}` with a value, and `{cpu_cores:.2f}` formats two decimal places.
+
+Text that looks like a number is still text; `int()`, `float()`, `str()` and `bool()` convert.
+
+*Standalone teaching example.*
+
+```python
+# conversions.py
+minutes_text = "30"
+minutes = int(minutes_text)
+print(minutes * 2)
+print(minutes_text * 2)
+print(str(minutes) + " minutes")
+print(float("1.5"), bool(""), bool("no"))
+```
+
+```text
+$ python3 conversions.py
+60
+3030
+30 minutes
+1.5 False True
+```
+
+`minutes_text * 2` repeats the string. `bool("")` is `False` and `bool("no")` is `True`, because any non-empty string counts as true (section 5).
+
+`input()` returns what the person typed, always as a `str`:
+
+*Standalone teaching example.*
+
+```python
+# ask.py
+minutes = input("How many minutes? ")
+print(type(minutes))
+seconds = int(minutes) * 60
+print(f"That is {seconds} seconds.")
+```
+
+Run it with `python3 ask.py` and type `45`:
+
+```text
+How many minutes? 45
+<class 'str'>
+That is 2700 seconds.
+```
+
+### Where this appears in MOKS
+
+Environment variables are always strings. MOKS's settings class gives each value a type, and Pydantic converts them (section 10):
+
+*Actual project code* from [`backend/moks/config.py`, lines 55–58](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/config.py#L55-L58):
+
+```python
+# backend/moks/config.py
+    # Worker
+    embedded_worker: bool = False  # run the investigation worker inside the API process (dev only)
+    worker_concurrency: int = 2
+    worker_poll_seconds: float = 1.0
+```
+
+Each line reads "name: type = default". `MOKS_WORKER_CONCURRENCY=4` arrives as `"4"` and is stored as the integer `4`.
+
+**Common mistake:** `"30" + 5` raises `TypeError: can only concatenate str (not "int") to str`. Convert first: `int("30") + 5`.
+
+**Practice:** ask for hours with `input()`, convert with `float()`, and print the minutes with an f-string.
+
+## 4. Collections: lists, tuples, dictionaries and sets
+
+| Type | Written as | Use it when |
+| --- | --- | --- |
+| `list` | `["a", "b"]` | order matters and the contents change |
+| `tuple` | `("a", "b")` | a small, fixed group of values |
+| `dict` | `{"key": "value"}` | you look values up by a key |
+| `set` | `{"a", "b"}` | you need unique values or fast "is it in here?" checks |
+
+*Standalone teaching example.*
+
+```python
+# collections_demo.py
+pods = ["cart-1", "cart-2", "catalogue-1"]
+pods.append("payment-1")
+print(pods[0], pods[-1], len(pods))
+
+limits = ("500m", "512Mi")
+cpu, memory = limits
+print(cpu, memory)
+
+restarts = {"cart-1": 0, "cart-2": 4}
+restarts["catalogue-1"] = 1
+print(restarts["cart-2"], restarts.get("payment-1", 0))
+
+namespaces = {"shop", "moks", "shop"}
+print(sorted(namespaces), "moks" in namespaces)
+```
+
+```text
+$ python3 collections_demo.py
+cart-1 payment-1 4
+500m 512Mi
+4 0
+['moks', 'shop'] True
+```
+
+Positions start at 0, and `pods[-1]` counts from the end. `cpu, memory = limits` **unpacks** a tuple. `restarts.get("payment-1", 0)` returns a default instead of failing on a missing key. The set dropped the duplicate and has no order, hence `sorted()`.
+
+*Standalone teaching example.*
+
+```python
+# iterate.py
+restarts = {"cart-1": 0, "cart-2": 4}
+
+for name in restarts:
+    print("pod:", name)
+
+for name, count in restarts.items():
+    print(f"{name} restarted {count} times")
+```
+
+```text
+$ python3 iterate.py
+pod: cart-1
+pod: cart-2
+cart-1 restarted 0 times
+cart-2 restarted 4 times
+```
+
+Looping over a dictionary gives its keys; `.items()` gives key and value pairs.
+
+### Where this appears in MOKS
+
+A dictionary maps the kind of question asked to the workflow that answers it (capital letters mark a constant):
+
+*Actual project code* from [`backend/moks/orchestrator/intent.py`, lines 24–26](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/orchestrator/intent.py#L24-L26):
+
+```python
+# backend/moks/orchestrator/intent.py
+# Which workflow answers each intent, and the shape of the answer.
+WORKFLOW = {"deployment_guidance": "guidance", "repository": "guidance", "execution": "guidance",
+            "conceptual": "concept", "troubleshooting": "investigate", "health_check": "investigate"}
+```
+
+Sets answer "is this one of these?", as when the document chunker recognises file types:
+
+*Actual project code* from [`backend/moks/rag/chunking.py`, lines 27–28](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/rag/chunking.py#L27-L28):
+
+```python
+# backend/moks/rag/chunking.py
+MARKDOWN_EXT = {".md", ".markdown", ".mdx", ".rst", ".adoc", ".txt"}
+YAML_EXT = {".yaml", ".yml"}
+```
+
+**Common mistake:** `restarts["payment-1"]` on a missing key raises `KeyError`. Use `.get(...)` unless a missing key is a bug you want to hear about.
+
+**Practice:** make a dictionary of three services and their replicas, add a fourth, and print each with `.items()`.
+
+## 5. Conditions and loops
+
+`if` runs a block when a condition is true, `elif` tries another condition, and `else` catches the rest.
+
+*Standalone teaching example.*
+
+```python
+# conditions.py
+restarts = 4
+status = "Running"
+
+if restarts == 0:
+    print("healthy")
+elif restarts < 5 and status == "Running":
+    print("watch it")
+else:
+    print("investigate")
+
+namespace = ""
+if not namespace:
+    namespace = "default"
+print(namespace, status in ("Running", "Succeeded"))
+```
+
+```text
+$ python3 conditions.py
+watch it
+default True
+```
+
+Comparisons are `==`, `!=`, `<`, `<=`, `>` and `>=`, combined with `and`, `or` and `not`. `if not namespace:` uses **truthiness**: `False`, `None`, `0`, `0.0`, `""` and empty collections count as false, everything else as true.
+
+### Where this appears in MOKS
+
+This function decides what kind of file a path points to:
+
+*Actual project code* from [`backend/moks/rag/chunking.py`, lines 73–89](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/rag/chunking.py#L73-L89):
+
+```python
+# backend/moks/rag/chunking.py
+def kind_of(path: str) -> str:
+    p = path.lower()
+    if p.startswith(("http://", "https://")):  # web pages are stored as Markdown-like text, whatever the URL ends in
+        return "markdown"
+    name = p.rsplit("/", 1)[-1]
+    if name in ("dockerfile", "makefile", "jenkinsfile") or name.startswith("dockerfile."):
+        return "code"
+    ext = "." + name.rsplit(".", 1)[-1] if "." in name else ""
+    if ext in MARKDOWN_EXT:
+        return "markdown"
+    if ext in YAML_EXT:
+        return "yaml"
+    if ext in CODE_EXT:
+        return "code"
+    if ext in DATA_EXT:
+        return "data"
+    return "text"
+```
+
+`path.lower()` makes `README.MD` and `readme.md` equal, `startswith` accepts a tuple of prefixes, `rsplit("/", 1)[-1]` keeps the file name, `... if ... else ...` is a **conditional expression**, and the first matching `return` wins. I ran it: `README.md` gives `markdown`, `deploy/values.yaml` gives `yaml`, `Dockerfile` and `app.py` give `code`, and `notes` gives `text`.
+
+### for and while loops, break and continue
+
+A `for` loop runs once per item and a `while` loop while its condition holds; `continue` skips to the next round and `break` leaves.
+
+*Standalone teaching example.*
+
+```python
+# loops.py
+pods = {"cart-1": 0, "cart-2": 4, "catalogue-1": 2, "payment-1": 7}
+
+for name, restarts in pods.items():
+    if restarts == 0:
+        continue
+    if restarts > 5:
+        print("stop: crash loop in", name)
+        break
+    print(name, "restarted", restarts, "times")
+
+attempt = 1
+while attempt <= 3:
+    print("attempt", attempt)
+    attempt += 1
+```
+
+```text
+$ python3 loops.py
+cart-2 restarted 4 times
+catalogue-1 restarted 2 times
+stop: crash loop in payment-1
+attempt 1
+attempt 2
+attempt 3
+```
+
+`cart-1` was skipped by `continue` and the loop stopped at `payment-1`. Without `attempt += 1` the `while` loop would never end.
+
+### Comprehensions, after ordinary loops
+
+A **comprehension** builds a collection in one expression, a shorter form of a loop that appends.
+
+*Standalone teaching example.*
+
+```python
+# comprehensions.py
+pods = {"cart-1": 0, "cart-2": 4, "catalogue-1": 2}
+
+restarted = []
+for name, count in pods.items():
+    if count > 0:
+        restarted.append(name)
+print(restarted)
+
+print([name for name, count in pods.items() if count > 0])
+print(sorted({name.split("-")[0] for name in pods}))
+```
+
+```text
+$ python3 comprehensions.py
+['cart-2', 'catalogue-1']
+['cart-2', 'catalogue-1']
+['cart', 'catalogue']
+```
+
+Read `[name for name, count in pods.items() if count > 0]` like the loop above it; curly braces build a set instead. MOKS uses a set comprehension to clean a comma-separated setting:
+
+*Actual project code* from [`backend/moks/config.py`, lines 191–193](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/config.py#L191-L193):
+
+```python
+# backend/moks/config.py
+    @property
+    def bootstrap_admin_set(self) -> set[str]:
+        return {e.strip().lower() for e in self.bootstrap_admins.split(",") if e.strip()}
+```
+
+Given `" A@x.com, ,b@x.com"` it returned `{'a@x.com', 'b@x.com'}`. If a comprehension needs more than one `if` or nested loops, write an ordinary loop.
+
+**Practice:** from `{"web": 2, "api": 0, "worker": 5}`, print the services with no replicas with a loop, then with a comprehension.
+
+## 6. Functions
+
+A **function** is a named, reusable block defined with `def`. Its **parameters** are the names in brackets, the values you pass are **arguments**, and `return` sends a value back.
+
+*Standalone teaching example.*
+
+```python
+# functions_demo.py
+def window_label(minutes, unit="minutes"):
+    return f"last {minutes} {unit}"
+
+
+print(window_label(30))
+print(window_label(2, "hours"))
+print(window_label(unit="days", minutes=7))
+
+
+def show_label(minutes):
+    print(f"last {minutes} minutes")
+
+
+result = show_label(15)
+print(result)
+```
+
+```text
+$ python3 functions_demo.py
+last 30 minutes
+last 2 hours
+last 7 days
+last 15 minutes
+None
+```
+
+`unit="minutes"` is a **default value**. Arguments can be **positional** (`window_label(2, "hours")`) or **keyword** (`window_label(unit="days", minutes=7)`). `show_label` only prints, so it returns `None`: **printing shows a value to a person; returning hands it to the calling code.**
+
+### Where this appears in MOKS
+
+This turns "the last 30 minutes" in a question into a number:
+
+*Actual project code* from [`backend/moks/api/investigations.py`, lines 37–42](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/api/investigations.py#L37-L42):
+
+```python
+# backend/moks/api/investigations.py
+def window_from_question(question: str) -> int | None:
+    m = _WINDOW.search(question)
+    if not m:
+        return None
+    n, unit = int(m.group(1)), m.group(2).lower()
+    return n * (1440 if unit.startswith("d") else 60 if unit.startswith("h") else 1)
+```
+
+`_WINDOW` is a **regular expression** (from the `re` module) matching phrases like "past 2 hours", and `m.group(1)` is the number as text. I ran it: "...in the last 30 minutes" gives `30`, "...in the past 2 hours" gives `120`, and "why is checkout slow?" gives `None`, so the caller uses the default window.
+
+A bare `*` makes every later parameter keyword-only, so readers always see what `True` means:
+
+*Actual project code* from [`backend/moks/connectors/base.py`, lines 27–27](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/connectors/base.py#L27-L27):
+
+```python
+# backend/moks/connectors/base.py
+    def __init__(self, kind: str, message: str, *, retryable: bool = False, retry_after: float | None = None):
+```
+
+You must write `ConnectorError("timeout", "...", retryable=True)`; passing `True` by position is an error.
+
+### The mutable default argument mistake
+
+A default value is created **once**, when Python reads the `def` line. For a list or dictionary that is a trap:
+
+*Standalone teaching example.*
+
+```python
+# mutable_default.py
+def add_tag(tag, tags=[]):
+    tags.append(tag)
+    return tags
+
+
+print(add_tag("prod"))
+print(add_tag("eu"))
+
+
+def add_tag_fixed(tag, tags=None):
+    if tags is None:
+        tags = []
+    tags.append(tag)
+    return tags
+
+
+print(add_tag_fixed("prod"))
+print(add_tag_fixed("eu"))
+```
+
+```text
+$ python3 mutable_default.py
+['prod']
+['prod', 'eu']
+['prod']
+['eu']
+```
+
+Every call shares one list. The fix defaults to `None` and creates a new list inside. MOKS's Pydantic models use `Field(default_factory=list)` for the same reason, as in `GroupIn` in `backend/moks/api/investigations.py`.
+
+**Practice:** write `to_seconds(amount, unit="m")` for `"s"`, `"m"` and `"h"`, and call it positionally and by keyword.
+
+## 7. Modules and imports
+
+Every `.py` file is a **module**, and `import` loads one. A folder of modules with an `__init__.py` is a **package**.
+
+*Standalone teaching example.* Save both files in the same folder.
+
+```python
+# windows.py
+UNITS = {"m": 1, "h": 60, "d": 1440}
+
+
+def to_minutes(amount, unit):
+    return amount * UNITS[unit]
+
+
+if __name__ == "__main__":
+    print("running windows.py directly:", to_minutes(2, "h"))
+```
+
+```python
+# report.py
+import json
+from pathlib import Path
+
+import windows
+from windows import to_minutes
+
+print(windows.to_minutes(1, "d"), to_minutes(30, "m"))
+print(json.dumps({"file": Path("report.py").name, "module": windows.__name__}))
+```
+
+```text
+$ python3 windows.py
+running windows.py directly: 120
+```
+
+```text
+$ python3 report.py
+1440 30
+{"file": "report.py", "module": "windows"}
+```
+
+`import windows` gives you the module as `windows`; `from windows import to_minutes` copies one name in. Standard-library imports usually come first, then third-party, then your own. `__name__` is `"__main__"` in the file you run directly and the module's name when imported, so the guarded block ran for `windows.py` and was skipped when `report.py` imported it.
+
+The MOKS backend is one package, `moks`, with a sub-package per area:
+
+```text
+backend/
+  pyproject.toml
+  requirements.txt
+  moks/
+    __init__.py
+    cli.py            the `moks` command
+    main.py           creates the FastAPI app
+    config.py         settings from environment variables
+    api/              HTTP routes (investigations.py, ...)
+    connectors/       Kubernetes, Prometheus, Loki, Git, ...
+    llm/              language model providers
+    rag/              document chunking and search
+    orchestrator/     the investigation workflow
+  tests/
+```
+
+Inside it, **relative imports** such as `from ..config import get_settings` (in `moks/rag/chunking.py`) mean "up one package, then `config`". The `moks` command is mapped in `pyproject.toml`:
+
+*Actual project code* from [`backend/pyproject.toml`, lines 36–37](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/pyproject.toml#L36-L37):
+
+```toml
+# backend/pyproject.toml
+[project.scripts]
+moks = "moks.cli:main"
+```
+
+and `cli.py` ends with the same guard, so `python -m moks.cli serve` also works:
+
+*Actual project code* from [`backend/moks/cli.py`, lines 597–598](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/cli.py#L597-L598):
+
+```python
+# backend/moks/cli.py
+if __name__ == "__main__":
+    main()
+```
+
+Install names and import names can differ: `pip install PyYAML` gives `import yaml`, and `argon2-cffi` gives `argon2`.
+
+**Common mistake:** running `python3 some/folder/script.py` adds `some/folder` to the import path, not your current directory. A script I kept outside `backend/` could not `import moks` until I set `PYTHONPATH=.`; with `pip install -e .` the import works from anywhere.
+
+## 8. Files, JSON and configuration
+
+A **context manager**, used with `with`, sets something up and tidies up afterwards even after an error; for files, that means closing them. `pathlib.Path` represents paths, joined with `/`. `json.dumps()` turns Python values into JSON text (**serialization**) and `json.loads()` or `json.load()` turns it back.
+
+*Standalone teaching example.* It writes only inside a temporary folder that is deleted at the end.
+
+```python
+# files_and_json.py
+import json
+import tempfile
+from pathlib import Path
+
+with tempfile.TemporaryDirectory() as folder:
+    path = Path(folder) / "investigation.json"
+    record = {"question": "Why is checkout slow?", "minutes": 30, "namespaces": ["shop"], "done": False}
+
+    path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    print(path.name, path.suffix, path.exists())
+
+    with open(path, encoding="utf-8") as handle:
+        loaded = json.load(handle)
+
+    print(loaded["minutes"] + 5, loaded["done"])
+    print(json.dumps({"ok": True, "owner": None}))
+
+print(path.exists())
+```
+
+```text
+$ python3 files_and_json.py
+investigation.json .json True
+35 False
+{"ok": true, "owner": null}
+False
+```
+
+`TemporaryDirectory()` deletes its folder when the block ends, hence the final `False`. `write_text` opens, writes and closes in one call. After `json.load`, `loaded["minutes"]` is an `int` again, and Python's `True` and `None` became JSON's `true` and `null`.
+
+**Environment variables** carry settings that differ between laptop and server. `os.environ.get(name, default)` returns a string or the default.
+
+*Standalone teaching example.* The token is a dummy value.
+
+```python
+# env_config.py
+import os
+
+service = os.environ.get("DEMO_SERVICE", "checkout")
+timeout = float(os.environ.get("DEMO_TIMEOUT_SECONDS", "5"))
+debug = os.environ.get("DEMO_DEBUG", "false").lower() == "true"
+api_token = os.environ.get("DEMO_API_TOKEN")
+
+print(f"service={service} timeout={timeout} debug={debug}")
+print("token configured:", api_token is not None)
+```
+
+```text
+$ python3 env_config.py
+service=checkout timeout=5.0 debug=False
+token configured: False
+```
+
+```text
+$ DEMO_SERVICE=cart DEMO_DEBUG=true DEMO_API_TOKEN=dummy-value python3 env_config.py
+service=cart timeout=5.0 debug=True
+token configured: True
+```
+
+`NAME=value command` sets a variable for one command. Values are strings, so `float(...)` and `== "true"` convert them, and the script reports **whether** a token is set but never prints it.
+
+### Where this appears in MOKS
+
+MOKS stores only a *reference* to a credential, such as "the environment variable `MOKS_CRED_PROM`" or "the file `prom/token`", and looks up the value when a connector needs it:
+
+*Actual project code* from [`backend/moks/connectors/base.py`, lines 38–62](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/connectors/base.py#L38-L62):
+
+```python
+# backend/moks/connectors/base.py
+def resolve_credential(ref: dict[str, Any] | None) -> str | None:
+    """Resolve a credential reference to its secret value. Values never leave the process:
+    they are not stored in the database, logged, audited, returned by the API or put in prompts.
+
+    {"type": "env", "name": "MOKS_CRED_X"}       -> environment variable (from a Kubernetes Secret)
+    {"type": "file", "path": "prom/token"}       -> file under MOKS_CREDENTIALS_DIR (mounted Secret)
+    """
+    if not ref or ref.get("type") in (None, "none"):
+        return None
+    kind = ref.get("type")
+    if kind == "env":
+        name = str(ref.get("name", ""))
+        if not name.startswith("MOKS_CRED_"):
+            raise ConnectorError("config", "environment credential names must start with MOKS_CRED_")
+        value = os.environ.get(name)
+        if value is None:
+            raise ConnectorError("config", f"credential environment variable {name} is not set")
+        return value.strip()  # a value made with `echo` or from a file ends in a newline, which is an illegal header
+    if kind == "file":
+        path = resolve_credential_path(ref)
+        try:
+            return path.read_text().strip()
+        except OSError as exc:
+            raise ConnectorError("config", f"credential file {path} is not readable ({type(exc).__name__})") from None
+    raise ConnectorError("config", f"unsupported credential reference type {kind!r}")
+```
+
+The triple-quoted **docstring** documents the function. Only `MOKS_CRED_` names are allowed, so a stored reference cannot point at an unrelated variable. `strip()` removes a trailing newline that would make an illegal HTTP header. File references must resolve under one folder. Error messages name the variable or file, never the value.
+
+**Common mistake:** printing or logging a configuration dictionary that contains a password. Print whether a secret is set, never its value.
+
+**Practice:** write three pods to `pods.json` inside a `TemporaryDirectory`, read the file back, and print how many pods it holds.
+
+## 9. Errors and exceptions
+
+When something goes wrong, Python raises an **exception**; unhandled, it stops the program with a **traceback**. Early ones you will meet: `TypeError` (wrong kind of value), `KeyError` (no such key) and `ValueError` (right type, wrong value, as in `int("thirty")`).
+
+*Standalone teaching example.*
+
+```python
+# common_errors.py
+pod = {"name": "cart-1", "restarts": "4"}
+
+try:
+    total = pod["restarts"] + 1
+except TypeError as exc:
+    print("TypeError:", exc)
+
+try:
+    owner = pod["owner"]
+except KeyError as exc:
+    print("KeyError:", exc)
+
+try:
+    minutes = int("thirty")
+except ValueError as exc:
+    print("ValueError:", exc)
+```
+
+```text
+$ python3 common_errors.py
+TypeError: can only concatenate str (not "int") to str
+KeyError: 'owner'
+ValueError: invalid literal for int() with base 10: 'thirty'
+```
+
+`try:` runs a block; if the exception named in `except` happens, Python jumps there, and `as exc` gives you the object. Naming specific exceptions keeps unexpected problems visible. `else` runs only when nothing was raised, and `finally` runs every time, which makes it the place for clean-up:
+
+*Standalone teaching example.*
+
+```python
+# read_restarts.py
+def read_restarts(pod):
+    try:
+        restarts = int(pod["restarts"])
+    except KeyError:
+        print("no restart count reported")
+        return None
+    except ValueError:
+        print(f"not a number: {pod['restarts']!r}")
+        return None
+    else:
+        print("parsed cleanly")
+        return restarts
+    finally:
+        print("checked", pod.get("name", "unknown pod"))
+
+
+print(read_restarts({"name": "cart-1", "restarts": "4"}))
+print(read_restarts({"name": "cart-2", "restarts": "many"}))
+print(read_restarts({"name": "cart-3"}))
+```
+
+```text
+$ python3 read_restarts.py
+parsed cleanly
+checked cart-1
+4
+not a number: 'many'
+checked cart-2
+None
+no restart count reported
+checked cart-3
+None
+```
+
+`finally` printed "checked ..." although every branch returned. `!r` shows a value's **representation**, with quotes around strings.
+
+### Your own exceptions
+
+A class that extends `Exception` (section 11) is a new exception type, raised with `raise`. MOKS's connector error carries a `kind` the rest of the code can act on:
+
+*Actual project code* from [`backend/moks/connectors/base.py`, lines 20–35](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/connectors/base.py#L20-L35):
+
+```python
+# backend/moks/connectors/base.py
+class ConnectorError(Exception):
+    """A connector failure with a user-presentable message.
+
+    kind: config | auth | unavailable | timeout | bad_request | not_found | too_large | forbidden | rate_limited
+    retry_after: seconds the upstream asked us to wait (rate_limited only).
+    """
+
+    def __init__(self, kind: str, message: str, *, retryable: bool = False, retry_after: float | None = None):
+        super().__init__(message)
+        self.kind = kind
+        self.message = message
+        self.retryable = retryable
+        self.retry_after = retry_after
+
+    def __str__(self) -> str:
+        return f"{self.kind}: {self.message}"
+```
+
+Connector code translates the HTTP library's exceptions into it:
+
+*Actual project code* from [`backend/moks/connectors/base.py`, lines 167–170](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/connectors/base.py#L167-L170):
+
+```python
+# backend/moks/connectors/base.py
+        except httpx.TimeoutException:
+            raise ConnectorError("timeout", f"{self.connector_type} did not answer within {self.limits.timeout_seconds:.0f}s", retryable=True) from None
+        except httpx.TransportError as exc:
+            raise ConnectorError("unavailable", f"cannot reach {self.connector_type} at {self.client.base_url} ({type(exc).__name__})", retryable=True) from None
+```
+
+`raise ... from None` replaces the original exception instead of chaining it, so the user sees one clear sentence. A timeout is a kind of transport error in HTTPX, so the more specific `TimeoutException` comes first.
+
+`except Exception:` catches almost everything and usually hides bugs. MOKS uses it deliberately in the readiness probe Kubernetes calls, where any database failure within two seconds means "not ready":
+
+*Actual project code* from [`backend/moks/main.py`, lines 152–159](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/main.py#L152-L159):
+
+```python
+# backend/moks/main.py
+    @app.get("/readyz", include_in_schema=False)
+    async def readyz() -> JSONResponse:
+        try:
+            async with session_scope() as db:
+                await asyncio.wait_for(db.execute(text("SELECT 1")), 2)
+        except Exception as exc:
+            return JSONResponse({"status": "unavailable", "database": type(exc).__name__}, status_code=503)
+        return JSONResponse({"status": "ok"})
+```
+
+It is not silent: it returns HTTP 503 with the exception's type name. (`@app.get` and `async` come in sections 13 and 14.)
+
+**Common mistake:** `except Exception: pass` makes the error disappear and the program carry on with missing data.
+
+**Practice:** write `safe_int(text)` that returns an `int`, or `None` for non-numbers, catching only `ValueError`.
+
+## 10. Type hints
+
+**Type hints** say what type a value should be: `def window_from_question(question: str) -> int | None:` takes a string and returns an integer or `None`.
+
+*Standalone teaching example.*
+
+```python
+# hints_demo.py
+def summarise(pods: list[str], restarts: dict[str, int], owner: str | None = None) -> str:
+    total = 0
+    for name in pods:
+        total += restarts.get(name, 0)
+    who = owner or "nobody"
+    return f"{len(pods)} pods, {total} restarts, owner: {who}"
+
+
+print(summarise(["cart-1", "cart-2"], {"cart-2": 4}))
+print(summarise(["cart-1"], {}, owner="platform team"))
+```
+
+```text
+$ python3 hints_demo.py
+2 pods, 4 restarts, owner: nobody
+1 pods, 0 restarts, owner: platform team
+```
+
+`list[str]` is a list of strings, `dict[str, int]` a dictionary of string keys and integer values, `str | None` an **optional** string (Python 3.10+; older code writes `Optional[str]`), and `-> str` the return type.
+
+Python ignores hints at run time:
+
+*Standalone teaching example.*
+
+```python
+# hints_not_enforced.py
+def add_minutes(start: int, extra: int) -> int:
+    return start + extra
+
+
+print(add_minutes(30, 15))
+print(add_minutes("30", "15"))
+```
+
+```text
+$ python3 hints_not_enforced.py
+45
+3015
+```
+
+A **static type checker** such as mypy or pyright would report the second call without running it; MOKS does not configure one, and its CI runs only the tests. `from __future__ import annotations`, at the top of many MOKS files, stores hints as text and adds no checking.
+
+To check data while the program runs, such as a JSON body from a browser, you need **runtime validation**. A Pydantic model enforces its hints, converting values where it safely can:
+
+*Standalone teaching example.*
+
+```python
+# validate_with_pydantic.py
+from pydantic import BaseModel, Field, ValidationError
+
+
+class Window(BaseModel):
+    minutes: int = Field(ge=5, le=10080)
+    namespace: str | None = None
+
+
+print(Window(minutes="30"))
+try:
+    Window(minutes="thirty")
+except ValidationError as exc:
+    print(exc.error_count(), exc.errors()[0]["type"])
+```
+
+```text
+$ python3 validate_with_pydantic.py
+minutes=30 namespace=None
+1 int_parsing
+```
+
+`Field(ge=5, le=10080)` adds limits. `"30"` became `30`, and `"thirty"` raised `ValidationError` of type `int_parsing`. MOKS's settings class reads every field from a `MOKS_`-prefixed environment variable:
+
+*Actual project code* from [`backend/moks/config.py`, lines 16–19](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/config.py#L16-L19):
+
+```python
+# backend/moks/config.py
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="MOKS_", env_file=None, extra="ignore")
+
+    env: Literal["development", "test", "production"] = "production"
+```
+
+`Literal[...]` allows exactly those strings, so `MOKS_ENV=staging` fails at start-up, not later.
+
+## 11. Classes and data models
+
+A **class** bundles data with the functions (**methods**) that work on it, and an **object** is one thing built from it.
+
+*Standalone teaching example.*
+
+```python
+# classes_demo.py
+class Service:
+    def __init__(self, name, replicas):
+        self.name = name
+        self.replicas = replicas
+
+    def scale(self, count):
+        self.replicas = count
+
+    def describe(self):
+        return f"{self.name}: {self.replicas} replicas"
+
+
+cart = Service("cart", 2)
+cart.scale(3)
+print(cart.describe())
+print(Service("catalogue", 2).describe())
+```
+
+```text
+$ python3 classes_demo.py
+cart: 3 replicas
+catalogue: 2 replicas
+```
+
+`Service("cart", 2)` calls the setup method `__init__`. `self` is the object being worked on, passed automatically, and `self.name = name` stores a value on it.
+
+A **decorator** (a line starting with `@`) takes a function or class and returns a changed version: `@shout` above `def status` means `status = shout(status)`.
+
+*Standalone teaching example.*
+
+```python
+# decorator_demo.py
+def shout(func):
+    def wrapper():
+        return func().upper()
+    return wrapper
+
+
+@shout
+def status():
+    return "ok"
+
+
+print(status())
+```
+
+```text
+$ python3 decorator_demo.py
+OK
+```
+
+You will rarely write decorators at first but use many, such as `@dataclass`, `@property` and FastAPI's `@router.post(...)`. `@dataclass` writes `__init__`, a readable printout and equality from the type hints:
+
+*Standalone teaching example.*
+
+```python
+# dataclass_demo.py
+from dataclasses import dataclass, field
+
+
+@dataclass
+class Limits:
+    timeout_seconds: float = 15.0
+    retries: int = 2
+    tags: list[str] = field(default_factory=list)
+
+
+default = Limits()
+fast = Limits(timeout_seconds=2.0, retries=0)
+print(default)
+print(fast.retries, fast == Limits(2.0, 0))
+```
+
+```text
+$ python3 dataclass_demo.py
+Limits(timeout_seconds=15.0, retries=2, tags=[])
+0 True
+```
+
+`field(default_factory=list)` is the dataclass fix for the mutable default from section 6. MOKS has almost this class for HTTP limits (`8_000_000` is 8000000 with readability underscores):
+
+*Actual project code* from [`backend/moks/connectors/base.py`, lines 88–92](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/connectors/base.py#L88-L92):
+
+```python
+# backend/moks/connectors/base.py
+@dataclass
+class HttpLimits:
+    timeout_seconds: float = 15.0
+    retries: int = 2
+    max_response_bytes: int = 8_000_000
+```
+
+The chunker's result is a dataclass with two **properties**; `@property` lets you read `piece.tokens` like a value:
+
+*Actual project code* from [`backend/moks/rag/chunking.py`, lines 35–50](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/rag/chunking.py#L35-L50):
+
+```python
+# backend/moks/rag/chunking.py
+@dataclass
+class ChunkPiece:
+    heading: str
+    text: str
+    start_line: int
+    end_line: int
+    start_offset: int = 0
+    end_offset: int = 0
+
+    @property
+    def tokens(self) -> int:
+        return estimate_tokens(self.text)
+
+    @property
+    def text_hash(self) -> str:
+        return hashlib.sha256(" ".join(self.text.split()).lower().encode()).hexdigest()[:16]
+```
+
+Pydantic models can also have **validators** that run while the model is built. This one keeps MOKS's URL prefix to one leading slash and no trailing slash:
+
+*Actual project code* from [`backend/moks/config.py`, lines 167–171](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/config.py#L167-L171):
+
+```python
+# backend/moks/config.py
+    @field_validator("base_path")
+    @classmethod
+    def _normalise_base_path(cls, v: str) -> str:
+        v = "/" + v.strip("/")
+        return "" if v == "/" else v
+```
+
+`@classmethod` passes the class (`cls`), as Pydantic expects. `"moks/"` becomes `"/moks"` and `"/"` an empty string. Not everything needs a class: most of `chunking.py` is plain functions, and classes appear where data and behaviour belong together.
+
+**Practice:** turn `Service` into a dataclass and add `is_scaled_down()`, true when `replicas` is 0.
+
+## 12. Calling APIs over HTTP
+
+An HTTP client sends a **request** with a method (`GET` reads, `POST` usually creates or triggers) and a path, and gets a **response** with a **status code**: `2xx` success, `4xx` a wrong request (401 not signed in, 404 not found, 422 invalid data, 429 too many requests), `5xx` a server failure. MOKS uses **HTTPX**, which can swap the network for a **mock transport**, so these examples never leave your computer.
+
+*Standalone teaching example.*
+
+```python
+# call_api.py
+import httpx
+
+
+def fake_server(request: httpx.Request) -> httpx.Response:
+    if request.url.path == "/pods":
+        return httpx.Response(200, json={"pods": [{"name": "cart-1", "restarts": 0}, {"name": "cart-2", "restarts": 4}]})
+    return httpx.Response(404, json={"error": "not found"})
+
+
+client = httpx.Client(base_url="http://cluster.local", transport=httpx.MockTransport(fake_server), timeout=5.0)
+
+response = client.get("/pods")
+print(response.status_code)
+for pod in response.json()["pods"]:
+    print(pod["name"], pod["restarts"])
+
+missing = client.get("/nodes")
+print(missing.status_code, missing.is_success)
+try:
+    missing.raise_for_status()
+except httpx.HTTPStatusError as exc:
+    print("HTTP error:", exc.response.status_code)
+```
+
+```text
+$ python3 call_api.py
+200
+cart-1 0
+cart-2 4
+404 False
+HTTP error: 404
+```
+
+`timeout=5.0` gives up after five seconds; always set one. `response.json()` parses the body. A 404 is still a *response*, and HTTPX raises for it only if you call `raise_for_status()`. A **transport error** is different: no response arrived at all.
+
+*Standalone teaching example.*
+
+```python
+# transport_error.py
+import httpx
+
+
+def unreachable(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("connection refused")
+
+
+client = httpx.Client(transport=httpx.MockTransport(unreachable), timeout=5.0)
+try:
+    client.get("http://cluster.local/pods")
+except httpx.TimeoutException:
+    print("The server did not answer in time")
+except httpx.TransportError as exc:
+    print("Could not reach the server:", type(exc).__name__)
+```
+
+```text
+$ python3 transport_error.py
+Could not reach the server: ConnectError
+```
+
+### Where this appears in MOKS
+
+Every connector goes through one wrapper, `BoundedHttp`, which classifies responses that did arrive:
+
+*Actual project code* from [`backend/moks/connectors/base.py`, lines 176–185](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/connectors/base.py#L176-L185):
+
+```python
+# backend/moks/connectors/base.py
+        if status in (401, 403):
+            raise ConnectorError("auth" if status == 401 else "forbidden", f"{self.connector_type} rejected the credentials (HTTP {status})")
+        if 300 <= status < 400:
+            raise ConnectorError("bad_request", f"{self.connector_type} redirected to {headers.get('location', 'another address')}; put the final address in base_url")
+        if status == 404:
+            raise ConnectorError("not_found", f"{self.connector_type} endpoint not found (HTTP 404); check the base URL/path prefix")
+        if status >= 500:
+            raise ConnectorError("unavailable", f"{self.connector_type} returned HTTP {status}: {_short(text)}", retryable=True)
+        if status >= 400:
+            raise ConnectorError("bad_request", f"{self.connector_type} rejected the request (HTTP {status}): {_short(text)}")
+```
+
+`300 <= status < 400` is a chained comparison. Only 5xx errors are `retryable=True`, because a 401 or 404 fails the same way next time; rate limits (429) are handled just above and never retried.
+
+Retrying a `GET` is safe. Retrying a `POST` that may already have succeeded could create something twice. Requests safe to repeat are **idempotent**, and MOKS retries only those:
+
+*Actual project code* from [`backend/moks/connectors/base.py`, lines 135–150](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/connectors/base.py#L135-L150):
+
+```python
+# backend/moks/connectors/base.py
+    async def request_json(self, operation: str, method: str, path: str, *, params: Any = None,
+                           data: Any = None, idempotent: bool = True) -> Any:
+        attempts = 1 + (self.limits.retries if idempotent else 0)
+        start = time.monotonic()
+        last: ConnectorError | None = None
+        for attempt in range(attempts):
+            try:
+                result = await self._once(method, path, params, data)
+                CONNECTOR_REQUESTS.labels(self.connector_type, operation, "ok").inc()
+                CONNECTOR_LATENCY.labels(self.connector_type, operation).observe(time.monotonic() - start)
+                return result
+            except ConnectorError as exc:
+                last = exc
+                if not exc.retryable or attempt == attempts - 1:
+                    break
+                await asyncio.sleep(min(2.0, 0.3 * (3 ** attempt)))
+```
+
+`attempts` is 3 by default, or 1 for a non-idempotent request. The loop returns on the first success and stops on a non-retryable error or the last attempt, waiting 0.3 then 0.9 seconds (capped at 2) between tries, which is **backoff**. With a mock that always answers 503, an idempotent request was sent 3 times and an `idempotent=False` one once; both ended with `unavailable: demo returned HTTP 503: overloaded`.
+
+**Common mistake:** retrying everything. Retry only idempotent requests, only for errors that might pass (timeouts, connection failures, 5xx), with a limit and a growing delay.
+
+**Practice:** add a `/nodes` route to `fake_server` that returns two nodes, and print their names.
+
+## 13. Building an API with FastAPI
+
+**FastAPI** lets you write the server: it calls your Python functions when requests arrive. This small endpoint is modelled on MOKS's "start an investigation" route:
+
+*Standalone teaching example.*
+
+```python
+# teaching_api.py
+from fastapi import Depends, FastAPI
+from pydantic import BaseModel, Field
+
+app = FastAPI()
+
+
+class QuestionIn(BaseModel):
+    question: str = Field(min_length=3, max_length=200)
+    minutes: int | None = Field(default=None, ge=5, le=1440)
+
+
+def get_default_minutes() -> int:
+    return 60
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.post("/questions", status_code=201)
+def ask(body: QuestionIn, default_minutes: int = Depends(get_default_minutes)) -> dict:
+    return {"question": body.question, "minutes": body.minutes or default_minutes}
+```
+
+`@app.get("/health")` and `@app.post("/questions", status_code=201)` register **routes**. Because `body` is annotated with the Pydantic model `QuestionIn`, FastAPI validates the JSON body before your function runs. The returned dictionary is sent as JSON. `Depends(get_default_minutes)` is **dependency injection**: FastAPI calls the function per request and passes the result in, as real apps do for database sessions and signed-in users. FastAPI's test client calls the app without a server:
+
+*Standalone teaching example.*
+
+```python
+# try_api.py
+from fastapi.testclient import TestClient
+
+from teaching_api import app
+
+client = TestClient(app)
+print(client.get("/health").json())
+
+ok = client.post("/questions", json={"question": "Why is checkout slow?"})
+print(ok.status_code, ok.json())
+
+bad = client.post("/questions", json={"question": "hi", "minutes": 2})
+print(bad.status_code)
+for error in bad.json()["detail"]:
+    print(error["loc"], error["msg"])
+```
+
+```text
+$ python3 try_api.py
+{'status': 'ok'}
+201 {'question': 'Why is checkout slow?', 'minutes': 60}
+422
+['body', 'question'] String should have at least 3 characters
+['body', 'minutes'] Input should be greater than or equal to 5
+```
+
+The invalid request got **422 Unprocessable Content** with one entry per problem (`loc` says where, `msg` what), with no code from you. To run a real server with Uvicorn, as MOKS does:
+
+```bash
+# working directory: ~/python-tutorial, with the virtual environment active
+uvicorn teaching_api:app --reload
+```
+
+Open `http://127.0.0.1:8000/docs` for the interactive documentation FastAPI generates. `teaching_api:app` means the variable `app` in module `teaching_api`, `--reload` restarts on save, and Ctrl+C stops it.
+
+### The real endpoint in MOKS
+
+The model behind `POST /moks/api/investigations`:
+
+*Actual project code* from [`backend/moks/api/investigations.py`, lines 45–52](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/api/investigations.py#L45-L52):
+
+```python
+# backend/moks/api/investigations.py
+class CreateIn(BaseModel):
+    question: str = Field(min_length=3, max_length=2000)
+    # Both optional: MOKS resolves them from the question (see resolve_scope).
+    environment: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,99}$")
+    namespace: str | None = Field(default=None, pattern=r"^(\*|[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)$")
+    minutes: int | None = Field(default=None, ge=5, le=10080)
+    incident_id: uuid.UUID | None = None
+    skill: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{1,60}$")  # run this skill first, if it may run here
+```
+
+`pattern=` requires a regular expression match, so a namespace like `../etc` is refused before any code uses it, and `uuid.UUID` checks `incident_id`. The route:
+
+*Actual project code* from [`backend/moks/api/investigations.py`, lines 160–162](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/api/investigations.py#L160-L162):
+
+```python
+# backend/moks/api/investigations.py
+@router.post("/investigations", status_code=201)
+async def create(body: CreateIn, request: Request, ctx: AuthContext = Depends(get_auth), db: AsyncSession = Depends(get_db, scope="function")) -> dict[str, Any]:
+    return await start_investigation(body, request, ctx, db)
+```
+
+`router` is an `APIRouter` mounted under `/moks/api`, and the parameters receive the validated body, the raw `Request`, the signed-in user from `get_auth` and a database session from `get_db`. `get_auth` runs first:
+
+*Actual project code* from [`backend/moks/auth/deps.py`, lines 29–40](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/auth/deps.py#L29-L40):
+
+```python
+# backend/moks/auth/deps.py
+async def get_auth(request: Request, db: AsyncSession = Depends(get_db, scope="function")) -> AuthContext:
+    ctx = await load(db, request.cookies.get(COOKIE))
+    if ctx is None:
+        raise HTTPException(401, "Not signed in")
+    s = get_settings()
+    limiter.check(f"api:{ctx.session.id}", s.rate_api_per_minute)
+    if request.method in UNSAFE:
+        if not _origin_ok(request) or not csrf_ok(ctx.session, request.headers.get("x-csrf-token")):
+            POLICY_DENIALS.labels("csrf").inc()
+            raise HTTPException(403, "CSRF check failed; reload the page and try again")
+    request.state.auth = ctx
+    return ctx
+```
+
+`HTTPException(401, ...)` stops the request with a 401, and dependencies can depend on others (`get_auth` asks for `get_db`, shared per request). I tested the order: an invalid body with no session got **401 Not signed in**, and the same body from a signed-in user got **422**, so a stranger learns nothing about the endpoint's rules.
+
+Most MOKS routes return `dict[str, Any]`, but one declares a **response model**, so FastAPI validates and filters the output:
+
+*Actual project code* from [`backend/moks/auth/routes.py`, lines 68–75](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/auth/routes.py#L68-L75):
+
+```python
+# backend/moks/auth/routes.py
+class MeOut(BaseModel):
+    id: str
+    email: str
+    display_name: str
+    auth_mode: str
+    csrf_token: str
+    roles: list[dict[str, str]]
+    permissions: list[str]
+```
+
+With `@router.get("/auth/me", response_model=MeOut)`, the client receives exactly these fields. To keep the layers straight: `def` and type hints are Python; routing, `Depends`, `HTTPException` responses, 422 bodies and `/docs` are FastAPI (on Starlette); the 3-character check is Pydantic; and listening on a port is Uvicorn. A type hint on your own helper function validates nothing.
+
+**Practice:** add `GET /questions/example` to `teaching_api.py` and call it from `try_api.py`.
+
+## 14. Understanding async and await
+
+Normally each line finishes before the next starts (**synchronous** execution), so a program waiting on the network sits idle. An SRE tool waits a lot, for Kubernetes, Prometheus, Loki and language models.
+
+`async def` defines a **coroutine**, a function that can pause. `await` marks where it waits for I/O and lets other coroutines run, and `asyncio` switches between them at each `await`. This is **cooperative**: a coroutine only gives way at an `await`.
+
+*Standalone teaching example.* It takes about four seconds.
+
+```python
+# async_demo.py
+import asyncio
+import time
+
+
+def fetch_sync(name):
+    time.sleep(1)
+    return f"{name} done"
+
+
+async def fetch_async(name):
+    await asyncio.sleep(1)
+    return f"{name} done"
+
+
+async def main():
+    start = time.perf_counter()
+    results = await asyncio.gather(fetch_async("pods"), fetch_async("logs"), fetch_async("metrics"))
+    print(results, f"async: {time.perf_counter() - start:.0f}s")
+
+
+start = time.perf_counter()
+print([fetch_sync(n) for n in ("pods", "logs", "metrics")], f"sync: {time.perf_counter() - start:.0f}s")
+asyncio.run(main())
+```
+
+```text
+$ python3 async_demo.py
+['pods done', 'logs done', 'metrics done'] sync: 3s
+['pods done', 'logs done', 'metrics done'] async: 1s
+```
+
+Three `time.sleep(1)` calls take three seconds. `asyncio.gather(...)` runs three `asyncio.sleep(1)` waits at once, so they overlap in about one second, and `asyncio.run(main())` starts the event loop.
+
+`async` helps only with *waiting*. A calculation never reaches an `await`, so nothing else runs, and any blocking call inside `async def` (`time.sleep`, a synchronous HTTP library, a long calculation) stalls *every* request the process serves. That is why MOKS's retry loop uses `await asyncio.sleep(...)`. boto3, which MOKS uses for Amazon Bedrock, has no async version, so those calls run in a thread:
+
+*Simplified from project code* ([`backend/moks/llm/providers.py`, lines 363–375](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/llm/providers.py#L363-L375)). Omitted: the boto3 client options, the message format and the handling of AWS error codes.
+
+```python
+# Simplified from backend/moks/llm/providers.py
+def call():
+    client = boto3.client("bedrock-runtime", region_name=region)
+    return client.converse(modelId=self.cfg.model, messages=bedrock_messages)
+
+try:
+    data = await asyncio.wait_for(asyncio.to_thread(call), self.cfg.timeout_seconds + 5)
+except asyncio.TimeoutError:
+    raise LLMError("timeout", f"bedrock did not answer within {self.cfg.timeout_seconds}s") from None
+```
+
+`asyncio.to_thread(call)` runs the blocking function in a worker thread and returns something awaitable, and `asyncio.wait_for(..., seconds)` adds a time limit. Searching the backend for blocking calls in async code, I found `time.sleep` only in a synchronous migration helper, plus one small case: the OpenAI-compatible provider may read a small credential file with `path.read_text()` from async code, strictly a blocking read on the event loop.
+
+**Common mistake:** calling a coroutine without `await` gives you a coroutine object, not a result (section 18).
+
+## 15. Python in AI and automation
+
+AI features in MOKS are ordinary Python: functions that take text, call an HTTP API and return structured data. Each model provider class has a `_post` method:
+
+*Actual project code* from [`backend/moks/llm/providers.py`, lines 72–85](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/llm/providers.py#L72-L85):
+
+```python
+# backend/moks/llm/providers.py
+    async def _post(self, url: str, body: dict, headers: dict[str, str]) -> dict:
+        """Waits out rate limits and overload a little, because a provider's own Retry-After is the
+        cheapest fix. Anything longer goes back to the caller as rate_limited."""
+        async with httpx.AsyncClient(timeout=self.cfg.timeout_seconds, transport=self.transport) as c:
+            for attempt in range(RETRIES + 1):
+                try:
+                    r = await c.post(url, json=body, headers=headers)
+                except httpx.TimeoutException:
+                    raise LLMError("timeout", f"{self.name} did not answer within {self.cfg.timeout_seconds}s") from None
+                except httpx.TransportError as exc:
+                    raise LLMError("unavailable", f"cannot reach {self.name} ({type(exc).__name__})") from None
+                if r.status_code not in RETRY_STATUS or attempt == RETRIES:
+                    break
+                await asyncio.sleep(_wait(r, attempt))
+```
+
+It sends the conversation with headers holding the API key (from `resolve_credential`, section 8), makes up to three attempts on the "busy" codes in `RETRY_STATUS` (`{429, 500, 502, 503, 504, 529}`), honours `Retry-After` up to 10 seconds, and turns timeouts and transport failures into an `LLMError` with a `kind`. Retrying this `POST` is reasonable, because asking again for a completion creates nothing on the provider's side. The `transport` parameter lets tests swap in a mock. The same flow, runnable without an API key, with a fake model answering in the OpenAI-style shape MOKS reads (`choices[0]`, token counts under `usage`):
+
+*Standalone teaching example.*
+
+```python
+# fake_model.py
+import httpx
+
+
+def fake_model(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, json={
+        "choices": [{"message": {"content": "Checkout pods restarted 4 times."}}],
+        "usage": {"prompt_tokens": 12, "completion_tokens": 7},
+    })
+
+
+def ask_model(client: httpx.Client, question: str) -> str:
+    body = {"model": "demo-model", "messages": [{"role": "user", "content": question}]}
+    response = client.post("/chat/completions", json=body, timeout=30.0)
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"]
+
+
+client = httpx.Client(base_url="http://model.local/v1", transport=httpx.MockTransport(fake_model))
+print(ask_model(client, "What happened to checkout?"))
+```
+
+```text
+$ python3 fake_model.py
+Checkout pods restarted 4 times.
+```
+
+Some servers send message content as a string and others as a list of parts; MOKS handles both:
+
+*Actual project code* from [`backend/moks/llm/providers.py`, lines 115–119](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/llm/providers.py#L115-L119):
+
+```python
+# backend/moks/llm/providers.py
+def _content_text(content: Any) -> str:
+    """Most servers send a string; some send a list of parts."""
+    if isinstance(content, list):
+        return "".join(p.get("text", "") for p in content if isinstance(p, dict))
+    return content or ""
+```
+
+`isinstance` checks a type at run time, and `"".join(...)` glues strings together. A string comes back unchanged, `[{"text": "a"}, {"type": "image"}, {"text": "b"}]` gives `"ab"`, and `None` gives `""`.
+
+### Preparing documents for retrieval
+
+Before MOKS can answer from runbooks, it splits each document into **chunks** small enough to search and fit in a prompt:
+
+*Actual project code* from [`backend/moks/rag/chunking.py`, lines 109–118](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/rag/chunking.py#L109-L118):
+
+```python
+# backend/moks/rag/chunking.py
+def chunk(path: str, text: str) -> list[ChunkPiece]:
+    if not text.strip():
+        return []
+    k = kind_of(path)
+    size, overlap = limits()
+    spans, sections = _spans(text, k, size)
+    out: list[ChunkPiece] = []
+    for heading, a, b in sections:
+        out.extend(_windows(text, spans[a:b], heading, size, overlap))
+    return out
+```
+
+An empty document returns an empty list. `kind_of` (section 5) picks rules for the file type, the text is split at Markdown headings into slightly overlapping windows, and each `ChunkPiece` (section 11) keeps its heading and line numbers so an answer can cite its evidence. To run it from a MOKS checkout with its requirements installed, save this in `moks/backend`:
+
+*Standalone teaching example* that imports MOKS code.
+
+```python
+# chunk_demo.py
+import os
+
+os.environ.setdefault("MOKS_ENV", "development")
+
+from moks.rag.chunking import chunk, kind_of
+
+runbook = "# Runbook\n\nIntro line.\n\n## Restart\n\nRun the restart.\n"
+print(kind_of("docs/runbook.md"))
+for piece in chunk("docs/runbook.md", runbook):
+    print(piece.heading, "| lines", piece.start_line, "to", piece.end_line, "|", piece.tokens, "tokens")
+```
+
+```text
+$ python3 chunk_demo.py
+markdown
+Runbook | lines 1 to 3 | 5 tokens
+Runbook > Restart | lines 5 to 7 | 7 tokens
+```
+
+MOKS's settings default to production, which refuses to start without a 32-character session secret, so the demo sets `MOKS_ENV=development` before settings are first read. Token counts are estimates (characters divided by 4), because no tokenizer is shipped.
+
+MOKS does not use the Model Context Protocol, but RoboShop AI's `mcp-server` does, through FastMCP, building tools from a table of specifications:
+
+*Actual project code* from [`services/mcp-server/server.py`, lines 210–215](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/mcp-server/server.py#L210-L215):
+
+```python
+# services/mcp-server/server.py
+    server = FastMCP("RoboShop MCP", version="1.1.0", mask_error_details=True, strict_input_validation=True,
+                     lifespan=lifespan, auth=ShopSessionVerifier(gateway) if http else None)
+    # Consequential admin writes are off unless explicitly enabled, and then need confirmation.
+    for spec in TOOLS:
+        if not spec.confirm or admin_writes:
+            server.add_tool(GatewayTool(spec, app))
+```
+
+It is a loop with an `if` that skips confirmation-only tools while admin writes are off. The [RoboShop AI MCP server article](/blog/roboshop-ai-mcp-server) covers the rest, [FastAPI and FastMCP in my projects](/blog/fastapi-and-fastmcp-ai-projects) compares the packages, and [LangChain versus LangGraph in MOKS](/blog/langchain-vs-langgraph-sre-agent-moks) explains the investigation workflow in `backend/moks/orchestrator/graph.py`.
+
+## 16. Following one feature end to end
+
+A signed-in person asks "Why is checkout returning 502 errors in the last 30 minutes?", and the browser sends `POST /moks/api/investigations`:
+
+```text
+browser ── POST /moks/api/investigations {"question": "..."}
+   │
+uvicorn ── runs create_app() from moks/main.py
+   │
+middleware "observe" ── request id, Prometheus metrics, one JSON log line
+   │
+router (prefix /moks/api) ── create(body, request, ctx, db)
+   ├─ get_db     one database session for this request
+   ├─ get_auth   cookie → 401 · rate limit → 429 · CSRF/Origin → 403
+   └─ CreateIn   Pydantic checks the body → 422
+   │
+start_investigation()
+   ├─ per-user rate limit and queue limit → 429
+   ├─ resolve_scope()          which environment and namespace
+   ├─ RBAC check               → 403
+   ├─ window_from_question()   "last 30 minutes" → 30
+   └─ insert Investigation(status="queued"), first event, audit record
+   │
+serialize() → dict → JSON, HTTP 201
+   ·
+   · later, in a separate process
+   ·
+moks worker ── claim(): UPDATE … FOR UPDATE SKIP LOCKED ── runs the investigation
+```
+
+1. **Entry point.** `moks serve` runs Uvicorn with `moks.main:create_app`, which builds the app, adds the `observe` middleware and mounts every router under `/moks/api`.
+2. **Dependencies.** `get_db` provides a session and `get_auth` the user; no session means 401.
+3. **Validation.** Pydantic checks the body against `CreateIn`; a two-character question means 422.
+4. **Main function.** `start_investigation` applies a per-user rate limit and a queue limit, resolves environment and namespace, checks permission, computes the window with `window_from_question`, and adds a `queued` `Investigation` row, a first progress event and an audit record.
+5. **Response.** `serialize()` turns the row into a dictionary sent as JSON with 201, after `get_db` commits.
+6. **Background work.** A separate `moks worker` claims the oldest queued row with PostgreSQL's `FOR UPDATE SKIP LOCKED`, so two workers never take the same one, then reads Kubernetes, Prometheus and Loki and calls a model if one is configured.
+
+Python and `re` supply `window_from_question`, `serialize` and the checks; FastAPI the routing, dependencies and error bodies; Pydantic the validation; SQLAlchemy with asyncpg the row and session; and PostgreSQL, Kubernetes, Prometheus, Loki and the model provider are external services.
+
+## 17. Testing and debugging
+
+`assert condition` raises `AssertionError` when the condition is false. **pytest**, which MOKS uses, runs functions named `test_...` in files named `test_...` and reports failed asserts.
+
+*Standalone teaching example.* It tests `windows.py` from section 7, so save it in the same folder.
+
+```python
+# test_windows.py
+import pytest
+
+from windows import to_minutes
+
+
+def test_hours_become_minutes():
+    assert to_minutes(2, "h") == 120
+
+
+def test_unknown_unit_is_rejected():
+    with pytest.raises(KeyError):
+        to_minutes(1, "weeks")
+```
+
+```text
+$ python3 -m pytest -q test_windows.py
+..                                                                       [100%]
+2 passed in 0.01s
+```
+
+Each dot is a passing test, and `with pytest.raises(KeyError):` passes only if the block raises. Test error paths as well as the happy path. A test should not depend on a real server, so this function takes a client the test can give a mock transport:
+
+*Standalone teaching example.*
+
+```python
+# restarts_client.py
+import httpx
+
+
+def count_restarts(client: httpx.Client) -> int:
+    response = client.get("/pods", timeout=5.0)
+    response.raise_for_status()
+    total = 0
+    for pod in response.json()["pods"]:
+        total += pod["restarts"]
+    return total
+```
+
+```python
+# test_restarts_client.py
+import httpx
+import pytest
+
+from restarts_client import count_restarts
+
+
+def make_client(handler):
+    return httpx.Client(base_url="http://cluster.local", transport=httpx.MockTransport(handler))
+
+
+def test_adds_up_restarts():
+    pods = {"pods": [{"restarts": 1}, {"restarts": 3}]}
+    assert count_restarts(make_client(lambda request: httpx.Response(200, json=pods))) == 4
+
+
+def test_server_error_is_not_hidden():
+    with pytest.raises(httpx.HTTPStatusError):
+        count_restarts(make_client(lambda request: httpx.Response(503)))
+```
+
+```text
+$ python3 -m pytest -q test_restarts_client.py
+..                                                                       [100%]
+2 passed in 0.01s
+```
+
+`lambda request: ...` is a one-line unnamed function. Passing the client in as a parameter is what makes the function testable. MOKS tests its connectors the same way:
+
+*Actual project code* from [`backend/tests/test_bounds_connectors.py`, lines 97–106](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/tests/test_bounds_connectors.py#L97-L106):
+
+```python
+# backend/tests/test_bounds_connectors.py
+async def test_prometheus_errors_are_classified_and_retried():
+    calls = {"n": 0}
+
+    def flaky(req):
+        calls["n"] += 1
+        return httpx.Response(503, text="overloaded")
+
+    with pytest.raises(ConnectorError) as e:
+        await prom(flaky).instant("up", NOW)
+    assert e.value.kind == "unavailable" and calls["n"] == 2  # one retry
+```
+
+`prom(...)` builds a Prometheus connector with one retry and a mock that always answers 503; the test checks the error is `unavailable` and the request was sent twice. `asyncio_mode = "auto"` in `pyproject.toml` runs async tests without extra decorators. MOKS's tests need PostgreSQL: `tests/conftest.py` creates a fresh database per run on the server in `MOKS_TEST_DATABASE_URL`:
+
+```bash
+# working directory: moks/backend, virtual environment active, requirements and pytest installed
+MOKS_TEST_DATABASE_URL=postgresql://moks@localhost:55432/postgres python -m pytest -q tests/test_bounds_connectors.py
+```
+
+### Logging, and keeping secrets out of logs
+
+Services use the standard `logging` module, with levels (DEBUG, INFO, WARNING, ERROR) the operator can choose:
+
+*Standalone teaching example.* The token is a dummy value.
+
+```python
+# logging_demo.py
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("demo.connector")
+
+token = "dummy-secret-value"
+log.info("calling %s with a token of %d characters", "prometheus", len(token))
+log.warning("request failed: %s", "timeout")
+log.debug("not shown, because the level is INFO")
+```
+
+```text
+$ python3 logging_demo.py
+INFO demo.connector: calling prometheus with a token of 18 characters
+WARNING demo.connector: request failed: timeout
+```
+
+`%s` and `%d` are filled in only if the message is written. The log gives the token's length, never its value, because logs are copied and kept, and a secret in a log is a leaked secret. MOKS writes one JSON object per line, as in this real line from my local test run:
+
+```json
+{"ts": "2026-11-03T06:36:39.078Z", "level": "info", "logger": "moks.api", "logger_name": "moks.api", "message": "request", "event": "http_request", "route": "/moks/api/health", "method": "GET", "status": 200, "durationMs": 49, "request_id": "62694294f81946ee97ec9120ebefe3ce"}
+```
+
+Secret settings are declared with `repr=False`, so they stay out of printouts:
+
+*Actual project code* from [`backend/moks/config.py`, lines 29–31](https://github.com/mrjithendar/moks/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/config.py#L29-L31):
+
+```python
+# backend/moks/config.py
+    # Authentication: oidc | local | dev. dev is refused unless env=development.
+    auth_mode: Literal["oidc", "local", "dev"] = "oidc"
+    session_secret: str = Field(default="", repr=False)
+```
+
+With a dummy secret, `repr(settings)` showed fields such as `max_tool_calls=16` but neither the secret's name nor its value.
+
+Read a traceback **from the bottom up**: the last line says what went wrong, and the lines above show the chain of calls.
+
+*Standalone teaching example.*
+
+```python
+# traceback_demo.py
+def parse_minutes(text):
+    return int(text)
+
+
+def window_seconds(text):
+    return parse_minutes(text) * 60
+
+
+print(window_seconds("30"))
+print(window_seconds("thirty"))
+```
+
+```text
+$ python3 traceback_demo.py
+1800
+Traceback (most recent call last):
+  File "/home/you/python-tutorial/traceback_demo.py", line 11, in <module>
+    print(window_seconds("thirty"))
+          ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/you/python-tutorial/traceback_demo.py", line 7, in window_seconds
+    return parse_minutes(text) * 60
+           ^^^^^^^^^^^^^^^^^^^
+  File "/home/you/python-tutorial/traceback_demo.py", line 3, in parse_minutes
+    return int(text)
+           ^^^^^^^^^
+ValueError: invalid literal for int() with base 10: 'thirty'
+```
+
+A `ValueError` in `parse_minutes` on line 3, called from `window_seconds` on line 7, called from line 11; the `^^^` markers point at the expression. This output is from Python 3.11; newer versions lay it out slightly differently.
+
+## 18. Common beginner mistakes
+
+**Incorrect indentation** (section 1): let your editor insert four spaces for Tab. **Confusing `=` with `==`:** `=` stores, `==` compares.
+
+*Standalone teaching example.*
+
+```python
+# assign_vs_compare.py
+status = "Running"
+if status = "Running":
+    print("up")
+```
+
+```text
+$ python3 assign_vs_compare.py
+  File "/home/you/python-tutorial/assign_vs_compare.py", line 3
+    if status = "Running":
+       ^^^^^^^^^^^^^^^^^^
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?
+```
+
+The fix is `if status == "Running":`. **Using `is` instead of `==`:** `is` asks whether two names are the very same object; use it only for `None`, `True` and `False`.
+
+*Standalone teaching example.*
+
+```python
+# is_vs_equals.py
+expected = ["cart", "catalogue"]
+found = ["cart", "catalogue"]
+print(found == expected)
+print(found is expected)
+owner = None
+print(owner is None)
+```
+
+```text
+$ python3 is_vs_equals.py
+True
+False
+True
+```
+
+**Mutating a shared list:** assigning a list to a second name does not copy it.
+
+*Standalone teaching example.*
+
+```python
+# shared_list.py
+default_namespaces = ["shop"]
+team_a = default_namespaces
+team_a.append("moks")
+print(default_namespaces)
+
+team_b = list(default_namespaces)
+team_b.append("payments")
+print(default_namespaces, team_b)
+```
+
+```text
+$ python3 shared_list.py
+['shop', 'moks']
+['shop', 'moks'] ['shop', 'moks', 'payments']
+```
+
+`list(...)` makes a copy. **Forgetting `return`** gives back `None`, as `show_label` did. **Forgetting `await`:**
+
+*Standalone teaching example.*
+
+```python
+# forgot_await.py
+import asyncio
+
+
+async def get_status():
+    await asyncio.sleep(0)
+    return "ok"
+
+
+async def main():
+    status = get_status()
+    print(type(status).__name__)
+    status.close()
+    print(await get_status())
+
+
+asyncio.run(main())
+```
+
+```text
+$ python3 forgot_await.py
+coroutine
+ok
+```
+
+`status` is a coroutine object, not `"ok"`. Python normally also warns `coroutine 'get_status' was never awaited` (this demo calls `status.close()` to silence it). **Catching exceptions without handling them:**
+
+*Standalone teaching example.*
+
+```python
+# swallowed.py
+def restarts_wrong(value):
+    try:
+        return int(value)
+    except Exception:
+        pass
+
+
+def restarts_better(value):
+    try:
+        return int(value)
+    except ValueError:
+        print(f"ignoring a restart count that is not a number: {value!r}")
+        return 0
+```
+
+The first version hides every error and returns `None` silently; the second catches only the expected error and says so. **Naming a file after a standard-library module:** a `json.py` in your folder shadows the real module.
+
+*Standalone teaching example.* Two files in a folder called `shadow`.
+
+```python
+# shadow/json.py
+print("my own json.py")
+```
+
+```python
+# shadow/main.py
+import json
+
+print(json.dumps({"ok": True}))
+```
+
+```text
+$ python3 shadow/main.py
+my own json.py
+Traceback (most recent call last):
+  File "/home/you/python-tutorial/shadow/main.py", line 4, in <module>
+    print(json.dumps({"ok": True}))
+          ^^^^^^^^^^
+AttributeError: module 'json' has no attribute 'dumps'
+```
+
+Rename it (for example `json_tools.py`) and delete any `__pycache__` next to it; watch for `json.py`, `logging.py`, `random.py`, `email.py` and `test.py`. Finally, **type hints do not validate input** (section 10): validate request bodies, files and environment variables with checks or a Pydantic model.
+
+## 19. Practice exercises
+
+All five run locally with the packages from section 2. Try each before reading the answers.
+
+1. **Strings and collections.** Split `line = "cart-2,Running,4"` into name, status and restarts, and print `{"name": "cart-2", "status": "Running", "restarts": 4}` with `restarts` as an integer.
+2. **Loops and collections.** From the `pods` list below, print the pods with more than 3 restarts, the total restarts, and the sorted set of statuses.
+3. **Functions.** Write `parse_window(text)` that turns `"30m"`, `"2h"` and `"1d"` into minutes, returning `None` (not raising) for `"soon"`, `"h"` or `""`.
+4. **JSON and files.** In a `TemporaryDirectory`, write the pods to `pods.json`, read them back, and write `summary.json` with the number of pods per status. Print the summary.
+5. **A small API.** Build `POST /windows` that accepts `{"text": "2h"}` and returns `{"minutes": 120}` using `parse_window`, with HTTP 400 for unparseable text. Test it with pytest and `TestClient`.
+
+*Standalone teaching example.* The data for exercises 2 and 4:
+
+```python
+# pods_data.py
+pods = [
+    {"name": "cart-1", "status": "Running", "restarts": 0},
+    {"name": "cart-2", "status": "Running", "restarts": 4},
+    {"name": "payment-1", "status": "CrashLoopBackOff", "restarts": 9},
+]
+```
+
+## Suggested answers
+
+### Exercise 1
+
+*Standalone teaching example.*
+
+```python
+# ex1.py
+line = "cart-2,Running,4"
+name, status, restarts = line.split(",")
+pod = {"name": name, "status": status, "restarts": int(restarts)}
+print(pod)
+```
+
+```text
+$ python3 ex1.py
+{'name': 'cart-2', 'status': 'Running', 'restarts': 4}
+```
+
+### Exercise 2
+
+*Standalone teaching example.*
+
+```python
+# ex2.py
+pods = [
+    {"name": "cart-1", "status": "Running", "restarts": 0},
+    {"name": "cart-2", "status": "Running", "restarts": 4},
+    {"name": "payment-1", "status": "CrashLoopBackOff", "restarts": 9},
+]
+
+total = 0
+for pod in pods:
+    total += pod["restarts"]
+    if pod["restarts"] > 3:
+        print("restarting:", pod["name"])
+
+print("total restarts:", total)
+print("statuses:", sorted({pod["status"] for pod in pods}))
+```
+
+```text
+$ python3 ex2.py
+restarting: cart-2
+restarting: payment-1
+total restarts: 13
+statuses: ['CrashLoopBackOff', 'Running']
+```
+
+### Exercise 3
+
+*Standalone teaching example.*
+
+```python
+# windows_parse.py
+UNITS = {"m": 1, "h": 60, "d": 1440}
+
+
+def parse_window(text: str) -> int | None:
+    text = text.strip().lower()
+    if len(text) < 2 or text[-1] not in UNITS:
+        return None
+    number = text[:-1]
+    if not number.isdigit():
+        return None
+    return int(number) * UNITS[text[-1]]
+
+
+if __name__ == "__main__":
+    for sample in ("30m", "2h", "1d", " 2H ", "soon", "h", ""):
+        print(repr(sample), parse_window(sample))
+```
+
+```text
+$ python3 windows_parse.py
+'30m' 30
+'2h' 120
+'1d' 1440
+' 2H ' 120
+'soon' None
+'h' None
+'' None
+```
+
+`text[-1]` is the last character and `text[:-1]` everything before it (**slicing**). `isdigit()` checks first, so `int()` cannot raise and no `try` is needed.
+
+### Exercise 4
+
+*Standalone teaching example.*
+
+```python
+# ex4.py
+import json
+import tempfile
+from pathlib import Path
+
+pods = [{"name": "cart-1", "status": "Running"}, {"name": "cart-2", "status": "Running"},
+        {"name": "payment-1", "status": "CrashLoopBackOff"}]
+
+with tempfile.TemporaryDirectory() as folder:
+    pods_file = Path(folder) / "pods.json"
+    pods_file.write_text(json.dumps(pods), encoding="utf-8")
+
+    counts = {}
+    for pod in json.loads(pods_file.read_text(encoding="utf-8")):
+        counts[pod["status"]] = counts.get(pod["status"], 0) + 1
+
+    summary_file = Path(folder) / "summary.json"
+    summary_file.write_text(json.dumps(counts, indent=2, sort_keys=True), encoding="utf-8")
+    print(summary_file.read_text(encoding="utf-8"))
+```
+
+```text
+$ python3 ex4.py
+{
+  "CrashLoopBackOff": 1,
+  "Running": 2
+}
+```
+
+`counts.get(status, 0) + 1` is the usual counting pattern, and `sort_keys=True` makes the output order predictable.
+
+### Exercise 5
+
+*Standalone teaching example.* It imports `windows_parse.py` from exercise 3.
+
+```python
+# windows_api.py
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+
+from windows_parse import parse_window
+
+app = FastAPI()
+
+
+class WindowIn(BaseModel):
+    text: str = Field(min_length=1, max_length=20)
+
+
+@app.post("/windows")
+def windows(body: WindowIn) -> dict[str, int]:
+    minutes = parse_window(body.text)
+    if minutes is None:
+        raise HTTPException(400, "use a number followed by m, h or d, such as 30m")
+    return {"minutes": minutes}
+```
+
+```python
+# test_windows_api.py
+from fastapi.testclient import TestClient
+
+from windows_api import app
+
+client = TestClient(app)
+
+
+def test_hours():
+    response = client.post("/windows", json={"text": "2h"})
+    assert response.status_code == 200
+    assert response.json() == {"minutes": 120}
+
+
+def test_unparseable_text_is_400():
+    response = client.post("/windows", json={"text": "soon"})
+    assert response.status_code == 400
+
+
+def test_missing_field_is_422():
+    assert client.post("/windows", json={}).status_code == 422
+```
+
+```text
+$ python3 -m pytest -q test_windows_api.py
+...                                                                      [100%]
+3 passed in 0.01s
+```
+
+The three tests cover a valid window, text that passes Pydantic but cannot be parsed (400, from your code), and a body without `text` (422, from FastAPI and Pydantic).
+
+## Where to go next
+
+The Python Practice problems on this site, at `jithendar.com/python-practice`, give you small functions to write and check against tests. To read more real code, start with `backend/moks/rag/chunking.py` and `backend/moks/connectors/base.py` in [the MOKS repository](https://github.com/mrjithendar/moks/tree/ef6908ac90730beac312813f539cd0bc57d94810), then the [MOKS knowledge and skills design](/blog/moks-rag-and-skills-design) article.

@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 600" width="720" height="600" role="img" aria-labelledby="publish-invalidation-title publish-invalidation-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="publish-invalidation-title">A publish on one pod reaches every pod&#x27;s page cache</title>
+<desc id="publish-invalidation-desc">The editor saves an article on pod A. Pod A writes PostgreSQL and bumps its page-cache generation, which makes every cached page stale at once, then publishes a content message on Valkey. Pod B receives it and bumps its own generation. The next request on either pod renders the new version. Ten seconds later each pod&#x27;s warm-up renders every page in the sitemap again, so readers get cached pages.</desc>
+<rect width="720" height="600" fill="#ffffff"/>
+<defs>
+<marker id="publish-invalidation-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+<marker id="publish-invalidation-write" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b45309"/></marker>
+<marker id="publish-invalidation-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#be123c"/></marker>
+<marker id="publish-invalidation-reject" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b91c1c"/></marker>
+<marker id="publish-invalidation-dashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+<marker id="publish-invalidation-life" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#cbd5e1"/></marker>
+</defs>
+<line x1="90.0" y1="66" x2="90.0" y2="584" stroke="#cbd5e1" stroke-width="1.2" stroke-dasharray="4 4"/>
+<line x1="225.0" y1="66" x2="225.0" y2="584" stroke="#cbd5e1" stroke-width="1.2" stroke-dasharray="4 4"/>
+<line x1="360.0" y1="66" x2="360.0" y2="584" stroke="#cbd5e1" stroke-width="1.2" stroke-dasharray="4 4"/>
+<line x1="495.0" y1="66" x2="495.0" y2="584" stroke="#cbd5e1" stroke-width="1.2" stroke-dasharray="4 4"/>
+<line x1="630.0" y1="66" x2="630.0" y2="584" stroke="#cbd5e1" stroke-width="1.2" stroke-dasharray="4 4"/>
+<polyline points="90.5,100.0 224.5,100.0" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#publish-invalidation-write)"/>
+<polyline points="225.5,208.0 359.5,208.0" fill="none" stroke="#be123c" stroke-width="2.2" marker-end="url(#publish-invalidation-async)"/>
+<polyline points="360.5,240.0 494.5,240.0" fill="none" stroke="#be123c" stroke-width="2.2" marker-end="url(#publish-invalidation-async)"/>
+<polyline points="629.5,348.0 495.5,348.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#publish-invalidation-sync)"/>
+<polyline points="495.5,380.0 629.5,380.0" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#publish-invalidation-dashed)"/>
+<polyline points="629.5,508.0 495.5,508.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#publish-invalidation-sync)"/>
+<polyline points="495.5,540.0 629.5,540.0" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#publish-invalidation-dashed)"/>
+<rect x="30" y="16" width="120" height="50" rx="7" fill="#f8fafc" stroke="#334155" stroke-width="1.4"/>
+<text x="90.0" y="40.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Editor</text>
+<text x="90.0" y="56.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">admin</text>
+<rect x="165" y="16" width="120" height="50" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="225.0" y="48.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">Pod A</text>
+<rect x="300" y="16" width="120" height="50" rx="7" fill="#fff1f2" stroke="#be123c" stroke-width="1.4"/>
+<text x="360.0" y="40.0" text-anchor="middle" font-size="14" font-weight="600" fill="#4c0519">Valkey</text>
+<text x="360.0" y="56.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">pub/sub</text>
+<rect x="435" y="16" width="120" height="50" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="495.0" y="48.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">Pod B</text>
+<rect x="570" y="16" width="120" height="50" rx="7" fill="#f8fafc" stroke="#334155" stroke-width="1.4"/>
+<text x="630.0" y="48.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Reader</text>
+<rect x="150" y="124" width="150" height="44" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="225.0" y="145.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">PostgreSQL write</text>
+<text x="225.0" y="161.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">generation + 1</text>
+<rect x="407" y="264" width="176" height="44" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="495.0" y="285.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">generation + 1</text>
+<text x="495.0" y="301.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">(no request in progress)</text>
+<rect x="150" y="408" width="150" height="44" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="225.0" y="429.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">+10 s: warm-up</text>
+<text x="225.0" y="445.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">renders the sitemap</text>
+<rect x="420" y="408" width="150" height="44" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="495.0" y="429.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">+10 s: warm-up</text>
+<text x="495.0" y="445.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">renders the sitemap</text>
+<rect x="94.2" y="78.5" width="126.6" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="157.5" y="90.5" text-anchor="middle" font-size="12" fill="#0f172a">1. save the article</text>
+<rect x="207.4" y="186.5" width="170.2" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="292.5" y="198.5" text-anchor="middle" font-size="12" fill="#0f172a">2. publish {kind: content}</text>
+<rect x="392.3" y="218.5" width="70.4" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="427.5" y="230.5" text-anchor="middle" font-size="12" fill="#0f172a">3. message</text>
+<rect x="521.1" y="326.5" width="82.9" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="562.5" y="338.5" text-anchor="middle" font-size="12" fill="#0f172a">4. GET /blog</text>
+<rect x="483.6" y="358.5" width="157.8" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="562.5" y="370.5" text-anchor="middle" font-size="12" fill="#0f172a">5. MISS: the new version</text>
+<rect x="496.1" y="486.5" width="132.8" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="562.5" y="498.5" text-anchor="middle" font-size="12" fill="#0f172a">6. GET /blog/my-post</text>
+<rect x="514.8" y="518.5" width="95.4" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="562.5" y="530.5" text-anchor="middle" font-size="12" fill="#0f172a">7. HIT, 5–9 ms</text>
+</svg>

@@ -1,0 +1,279 @@
+---
+title: "System Design from the 1990s to 2026, Part 2: Cloud-Native, AI-Native and One Shop Built Three Times"
+slug: system-design-evolution-cloud-native-ai-2026
+description: "Platform engineering, AI-native architecture, one shop designed in 1992, 2012 and 2026, a real case study and how interviews changed. Part 2 of 2."
+seoTitle: "System Design Evolution, Part 2: Cloud-Native and AI in 2026"
+seoDescription: "Modern system design in 2026: platform engineering, AI-native architecture, one shop built in 1992, 2012 and 2026, a real case study and interview changes."
+socialTitle: "System Design Then vs Now (Part 2): Cloud-Native and AI-Native Systems"
+socialDescription: "GitOps, OpenTelemetry, RAG, agents and MCP, the same e-commerce shop designed in 1992, 2012 and 2026, and a real project checked against its running cluster."
+author: jithendar-dharmapuri
+category: devops-sre
+tags: [System Design, Cloud-Native Architecture, AI-Native Architecture, Platform Engineering, Microservices, System Design Interview, RoboShop AI]
+contentType: analysis
+status: review
+featuredImage:
+  src: /images/system-design-evolution/2026-ai-native-architecture.png
+  alt: "An application with optional AI capabilities. A frontend calls an API gateway that verifies tokens with an identity provider. Conventional application services own the business rules and write to PostgreSQL and a message broker. In a separate optional zone, an AI gateway routes model calls to LLM providers, an agent orchestrator runs a LangGraph workflow, asks a human to approve risky writes, retrieves context through a RAG service and vector database, and calls tools on an MCP server, which calls the application's APIs as the user. Observability covers both sides."
+  width: 1722
+  height: 1638
+related:
+  - blog/system-design-evolution-1990s-to-microservices
+  - blog/roboshop-ai-architecture
+  - blog/roboshop-ai-mcp-server
+  - blog/four-ai-systems-one-cluster
+  - blog/devops-interview-preparation-guide
+sources:
+  - title: "RoboShop AI source code (commit 02a4478)"
+    url: https://github.com/mrjithendar/roboshop-ai
+    publisher: GitHub
+  - title: "What is OpenTelemetry?"
+    url: https://opentelemetry.io/docs/what-is-opentelemetry/
+    publisher: OpenTelemetry
+  - title: "A brief history of OpenTelemetry (so far)"
+    url: https://www.cncf.io/blog/2019/05/21/a-brief-history-of-opentelemetry-so-far/
+    publisher: CNCF
+  - title: "Argo project page"
+    url: https://www.cncf.io/projects/argo/
+    publisher: CNCF
+  - title: "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+    url: https://arxiv.org/abs/2005.11401
+    publisher: arXiv
+  - title: "Introducing the Model Context Protocol"
+    url: https://www.anthropic.com/news/model-context-protocol
+    publisher: Anthropic
+  - title: "Model Context Protocol specification"
+    url: https://modelcontextprotocol.io/specification/2025-11-25
+    publisher: Model Context Protocol
+  - title: "Amazon's Dynamo (SOSP 2007)"
+    url: https://www.allthingsdistributed.com/2007/10/amazons_dynamo.html
+    publisher: All Things Distributed
+  - title: "CAP Twelve Years Later: How the \"Rules\" Have Changed"
+    url: https://www.infoq.com/articles/cap-twelve-years-later-how-the-rules-have-changed/
+    publisher: InfoQ
+---
+
+<Todo>Draft for author review. RoboShop AI facts were checked against roboshop-ai 02a4478 and the live mk4 cluster on 8 November 2026; recheck "no model configured" and "OTEL_SDK_DISABLED" before publishing. Sources, SEO package and checklist: sites/jithendar.com/docs/knowledge-sharing/system-design-evolution/README.md.</Todo>
+
+[Part 1](/blog/system-design-evolution-1990s-to-microservices) followed system design from 1990s mainframes and client-server applications to the microservices of the 2010s. By 2015 the parts of a modern system existed: cloud infrastructure, containers, Kubernetes and a microservices playbook. This part covers what the 2020s added, then puts the eras side by side with one shop designed three times and a real project checked against its running cluster.
+
+## The 2020s through 2026: platform engineering and AI-native systems
+
+### Kubernetes becomes a platform, not a project
+
+Running Kubernetes yourself turned out to be a full-time job, so most teams moved to **managed Kubernetes**: EKS, AKS or GKE run the control plane, and you run the workloads. The work that remained moved into practices and tools:
+
+- **GitOps.** The desired state of every cluster lives in Git, and a controller such as Argo CD keeps the cluster matching it. A deploy is a merged pull request; a rollback is a revert. Argo graduated in the CNCF on 6 December 2022 ([CNCF](https://www.cncf.io/projects/argo/)).
+- **Packaging.** Helm charts and Kustomize overlays describe an application once and vary it per environment.
+- **Autoscaling at three levels.** The Horizontal Pod Autoscaler adds pods when CPU or memory rises. KEDA scales on events such as queue length, including down to zero. Karpenter adds and removes nodes to fit pending pods.
+- **Service mesh and mTLS.** Istio or Linkerd sidecars encrypt traffic between services, prove each service's identity, and add retries and traffic splitting without changing code.
+- **OpenTelemetry and distributed tracing.** OpenTelemetry formed when OpenTracing and OpenCensus merged in 2019 ([CNCF](https://www.cncf.io/blog/2019/05/21/a-brief-history-of-opentelemetry-so-far/)). It gives one standard for traces, metrics and logs, so a request can be followed across every service it touches.
+- **SRE practices.** Service level objectives, error budgets and blameless incident reviews turn reliability into a measured, negotiated target instead of a feeling.
+- **Internal developer platforms.** A platform team packages all of the above, with templates, pipelines, dashboards and guardrails, so product teams can ship without becoming Kubernetes experts.
+- **Policy as code and zero trust.** Tools such as OPA Gatekeeper and Kyverno reject non-compliant manifests at admission time. Every request is authenticated by identity, not trusted because it came from inside the network.
+
+None of this changes what the system does for its users. It changes how many people it takes to run it safely.
+
+### AI-native architecture
+
+The newest layer is AI. A few terms first:
+
+- **Large language model (LLM):** a model that takes text, or text plus images, and generates text. You call it through a provider's API or run it yourself.
+- **Embedding model:** turns text into a vector of numbers so that similar meanings land close together.
+- **Vector database:** stores those vectors and finds the nearest ones quickly.
+- **Retrieval-augmented generation (RAG):** before asking the model, search your own documents and put the relevant passages in the prompt. The technique was described by Lewis et al. in 2020 ([arXiv](https://arxiv.org/abs/2005.11401)).
+- **Agent:** a program in which the model chooses the next step, such as calling a tool, searching or answering, inside a loop the code controls.
+- **Model Context Protocol (MCP):** an open protocol, introduced by Anthropic on 25 November 2024, that gives AI applications a standard way to connect to tools and data sources ([Anthropic](https://www.anthropic.com/news/model-context-protocol); [specification](https://modelcontextprotocol.io/specification/2025-11-25)).
+- **Orchestration frameworks:** LangChain provides model and tool abstractions; LangGraph models an agent as an explicit state graph; CrewAI coordinates several role-based agents.
+- **LLM gateway and model routing:** one internal service through which all model calls pass, applying authentication, budgets, redaction, caching and the choice of model per request.
+- **LLM observability:** tools such as Langfuse record prompts, responses, token counts, cost and evaluation scores per trace.
+
+:::figure{caption="Figure 5. A 2026 application with optional AI capabilities. Writes always go through the conventional services, which re-check the user's permissions."}
+![An application with optional AI capabilities. A web or mobile frontend calls an API gateway, which verifies tokens with an identity provider using OIDC, SSO and MFA. The gateway routes to application services that hold the deterministic business rules for orders, catalogue, cart and accounts, are the only path that changes data, and re-check the user's permissions; they write to PostgreSQL and publish to a Kafka or RabbitMQ message broker. In an optional AI zone, the application services call an AI gateway that handles model routing, budgets, redaction and caching and calls hosted or self-hosted LLM providers. The AI gateway and an agent orchestrator, a LangGraph state machine with step, tool and time limits, exchange workflow and model calls. The orchestrator asks for human approval of risky writes, retrieves context through a RAG service backed by a vector database, and makes tool calls to an MCP server whose typed tools call the application's APIs as the user. Observability spans everything: OpenTelemetry traces across services and agent steps, and Langfuse for prompts, tokens, cost and evaluations.](/images/system-design-evolution/2026-ai-native-architecture.svg)
+:::
+
+AI adds design concerns that older systems never had:
+
+| Concern | Why it is new | A common control |
+|---|---|---|
+| Non-deterministic output | The same input can give different answers | Validate structured output against a schema; never let free text drive a write |
+| Token cost | You pay per token, and an agent loop can call the model many times | Per-request and per-user budgets in the gateway; caching; smaller models for easy steps |
+| Latency | A model call takes seconds, not milliseconds | Stream responses, run steps in parallel, set hard deadlines |
+| Hallucination | The model can state false things fluently | Ground answers in retrieved data; show sources; check facts in code |
+| Prompt injection | Text in a document or web page can carry instructions | Treat retrieved text as data; keep tools least-privileged |
+| Tool authorization | A tool call acts in the real world | Tools act as the calling user, and the backend re-checks every permission |
+| Data privacy | Prompts may contain personal data and leave your network | Redact before sending; choose regions and providers deliberately |
+| Evaluation and monitoring | "It works" has no unit test | Golden datasets, scored evaluations, regression runs before each model change |
+| Agent reliability | Loops can stall, repeat or wander | Step limits, timeouts and a deterministic fallback path |
+| Human oversight | Some actions should never be fully automatic | Approval queues for refunds, deletions and payments |
+
+AI components are optional capabilities, not a replacement for application logic. In Figure 5 the left side works on its own. Take the AI zone away and customers can still browse, pay and get their orders. That is the right default: the model proposes, and deterministic code decides. I wrote more about that rule in [Four AI systems, one cluster](/blog/four-ai-systems-one-cluster).
+
+## 1992 versus 2026, side by side
+
+| Area | Early 1990s | 2026 |
+|---|---|---|
+| Infrastructure | Mainframes and physical servers in your own building | Public cloud, private cloud and hybrid mixes |
+| Architecture | Mainframe, two-tier client-server, monolith | Modular monoliths, microservices, event-driven systems |
+| Deployment | Manual installation on servers and every desktop | Automated CI/CD and GitOps, many deploys a day |
+| Scaling | Buy a bigger machine or add a server, weeks ahead | Elastic horizontal and vertical scaling in minutes |
+| Databases | Mostly one central relational database | SQL, NoSQL, distributed SQL and vector databases |
+| Networking | LANs and private leased lines | The Internet, APIs and service-to-service networking |
+| Monitoring | System logs and vendor admin consoles | Metrics, logs, traces and continuous profiling |
+| Security | Perimeter: trusted inside, guarded edge | Identity-centric, zero trust, encryption everywhere |
+| Disaster recovery | Backup tapes and standby sites | Automated backups, replicas, multi-region failover |
+| AI | Specialised expert systems and research | LLMs, RAG, agents and AI services as optional components |
+
+These are representative patterns, not hard boundaries. Many organisations in 2026 still run mainframes, monoliths and single relational databases, and run them well. Some 1990s companies ran surprisingly distributed systems.
+
+## One e-commerce shop, built in three eras
+
+Let's keep the requirements fixed and change only the year. The shop needs user registration, a product catalogue, a shopping cart, order processing, payments, inventory and shipping. All three figures use the same rows, from customers at the top to operations at the bottom, so you can compare them directly.
+
+### Version A: 1992
+
+:::figure{caption="Figure 6. The shop in 1992. Customers never touch the system; staff key in orders."}
+![The same shop in 1992. Customers are not on the system: they phone, post a mail-order form or visit a store, and clerks key orders into order-entry PCs over the LAN. Warehouse terminals show pick lists and stock counts. In the server room one retail application program contains users, catalogue, cart as the order form, orders, payments, inventory and shipping, compiled and released together, and sends SQL to one Oracle or DB2 database. Overnight batch jobs settle card payments, reorder stock and print manifests, sending a nightly file to the card processor and manifests to the carrier. The database is dumped to tape nightly and taken offsite weekly. Releases are installed on every PC by hand over a weekend.](/images/system-design-evolution/retail-1992-client-server.svg)
+:::
+
+The "customer interface" is a telephone. Order-entry clerks use desktop clients connected to a central application and database. Card payments are settled in an overnight batch file, and shipping manifests are printed.
+
+**Trade-offs.** It is simple, consistent and cheap to run for a fixed number of staff, and one database transaction covers an entire order. But capacity is the number of clerks, a release means a weekend of installs, and the database server is the single point of failure.
+
+### Version B: 2012
+
+:::figure{caption="Figure 7. The shop in 2012. Still one codebase, now scaled out behind a load balancer."}
+![The same shop in 2012. Browsers on desktops and early smartphones fetch static files from a CDN and pages and API calls through a load balancer with HTTPS and health checks. On virtual machines in the cloud or a colocation site, four web and application servers run one codebase containing users, catalogue, cart, orders, payments, inventory and shipping as modules; they are stateless because sessions live in Memcached or Redis. They send SQL to a MySQL primary with read replicas and publish order-placed messages to a RabbitMQ queue. Background workers consume the queue to send emails, print labels and sync stock, and call the carrier API. The application calls a payment gateway with a hosted card form and tokens. Releases are scripted deploys from a CI server, one server at a time behind the load balancer.](/images/system-design-evolution/retail-2012-web-tier.svg)
+:::
+
+Customers now place orders themselves. One codebase runs on several virtual machines behind a load balancer. Sessions move into Memcached or Redis, so any server can handle any request and a server can die without losing carts. MySQL replicas absorb catalogue reads. A queue moves emails, labels and stock updates out of the checkout path. A hosted payment page keeps card numbers away from the shop's servers.
+
+**Trade-offs.** This design scales well for most shops and is still a sensible choice in 2026. The costs are cache invalidation, replica lag (a customer may not see an order they just placed if the page reads a lagging replica), and a release process that still deploys everything at once.
+
+### Version C: 2026
+
+:::figure{caption="Figure 8. The shop in 2026. One service per capability, each owning its data. The AI assistant is optional."}
+![The same shop in 2026. A Next.js frontend fetches static assets from a CDN and makes API calls through an API gateway that handles auth, rate limits and routing. Inside a Kubernetes cluster are services for users, catalogue, cart, orders, payments, inventory and shipping, plus an optional read-only, opt-in AI assistant. PostgreSQL holds users, orders, payments and stock, MongoDB holds the catalogue, Redis holds carts and cache, and Kafka carries order events published by the orders service. Payments call a payment provider, shipping calls carrier APIs, and the AI assistant calls an LLM provider only if it is switched on. Argo CD syncs the cluster from Git, and the cluster sends traces, metrics and logs through OpenTelemetry.](/images/system-design-evolution/retail-2026-cloud-native.svg)
+:::
+
+The frontend is a React or Next.js application. Services run in containers on Kubernetes, one per business capability. PostgreSQL holds the relational core: users, orders, payments and stock. MongoDB is used only where it is justified, for a catalogue whose products have very different attributes. Redis holds carts. Kafka, or RabbitMQ for simpler work queues, carries `order-placed` events to shipping, email and analytics. Argo CD deploys from Git, and OpenTelemetry follows each request. An AI shopping assistant can answer questions about products, but it reads through the catalogue API and cannot place orders or change prices.
+
+**Trade-offs.** Teams can ship independently, and only the busy services need to scale. But checkout now crosses orders, inventory, payments and shipping, so a single database transaction is no longer possible. You need an outbox, idempotent consumers and compensating actions. You also need tracing to debug, an on-call rota per service, and a cloud bill to watch.
+
+For a team of five, Version B, or Version C as a modular monolith, is usually the better engineering decision.
+
+## Case study: RoboShop AI
+
+RoboShop AI ([source](https://github.com/mrjithendar/roboshop-ai)) is my demonstration shop for robots. Everything below was checked against commit `02a4478` and against the live mk4 Minikube cluster on 8 November 2026. Where the code supports something that is not switched on, I say so.
+
+:::figure{caption="Figure 9. RoboShop AI as it runs on mk4 on 8 November 2026. Dashed boxes are optional or not enabled."}
+![RoboShop AI on the mk4 cluster, namespace roboshop-ai. A browser reaches a Traefik ingress at /roboshop, which strips the prefix and forwards to web, an NGINX server for the static storefront that proxies /api/* to ai-gateway and /moks/* to moks. moks is the widget plus a three-node LangGraph pipeline that reads the catalogue and never writes; it calls ai-gateway /api/chat, and ai-gateway calls back to moks /internal/chat. moks would call a model provider, Bedrock or Ollama, only if one were configured, and none is. An outside MCP client could POST /mcp to mcp-server, a FastMCP ClusterIP service with a NetworkPolicy and no public route, which calls ai-gateway with the caller's session. ai-gateway, built with FastAPI, owns the public API, authorization, server-side prices and stock, chat history, and an order ledger with an outbox. It calls six services: user (Python, MongoDB), catalogue (Node.js, MongoDB reads), cart (Python, Redis), shipping (Spring Boot, PostgreSQL), payment (Node.js, Razorpay API) and currency (Go, ECB rates, refreshed hourly). ai-gateway writes a JSON order ledger with one writer, whose outbox publishes to RabbitMQ; RabbitMQ delivers paid orders to shipping and to kafka-bridge, which relays them to Kafka for analytics. Argo CD with manual sync and Harbor images deploy the namespace. Every Deployment runs one replica, and tracing is disabled on mk4.](/images/system-design-evolution/roboshop-ai-on-mk4.svg)
+:::
+
+| Component | Why it exists and what it does | Talks to | Problem it solves | Operational and security trade-off |
+|---|---|---|---|---|
+| `web` (NGINX) | Serves the TypeScript storefront and proxies `/api/*` and `/moks/*`; returns 403 for direct `/api/chat` | Traefik in front; ai-gateway and moks behind | One public entry point with security headers and strict routes | Simple and fast, but every route change is an NGINX config change |
+| `ai-gateway` (FastAPI) | The public API: authorization, server-side prices and stock, Razorpay order flow with an `Idempotency-Key`, chat history, order ledger | Every domain service over HTTP; RabbitMQ through its outbox | The browser is never trusted for prices, stock or payment status | The JSON ledger allows **one writer**, so the gateway runs one replica. A PostgreSQL ledger exists in code (`COMMERCE_BACKEND=postgres`) but is not enabled |
+| `user-service` (Python) | Accounts, hashed sessions, MFA, profiles, purchase history in MongoDB | Called by ai-gateway with a service token | Identity has one owner | Session checks fail closed: if it is down, signed-in actions stop |
+| `catalogue-service` (Node.js) | Read-only product API over MongoDB, plus import tools | ai-gateway and moks | Catalogue reads stay cheap and safe | Admin edits still go through the gateway, so two components touch product data |
+| `cart-service` (Python) | Redis carts with compare-and-set revisions in Lua and a seven-day sliding expiry | Only ai-gateway; no browser access | Concurrent cart edits cannot overwrite each other | Redis is a cache here; the gateway's ledger backs up quantities |
+| `payment-service` (Node.js) | Creates Razorpay orders and verifies captured payments; test mode by default | ai-gateway; Razorpay | Payment provider details live in one place | Real payments need deliberate merchant configuration |
+| `shipping-service` (Spring Boot) | Quotes from a PostgreSQL table of countries and cities; consumes paid-order events | RabbitMQ; its own PostgreSQL | Shipping data and logic have one owner | Deduplicates event IDs because delivery is at least once |
+| `currency-service` (Go) | Display prices from the ECB reference feed, refreshed hourly in the background | ai-gateway; ECB | Requests never wait on an outside API | Each replica has its own cache; rates are informational, never charged |
+| RabbitMQ and `kafka-bridge` | Durable queues for paid orders; the bridge copies them to Kafka and acks only after Kafka confirms | Gateway outbox → RabbitMQ → shipping and bridge → Kafka | Analytics can replay events without touching checkout | Two brokers to run; Kafka is not in the checkout path at all |
+| `mcp-server` (FastMCP) | MCP tools to search, compare and manage the signed-in user's cart | ai-gateway, with the caller's own session | AI clients get typed tools that cannot bypass authorization | Private: a ClusterIP Service and a NetworkPolicy, with no public route today |
+| `moks` (LangGraph) | Shopping assistant: a fixed three-step graph that searches the catalogue, grounds evidence and generates an answer | ai-gateway and catalogue-service; Amazon Bedrock or Ollama when configured | Product questions answered from real catalogue data | It has no tools and makes no writes. **No model was configured on mk4**, so the widget asks an admin to connect one |
+| Kubernetes and Argo CD | Each component is an Argo CD Application with manual sync; images come from a Harbor registry | Git and Harbor | Repeatable deploys from Git | All Deployments run one replica, and there are no autoscalers on mk4 |
+| OpenTelemetry | Tracing code exists in the services | An OpenTelemetry Collector, when enabled | One trace across services | **Disabled on mk4** (`OTEL_SDK_DISABLED=true`), so no traces are collected today |
+
+RoboShop AI is a learning and demonstration system, not a highly available production deployment. Its README says so too. The order ledger is the clearest example of a deliberate trade-off. A JSON file with an exclusive lock is easy to reason about and back up, but it pins the gateway to one replica until the PostgreSQL backend is switched on and migrated. The deeper dives are in [the RoboShop AI architecture article](/blog/roboshop-ai-architecture) and [the MCP server article](/blog/roboshop-ai-mcp-server).
+
+### Compared with a 1990s retail system
+
+Put Figure 9 next to Figure 6. The 1992 shop had one program and one database. Consistency was free, and deployment was painful. RoboShop AI has eleven application services, four data stores (MongoDB, Redis, PostgreSQL and the ledger file) and two message brokers, plus independent images and Git-driven deploys. Consistency is engineered: idempotency keys, an outbox, at-least-once delivery and deduplication.
+
+The 1992 shop had no customer-facing interface at all. RoboShop has three: the storefront, the assistant and MCP. Each of the newer two is constrained so it can never do more than the signed-in user could do by hand.
+
+## How system design interviews have changed
+
+Interviews in the 1990s and 2000s focused on a single system: CPU and memory sizing, schema design, normalisation, transactions and isolation levels, networking basics, capacity planning and availability through redundant hardware. Those questions have not gone away. Modern interviews add distributed systems, horizontal scaling, cache invalidation, event-driven design, Kubernetes, cloud networking, security, observability, cost and multi-region resilience. Increasingly, they also ask about AI workloads.
+
+Five questions that show the shift:
+
+1. **"Design a shopping cart."** Traditional: tables, foreign keys, one transaction at checkout. Modern: where the cart lives (Redis, a database or the client), what happens during a partition (Dynamo's always-writable cart), and how concurrent edits are resolved.
+2. **"How do you make checkout reliable?"** Traditional: a database transaction with the right isolation level. Modern: idempotency keys, an outbox, at-least-once delivery, deduplicating consumers and compensation when a later step fails.
+3. **"The system is slow. What do you do?"** Traditional: check CPU, memory, disk and slow queries on the server. Modern: start from the trace of a slow request, find the hop that grew, then compare metrics and logs for that service.
+4. **"How do you handle ten times the traffic?"** Traditional: a bigger server and a faster disk, ordered months ahead. Modern: stateless services, horizontal autoscaling, caching, read replicas or partitioning, a queue to absorb bursts, and a cost estimate.
+5. **"Add an AI assistant to the product."** Traditional: not asked. Modern: RAG over which data, how the model's actions are authorized, token budgets and latency, prompt injection, evaluation and the fallback when the model is down.
+
+What has not changed is the foundation: latency, throughput, consistency, fault tolerance and data modelling. A candidate who can reason about those can learn any new tool. For a full preparation plan, see the [DevOps interview preparation guide](/blog/devops-interview-preparation-guide).
+
+## What have we gained, and what have we lost?
+
+**Gained:**
+
+- **Elasticity.** Capacity in minutes, paid for by use.
+- **Faster delivery.** Small, frequent, reversible deploys instead of weekend releases.
+- **Infrastructure automation.** Environments described in code, reviewed and reproducible.
+- **Managed services.** Backups, failover and patching handled by someone else.
+- **Independent deployments.** Teams no longer queue behind each other.
+- **Better observability.** Traces, metrics and logs answer questions nobody planned for.
+- **Global reach.** CDNs and multi-region deployments put the service near users.
+
+**Lost, or at least made harder:**
+
+- **Simplicity.** Distributed systems fail in partial, confusing ways.
+- **Predictable cost.** Cloud bills grow quietly; egress and idle resources add up.
+- **Independence from vendors.** Managed services are convenient and hard to leave.
+- **Network reliability.** Every service call can be slow, fail or arrive twice.
+- **Easy consistency.** One transaction became sagas and reconciliation jobs.
+- **A small attack surface.** More endpoints, more credentials, more dependencies.
+- **Easy troubleshooting.** A bug can be spread across five services and a queue.
+- **Low platform overhead.** Kubernetes itself needs upgrades, security patches and expertise.
+- **Cheap, dependable answers.** AI inference costs money per request, and its output needs checking.
+
+The best engineers I have worked with choose the simplest architecture that meets the actual requirements, and they write down what would make them change it. A well-built monolith on two virtual machines with a managed database beats a twenty-service platform that nobody fully understands.
+
+## What comes next?
+
+These are directions, not established facts:
+
+- **AI-assisted software development.** More code will be drafted by models, which makes review, tests and architecture decisions more important, not less.
+- **Autonomous operations with human oversight.** Agents that diagnose incidents and propose fixes, with people approving changes to production.
+- **Agentic workflows.** Multi-step business processes in which models choose some of the steps inside limits set by code.
+- **WebAssembly.** Small, sandboxed, fast-starting modules on servers and at the edge.
+- **Edge computing.** More logic running near users for latency and data-residency reasons.
+- **Platform engineering.** Internal platforms treated as products, with paved roads for common tasks.
+- **Policy-driven infrastructure.** Security, cost and compliance rules enforced automatically at every step.
+- **Sustainable computing.** Carbon and energy treated as design constraints alongside cost.
+- **AI workload scheduling.** GPUs scheduled as carefully as databases are capacity-planned today.
+- **Hybrid and sovereign clouds.** Regulation keeping some data and workloads in particular countries or on premises.
+
+What will probably stay: networks will still fail, data will still need an owner, users will still notice latency, and every design will still be a set of trade-offs.
+
+## Conclusion
+
+System design has evolved from managing individual computers to coordinating distributed services, data, infrastructure, and increasingly intelligent software. But the fundamentals remain the same: build systems that are reliable, maintainable, secure, and appropriate for the problem.
+
+The 1992 bank and the 2026 bank are both well designed if each fits its constraints. When you design your next system, start from the requirements and the trade-offs, not from the newest tool. Adopt microservices, Kubernetes or an AI agent when they solve a problem you actually have, and be ready to explain what each one costs.
+
+## Frequently asked questions
+
+### What is system design evolution?
+
+It is the way software architecture changed as constraints changed: from centralised mainframes and client-server applications in the early 1990s, to three-tier web applications, distributed systems and SOA in the 2000s, to cloud, containers and microservices in the 2010s, and to platform engineering and optional AI components in the 2020s.
+
+### Is a monolith still a good choice in 2026?
+
+Often, yes. A well-structured modular monolith is easier to build, test, deploy and debug than microservices, and one database transaction keeps data consistent. Microservices pay off when many teams need to deploy independently or when parts of the system have very different scaling needs.
+
+### What is the difference between client-server and three-tier architecture?
+
+In two-tier client-server, a desktop program holds the user interface and much of the business logic and talks directly to a database. Three-tier architecture separates presentation (a web server or browser), business logic (application servers) and data (the database), so each tier can be secured and scaled on its own.
+
+### Does every modern application need AI?
+
+It doesn't. AI components such as RAG, agents and MCP tools are optional capabilities. Use them where they add clear value, such as search, support or summarisation, and keep authorization, prices, payments and other writes in deterministic application code.
+
+### What should I learn first for system design interviews?
+
+Start with the fundamentals that never changed: latency, throughput, consistency, availability, data modelling and caching. Then learn how they apply to distributed systems: replication, partitioning, queues, idempotency, observability and cost. Kubernetes and AI patterns build on those foundations.

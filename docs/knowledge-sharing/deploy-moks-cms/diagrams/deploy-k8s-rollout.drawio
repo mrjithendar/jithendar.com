@@ -1,0 +1,55 @@
+<mxfile host="app.diagrams.net" agent="build_diagrams.py" version="24.7.17" type="device">
+  <diagram id="deploy-k8s-rollout-0" name="Rolling update">
+    <mxGraphModel dx="800" dy="800" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="330" background="#ffffff" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="n" value="1. New pod starts&#10;maxSurge: 1&#10;maxUnavailable: 0" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#ecfdf5;strokeColor=#047857;fontColor=#064e3b;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="10" y="60" width="168" height="74" as="geometry" />
+        </mxCell>
+        <mxCell id="m" value="2. Migrations run&#10;under a pg advisory&#10;lock, once per release" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#fffbeb;strokeColor=#b45309;fontColor=#451a03;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="188" y="60" width="168" height="74" as="geometry" />
+        </mxCell>
+        <mxCell id="s" value="3. Startup probe OK&#10;GET /api/health&#10;up to 60 s (30 × 2 s)" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e3a8a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="366" y="60" width="168" height="74" as="geometry" />
+        </mxCell>
+        <mxCell id="r" value="4. Receives traffic&#10;readiness probe passes&#10;Service adds the pod" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#ecfdf5;strokeColor=#047857;fontColor=#064e3b;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="544" y="60" width="168" height="74" as="geometry" />
+        </mxCell>
+        <mxCell id="o" value="5. Old pod drains&#10;preStop: sleep 5&#10;SIGTERM, 30 s grace" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f1f5f9;strokeColor=#64748b;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="722" y="60" width="168" height="74" as="geometry" />
+        </mxCell>
+        <mxCell id="stall" value="Never becomes ready&#10;rollout stalls; the old&#10;pods keep serving" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#fef2f2;strokeColor=#b91c1c;fontColor=#7f1d1d;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="366" y="200" width="168" height="74" as="geometry" />
+        </mxCell>
+        <mxCell id="t0" value="Steps 1 to 5 repeat for" style="text=1;html=0;align=left;verticalAlign=top;resizable=1;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=0;whiteSpace=nowrap;" vertex="1" parent="1">
+          <mxGeometry x="10" y="210" width="154.56" height="17" as="geometry" />
+        </mxCell>
+        <mxCell id="t1" value="each replica in turn." style="text=1;html=0;align=left;verticalAlign=top;resizable=1;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=0;whiteSpace=nowrap;" vertex="1" parent="1">
+          <mxGeometry x="10" y="232" width="141.12" height="17" as="geometry" />
+        </mxCell>
+        <mxCell id="t2" value="kubectl rollout status deploy/moks-cms" style="text=1;html=0;align=left;verticalAlign=top;resizable=1;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=0;whiteSpace=nowrap;" vertex="1" parent="1">
+          <mxGeometry x="540" y="210" width="255.36" height="17" as="geometry" />
+        </mxCell>
+        <mxCell id="t3" value="kubectl rollout undo deploy/moks-cms" style="text=1;html=0;align=left;verticalAlign=top;resizable=1;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=0;whiteSpace=nowrap;" vertex="1" parent="1">
+          <mxGeometry x="540" y="232" width="241.92000000000002" height="17" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="n" target="m">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="m" target="s">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="s" target="r">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="r" target="o">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="fails" style="edgeStyle=none;rounded=0;html=0;strokeColor=#b91c1c;strokeWidth=1.4;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;dashed=1;dashPattern=5 4;" edge="1" parent="1" source="s" target="stall">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

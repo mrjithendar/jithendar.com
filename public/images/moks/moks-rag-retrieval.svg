@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 690" width="720" height="690" role="img" aria-labelledby="moks-rag-retrieval-title moks-rag-retrieval-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="moks-rag-retrieval-title">MOKS: hybrid retrieval</title>
+<desc id="moks-rag-retrieval-desc">A search first turns the person&#x27;s role bindings into grants. Keyword, exact identifier and vector rankers each return candidates, filtered where the backend can express the grants, and reciprocal rank fusion combines them. Every candidate is then checked again against PostgreSQL. If too few survive, the candidate pool widens up to 400. Survivors are adjusted by small visible signals and deduplicated, and the passages are judged supported, weak or none.</desc>
+<defs><marker id="arrow-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker><marker id="arrow-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="13" markerHeight="13" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#be123c"/></marker><marker id="arrow-telemetry" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#15803d"/></marker><marker id="arrow-dlq" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#be123c"/></marker></defs>
+<rect width="100%" height="100%" rx="18" fill="#ffffff"/>
+<text x="24" y="40" font-size="20" font-weight="700" fill="#0f172a" text-anchor="start">Retrieval: ranking comes second to access</text>
+<text x="24" y="62" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">The index suggests. PostgreSQL decides. A fused score orders results and is never shown as confidence.</text>
+<rect x="190" y="84" width="340" height="58" rx="10" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+<text x="360.0" y="108.0" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">query + person</text>
+<text x="360.0" y="128.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">whole bindings become grants; none means no results</text>
+<rect x="12" y="160" width="696" height="136" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="28" y="182" font-size="11.5" font-weight="700" fill="#475569" text-anchor="start">RANKERS</text>
+<rect x="28" y="212" width="208" height="68" rx="10" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+<text x="132.0" y="241.0" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">keyword</text>
+<text x="132.0" y="261.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">BM25 or tsvector</text>
+<rect x="256" y="212" width="208" height="68" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="2.4"/>
+<text x="360.0" y="241.0" font-size="15" font-weight="700" fill="#1e1b4b" text-anchor="middle">exact identifier</text>
+<text x="360.0" y="261.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">counted twice</text>
+<rect x="484" y="212" width="208" height="68" rx="10" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.6"/>
+<text x="588.0" y="241.0" font-size="15" font-weight="700" fill="#2e1065" text-anchor="middle">vector</text>
+<text x="588.0" y="261.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">skipped if model differs</text>
+<path d="M360,142 L360,212" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<path d="M300,142 L300,152 L132,152 L132,212" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<path d="M420,142 L420,152 L588,152 L588,212" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<rect x="230" y="318" width="260" height="54" rx="10" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.6"/>
+<text x="360.0" y="340.0" font-size="15" font-weight="700" fill="#2e1065" text-anchor="middle">reciprocal rank fusion</text>
+<text x="360.0" y="360.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">sum of 1 / (60 + rank)</text>
+<path d="M360,280 L360,318" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<path d="M132,280 L132,306 L300,306 L300,318" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<path d="M588,280 L588,306 L420,306 L420,318" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<rect x="190" y="396" width="340" height="66" rx="10" fill="#fffbeb" stroke="#b45309" stroke-width="2.4"/>
+<text x="360.0" y="414.0" font-size="15" font-weight="700" fill="#451a03" text-anchor="middle">authoritative check</text>
+<text x="360.0" y="434.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">re-read from PostgreSQL: active, in scope, readable,</text>
+<text x="360.0" y="454.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">not excluded as stale</text>
+<path d="M360,372 L360,396" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<path d="M530,429 L585,429 L585,345 L490,345" fill="none" stroke="#be123c" stroke-width="1.8" stroke-dasharray="6 4" stroke-linejoin="round" marker-end="url(#arrow-dlq)"/>
+<text x="595" y="382" font-size="12" font-weight="600" fill="#1e293b" text-anchor="start" paint-order="stroke" stroke="#ffffff" stroke-width="5" stroke-linejoin="round">too few survive:</text>
+<text x="595" y="397" font-size="12" font-weight="600" fill="#1e293b" text-anchor="start" paint-order="stroke" stroke="#ffffff" stroke-width="5" stroke-linejoin="round">widen, up to 400</text>
+<rect x="190" y="486" width="340" height="66" rx="10" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+<text x="360.0" y="504.0" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">signals and dedup</text>
+<text x="360.0" y="524.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">identifier, service, authority, stale, retired;</text>
+<text x="360.0" y="544.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">at most 3 chunks per document</text>
+<path d="M360,462 L360,486" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<rect x="190" y="576" width="340" height="66" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="2.4"/>
+<text x="360.0" y="594.0" font-size="15" font-weight="700" fill="#1e1b4b" text-anchor="middle">evidence state</text>
+<text x="360.0" y="614.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">supported, weak or none,</text>
+<text x="360.0" y="634.0" font-size="12.5" font-weight="400" fill="#334155" text-anchor="middle">from what the passages literally contain</text>
+<path d="M360,552 L360,576" fill="none" stroke="#475569" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#arrow-sync)"/>
+<text x="24" y="672" font-size="12.5" font-weight="400" fill="#475569" text-anchor="start">Results carry source, path, revision, line range and freshness, so an answer can be traced to a passage.</text>
+</svg>

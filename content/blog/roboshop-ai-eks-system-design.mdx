@@ -1,0 +1,195 @@
+---
+title: "RoboShop AI on Amazon EKS: system design with Istio, Karpenter, KEDA and Gatekeeper"
+slug: roboshop-ai-eks-system-design
+description: "How RoboShop AI maps onto Amazon EKS: NLB and Istio ingress, mesh authorization, Gatekeeper policies, KEDA and Karpenter scaling, and telemetry."
+author: jithendar-dharmapuri
+category: kubernetes
+tags: [Amazon EKS, Istio, Karpenter, KEDA, OPA Gatekeeper, Terraform, Argo CD]
+contentType: analysis
+status: review
+related: [blog/deploy-roboshop-ai-amazon-eks, blog/roboshop-ai-microservices, projects/roboshop-ai]
+---
+<Todo>Reviewed against roboshop-ai commit 692e72d1f119c20e3bfb32f2e189e5a376a12c4c on 2026-10-30. The deploy/eks folder this article describes is not committed yet: after you push it, replace every `tree/master/deploy/eks` link with the new commit SHA, then re-read this article against it. Nothing here has run on AWS yet; keep the "not yet run on AWS" wording until you have deployed it once, and add your own commentary. The repository licence is "all rights reserved": decide whether readers may deploy their own copy before publishing. Suggested SEO title: "RoboShop AI on Amazon EKS: Istio, Karpenter, KEDA and Gatekeeper design".</Todo>
+
+RoboShop AI is a personal showcase project: a robot store with a storefront, checkout in Razorpay test mode, an optional AI shopping assistant and a private Model Context Protocol (MCP) server, split into independently deployable services. It runs on a small Minikube lab today. This article explains how the same services map onto Amazon EKS, and why each platform component is there. It describes a design and its configuration. The configuration has been validated offline but has not yet run on AWS, and nothing here describes production traffic or measured performance.
+
+The authoritative configuration lives in the repository under [`deploy/eks`](https://github.com/mrjithendar/roboshop-ai/tree/master/deploy/eks). The step-by-step guide is [Deploy RoboShop AI on Amazon EKS](/blog/deploy-roboshop-ai-amazon-eks).
+
+::toc
+
+## Who this is for
+
+Engineers who know Kubernetes basics and want a worked example of how the common EKS building blocks fit together around a real, multi-language application: ingress, a service mesh, admission policy, event-driven autoscaling, node provisioning and telemetry. Each section says what the code does today and which choices are new for EKS.
+
+## What the services do
+
+:::figure{caption="Figure 1. Services and the data each one owns. Dashed borders mark optional components."}
+![RoboShop AI service map on EKS. Browsers reach the shop through an AWS Network Load Balancer and the Istio ingress gateway, then the web NGINX service. NGINX sends API calls to ai-gateway, assistant calls to Moks and currency calls to currency-service. ai-gateway calls the user, catalogue, cart, payment, shipping and currency services and the optional Moks engine, and owns the order ledger and outbox. A private MCP server, reachable only by port-forward, calls the gateway with the caller's session. Paid orders flow from the outbox through RabbitMQ to shipping-worker and kafka-bridge.](/images/roboshop-eks/eks-system-context.svg)
+:::
+
+| Service | Responsibility | Owns |
+| --- | --- | --- |
+| web | NGINX: pages, `/api` proxy to the gateway, `/moks` proxy to the assistant | nothing |
+| ai-gateway | Public API, authorization, checkout, order ledger and outbox | MongoDB settings; JSON or PostgreSQL ledger |
+| user-service | Accounts, hashed sessions, MFA | MongoDB users |
+| catalogue-service | Product reads and imports, recommendations | MongoDB products |
+| cart-service | Editable carts | Redis |
+| payment-service | Razorpay orders and verification (test mode by default) | nothing |
+| shipping-service | Locations and quotes over HTTP | PostgreSQL |
+| shipping-worker | The same image with its RabbitMQ consumer on (EKS only) | PostgreSQL shipments |
+| currency-service | Exchange rates | nothing |
+| moks | Optional assistant: retrieval, then a model only if one is configured | nothing |
+| mcp-server | Private MCP tools that call the gateway with the user's own session | nothing |
+| kafka-bridge | Copies paid-order events from RabbitMQ to Kafka for analytics | nothing |
+
+Not every request visits every service. Browsing a product touches web, the gateway and the catalogue. Checkout adds cart, payment, user and shipping. Chat adds Moks, and calls a model only when the super admin has configured one.
+
+:::figure{caption="Figure 2. A normal shopping request. No AI and no queues are involved."}
+![Sequence of a shopping request. The browser connects to the NLB over HTTPS; the NLB forwards TCP with a proxy protocol header to the Istio ingress gateway, which terminates TLS and routes to web over mutual TLS. web serves the static page and proxies /api calls to ai-gateway, which checks the session with user-service, reads products from catalogue-service and cart lines from cart-service, and returns JSON back through the same path.](/images/roboshop-eks/eks-shopping-request.svg)
+:::
+
+## Ingress: one Layer 7 hop
+
+:::figure{caption="Figure 3. Network and ingress. Only the load balancer and NAT gateways are public."}
+![AWS network diagram. One VPC across two or three Availability Zones. Public subnets hold only the Network Load Balancer and NAT gateways. Private subnets hold the EKS control-plane interfaces, a tainted On-Demand system node group, Karpenter-managed arm64 nodes and encrypted EBS volumes. Customer traffic enters through the NLB to the Istio ingress gateway pods; operator kubectl traffic reaches an API endpoint restricted to the operator's address; node egress goes through NAT, and S3 traffic uses a gateway endpoint.](/images/roboshop-eks/eks-network.svg)
+:::
+
+Traffic flows Internet → **Network Load Balancer** → **Istio ingress gateway** → web. Istio's gateway already handles routing, TLS and workload identity. An Application Load Balancer in front would add a second Layer 7 hop and a second place to keep routing rules, so the design uses an NLB that only passes TCP through:
+
+- **Targets:** IP targets, so gateway pods are registered directly, with an HTTP health check on the gateway's readiness port.
+- **TLS:** terminates on the gateway pods with a Let's Encrypt certificate that cert-manager obtains through a Route 53 DNS-01 challenge.
+- **Client IP:** reaches Envoy through proxy protocol v2.
+- **Exposure:** the AWS Load Balancer Controller creates a frontend security group restricted to the configured source ranges.
+
+The trade-off is that certificate management lives in the cluster. If you prefer AWS Certificate Manager, the NLB can terminate TLS instead, at the cost of plaintext traffic inside the VPC unless you re-encrypt.
+
+## Mesh: identity per workload, nothing replayed
+
+The mesh runs Istio in **sidecar mode**. Sidecars give Layer 7 authorization on every hop without extra waypoint proxies, and the enrollment boundary is explicit: the `roboshop-ai` namespace is labelled for injection, and the data stores opt out per pod. The Istio CNI node agent removes the privileged init container from application pods. Native sidecars let jobs finish and let draining workers keep their network until they exit.
+
+Two rules matter more than any feature list:
+
+1. **Every workload has its own ServiceAccount.** On Minikube all pods shared the default account, so identity-based authorization was meaningless. On EKS each service is a distinct SPIFFE identity.
+2. **Nothing is retried automatically.** The mesh-wide default HTTP retry policy is off. Only idempotent GETs to the catalogue and currency services retry, and only when the connection failed before the request reached the application. A checkout or payment call can never be replayed by the mesh.
+
+:::figure{caption="Figure 4. Three separate authorization layers."}
+![Trust boundaries. Layer one, Gatekeeper admission: approved and digest-pinned images, resource limits, non-root, no service-account token, ownership labels, and load balancers only in the ingress namespace. Layer two, the mesh: strict mutual TLS, an allow-nothing policy and one allow policy per verified call, from the ingress gateway to web, web to ai-gateway, Moks and currency, ai-gateway to the domain services and Moks, Moks to ai-gateway, catalogue and user, user to shipping, and mcp-server to ai-gateway. Layer three: data stores outside the mesh, protected by NetworkPolicy.](/images/roboshop-eks/eks-trust-boundaries.svg)
+:::
+
+Authorization is split three ways on purpose:
+
+- **Gatekeeper** decides what may be admitted to the cluster.
+- **Istio AuthorizationPolicy** decides which workload may call which service. An allow-nothing policy denies everything, then one ALLOW policy per call edge found in the code opens each path.
+- **The applications** decide what a user may do: sessions, roles, cart ownership and the protected super admin.
+
+## Admission policy with Gatekeeper
+
+Gatekeeper policies require:
+
+- images from approved registries, pinned by digest;
+- CPU and memory requests and a memory limit on every container;
+- non-root containers with no privilege escalation and all capabilities dropped;
+- no auto-mounted service-account tokens;
+- owner and environment labels on every workload;
+- load balancers only in the ingress namespace.
+
+They match only the application namespace, so they can never block Istio, CSI, the VPC CNI, KEDA, Karpenter or the logging agents. They start in audit mode, and enforcement is a one-line change once the audit is clean.
+
+Exceptions are narrow and visible. The demo data stores carry a labelled exception from the restricted-pod rule, because their official images start as root and then drop privileges. The injected Istio containers are exempt only from digest pinning, because istiod pins their version.
+
+NetworkPolicies isolate the data stores. They are enforced only because the VPC CNI add-on runs its network policy agent. Without an engine, the same YAML does nothing.
+
+## Checkout and events
+
+:::figure{caption="Figure 5. Money moves synchronously; fulfilment and analytics follow asynchronously."}
+![Checkout and events. The browser creates an order with an idempotency key; ai-gateway reserves stock, creates a Razorpay test-mode order through payment-service, receives a signed webhook, then marks the order paid and writes an outbox event in one transaction. An outbox worker publishes to RabbitMQ with publisher confirms. Live orders go to the shipping queue, consumed by one to four shipping-worker replicas that insert with a unique event ID and acknowledge after commit, dead-lettering after five failures. Test orders go to an audit queue, and both go through kafka-bridge to Kafka.](/images/roboshop-eks/eks-checkout-events.svg)
+:::
+
+The gateway's default ledger is a JSON file that **only one process may write**. The demo profile keeps it at one replica with a `Recreate` strategy and does not pretend it is highly available. The code already supports a transactional PostgreSQL ledger with a leased outbox. Moving to it is an explicit, reviewed migration, and it is the production option.
+
+## Assistant and MCP
+
+:::figure{caption="Figure 6. The assistant and MCP are independent entry points. Moks never calls MCP."}
+![Assistant and MCP paths. The browser widget calls web, then the Moks widget routes, then ai-gateway /api/chat with the user's session. The gateway passes history references and provider configuration to the Moks engine, which retrieves up to four products from the catalogue, re-checks the configuration with the gateway and, only if a provider is configured, calls Amazon Bedrock through Pod Identity or an allow-listed Ollama endpoint, with optional failover. Separately, an MCP client reaches the private mcp-server by port-forward, and mcp-server calls ai-gateway with the caller's own session.](/images/roboshop-eks/eks-ai-paths.svg)
+:::
+
+No model provider is configured by default, and shopping never depends on the assistant. Moks retrieves products deterministically and calls a model only after the super admin enables Amazon Bedrock or an approved Ollama endpoint. On EKS, Bedrock access uses an EKS Pod Identity role limited to the listed model ARNs, with no stored keys. The MCP server stays private: it has no ingress, and every tool call carries the user's own session and is authorized again by the gateway.
+
+## Scaling: KEDA for pods, Karpenter for nodes
+
+:::figure{caption="Figure 7. Queue backlog to pods to nodes."}
+![Scaling chain. KEDA polls the RabbitMQ management API every 15 seconds with a monitoring-only user and sets the HPA target for shipping-worker at 20 messages per replica, between one and four replicas, falling back to two if the API is unreachable. Pods that do not fit stay Pending; Karpenter, running on the stable system node group, launches an arm64 node from the Spot or On-Demand pool within its limits. When the queue drains, KEDA scales down after five minutes and Karpenter consolidates nodes within its disruption budget.](/images/roboshop-eks/eks-scaling-chain.svg)
+:::
+
+KEDA needs a consumer that is safe to run many times in parallel. In RoboShop that is shipping's RabbitMQ listener, and the code shows why it is safe:
+
+- it acknowledges a message only after the database insert commits;
+- duplicate deliveries hit a unique event ID and are counted, not reprocessed;
+- failures retry five times and then go to a dead-letter queue;
+- schema migrations are serialized by an advisory lock.
+
+The Kafka bridge does not qualify, because it shares a pod with the single Kafka broker.
+
+So the EKS overlay runs the same shipping image twice. `shipping-service` serves HTTP with the consumer off. `shipping-worker` consumes with no Service in front of it. KEDA owns the worker's HPA. No application code changed.
+
+The worker keeps at least one replica, because a Java cold start plus migrations would delay the first paid order. It is capped at four replicas, because each worker holds up to ten database connections. Raise that cap only together with database capacity.
+
+Karpenter runs on a small, tainted On-Demand managed node group, so node provisioning never depends on nodes Karpenter created itself. It has two pools, both arm64-only to match the published images, both with CPU and memory limits:
+
+- **On-Demand:** the default for everything.
+- **Spot:** tainted, so only interruption-tolerant pods such as the worker opt in. Interruption notices arrive through an SQS queue.
+
+Consolidation is rate-limited by disruption budgets, and PodDisruptionBudgets keep one replica of each two-replica service during drains. A GPU pool for a self-hosted model is provided but never applied by default.
+
+## Telemetry
+
+:::figure{caption="Figure 8. One node agent for logs and traces; Prometheus for metrics."}
+![Telemetry pipeline. Application pods and Istio sidecars send traces to a node-local OpenTelemetry agent that adds Kubernetes metadata, drops health-check spans, samples, and redacts query strings, auth headers, cookies and emails before exporting to Jaeger; the same agent ships container logs to CloudWatch Logs with 30-day retention. Prometheus scrapes application and Envoy metrics merged on port 15020, plus KEDA, Karpenter and istiod, and Grafana queries it. EKS control-plane logs go to CloudWatch. Moks can send metadata-only observations to Langfuse.](/images/roboshop-eks/eks-telemetry.svg)
+:::
+
+The baseline uses one backend per signal and no duplicate agents:
+
+- **Metrics:** Prometheus and Grafana. Prometheus scrapes application and Envoy metrics that the sidecar merges on a plaintext port, so strict mTLS needs no exceptions.
+- **Logs and traces:** one OpenTelemetry Collector per node. It removes query strings, authorization headers, cookies and email addresses before export, writes logs to CloudWatch Logs and sends traces to Jaeger.
+- **Control plane:** EKS logs only the `api`, `audit` and `authenticator` categories, with 30-day retention.
+- **Alerts:** error ratio, p95 latency, queue backlog, worker at its replica cap, pods pending, a NodePool near its limit, and enforced policy violations.
+
+Exporters queue and retry in the background, so a telemetry outage drops telemetry, never a customer request.
+
+## Delivery with Argo CD
+
+Terraform builds the AWS layer, and a script installs the controllers from pinned Helm charts. The application layers are **rendered**: a script resolves every image to its digest and fills in your own values, then writes plain manifests that you review as a Git diff before Argo CD syncs them in dependency order. Argo CD never manages the controllers it depends on. It ignores the worker's replica count, which KEDA owns.
+
+## Lab versus production
+
+The default profile is a demonstration, and it is not highly available. MongoDB, PostgreSQL, Redis, RabbitMQ and Kafka run as single pods on single EBS volumes, Jaeger keeps traces in memory, and there is one NAT gateway. The repository lists the production replacements:
+
+- managed databases with Multi-AZ;
+- Amazon MQ and Amazon MSK for the brokers;
+- the PostgreSQL ledger;
+- AWS Backup with tested restores;
+- interface endpoints;
+- Gatekeeper failing closed.
+
+## Benefits and trade-offs
+
+**Benefits this design enables:**
+
+- Each concern has one owner and one place to change it.
+- Every image is reviewed by digest before it runs.
+- Service-to-service access follows the real call graph.
+- Queue backlog turns into pods, and pods into nodes, without manual capacity planning.
+- Telemetry is redacted before it leaves the node.
+
+**Trade-offs:**
+
+- **More moving parts than the application itself:** eleven controllers to keep upgraded.
+- **Costs that run even when idle:** the control plane, two system nodes, NAT and the load balancer.
+- **A short version window:** Istio 1.30 support ends around December 2026, so a 1.31 upgrade is already due.
+- **Demo-grade data stores** until they move to managed services.
+
+For a small store a managed platform or a modular monolith would be cheaper. The point here is to show the platform pieces working together on real code.
+
+## Next
+
+The [deployment guide](/blog/deploy-roboshop-ai-amazon-eks) walks through every step in order, with checks and recovery, from an empty AWS account to scaling tests and teardown. Pinned versions and their sources are in [`versions.md`](https://github.com/mrjithendar/roboshop-ai/blob/master/deploy/eks/versions.md).

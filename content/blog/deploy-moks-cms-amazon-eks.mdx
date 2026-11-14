@@ -1,0 +1,722 @@
+---
+title: "Deploy Moks CMS on Amazon EKS: eksctl, RDS PostgreSQL, ALB, Secrets Manager and GitHub OIDC"
+slug: deploy-moks-cms-amazon-eks
+description: "Run Moks CMS, the AI-powered CMS behind jithendar.com, on Amazon EKS: eksctl on Graviton, RDS PostgreSQL Multi-AZ, an ALB with ACM and keyless CI."
+seoTitle: "Deploy Moks CMS on Amazon EKS with RDS and an ALB"
+seoDescription: "Step by step: eksctl on Graviton, Pod Identity, RDS PostgreSQL Multi-AZ, AWS Load Balancer Controller, ACM, External Secrets, GitHub OIDC, costs, teardown."
+author: jithendar-dharmapuri
+category: kubernetes
+tags: [Moks CMS, Amazon EKS, AWS, eksctl, RDS, PostgreSQL, AWS Load Balancer Controller, External Secrets, GitHub Actions, Next.js, Deployment]
+contentType: tutorial
+status: draft
+featuredImage:
+  src: /images/deploy-moks-cms/deploy-eks-architecture.png
+  alt: "Moks CMS on Amazon EKS. Route 53 points the domain at an Application Load Balancer in public subnets, which ends TLS with an ACM certificate and sends traffic to web pods in two private subnets on a Graviton node group. External Secrets Operator copies settings from Secrets Manager, pods pull from ECR, upload media to object storage and connect to RDS for PostgreSQL Multi-AZ in private database subnets."
+  width: 1800
+  height: 1440
+related:
+  - blog/deploy-moks-cms-kubernetes-k3s
+  - blog/deploy-moks-cms-linux-server-ec2-docker
+  - blog/deploy-roboshop-ai-amazon-eks
+sources:
+  - title: "eksctl: Config file schema"
+    url: https://eksctl.io/usage/schema/
+    publisher: eksctl
+  - title: "Amazon EKS: Kubernetes versions"
+    url: https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html
+    publisher: Amazon Web Services
+  - title: "Amazon EKS Pod Identity"
+    url: https://docs.aws.amazon.com/eks/latest/userguide/pod-identities.html
+    publisher: Amazon Web Services
+  - title: "AWS Load Balancer Controller: Ingress annotations"
+    url: https://kubernetes-sigs.github.io/aws-load-balancer-controller/latest/guide/ingress/annotations/
+    publisher: Kubernetes SIGs
+  - title: "External Secrets Operator: AWS Secrets Manager"
+    url: https://external-secrets.io/latest/provider/aws-secrets-manager/
+    publisher: External Secrets
+  - title: "Amazon RDS Multi-AZ deployments"
+    url: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.MultiAZ.html
+    publisher: Amazon Web Services
+  - title: "Amazon EKS access entries"
+    url: https://docs.aws.amazon.com/eks/latest/userguide/access-entries.html
+    publisher: Amazon Web Services
+  - title: "GitHub Actions: Configuring OpenID Connect in Amazon Web Services"
+    url: https://docs.github.com/en/actions/security-for-github-actions/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services
+    publisher: GitHub
+---
+<Todo>Draft written on 2026-11-14 from the repository (services/www, minikube/30-jithendar-com.yaml, and infra/ci-role.tf as it was before #77 removed it) and the RoboShop AI EKS article. jithendar.com does not run on EKS, and this guide has not been run: before publishing, (1) follow it in a test account and record the versions that worked (EKS, eksctl, the two Helm charts, the RDS engine version), (2) confirm the eksctl podIdentityAssociations fields, the metrics-server EKS add-on and the External Secrets API version (external-secrets.io/v1) against those versions, (3) check every price in "What it costs" on the AWS pricing pages, (4) tear the test stack down and confirm nothing is left billing.</Todo>
+
+[Part 1](/blog/deploy-moks-cms-linux-server-ec2-docker) put Moks CMS, the AI-powered CMS behind jithendar.com, on one server for about $32 a month. [Part 2](/blog/deploy-moks-cms-kubernetes-k3s) moved it to a k3s cluster you run yourself. This part hands the undifferentiated work to AWS: the Kubernetes control plane (EKS), the database (RDS, with a standby in a second Availability Zone), the load balancer (ALB), certificates (ACM) and secrets (Secrets Manager). What remains yours is the application and how it is wired together.
+
+That buys real resilience: losing a whole Availability Zone takes down neither the app nor the database. It also costs several times what Part 1 does. The cost section at the end has the numbers, so you can decide with them in front of you.
+
+jithendar.com runs Moks CMS on k3s today, not on EKS. This guide is the EKS design I would use for it, using the same Kubernetes Deployment as Part 2. My [RoboShop AI demo](/blog/deploy-roboshop-ai-amazon-eks) does run on EKS 1.36 with Graviton nodes in this account, and that article covers a larger, Terraform-driven variant.
+
+::toc
+
+:::callout{type="info" title="Adapting this guide"}
+The Moks CMS source is proprietary, so the manifests are reproduced here for your own image. They also work for any Next.js app built with `output: "standalone"` that uses PostgreSQL. Replace `example.com` and the account ID, and keep the domain's hosted zone in Route 53. If you run Moks CMS under your own domain, change `PRODUCTION_HOST` in `src/config/site.ts` first: it still names jithendar.com, and on any other domain every page is served as `noindex`.
+:::
+
+:::callout{type="info" title="What about the AI features?"}
+The web app deployed here is the whole CMS: the editor, admin, media library, comments, members, scheduled publishing, and image and video generation (add a `GEMINI_API_KEY`, or set it in the admin). Ask the Blog, the SEO agent and the editorial agent crew run in a second service, the Moks CMS agent, which needs PostgreSQL with pgvector and a Claude API key. This series does not deploy the agent. Everything here works without it, and you can add it later.
+:::
+
+## What you will build
+
+:::figure{caption="Figure 1. Public subnets hold only the load balancer and NAT gateway. The app and the database have no public addresses."}
+![Moks CMS on Amazon EKS. Route 53 points the domain at an Application Load Balancer in the public subnets, which ends TLS with an ACM certificate and sends traffic straight to the web pods' IP addresses. The pods run on a Graviton managed node group in two private subnets. The AWS Load Balancer Controller builds the ALB from an Ingress, External Secrets Operator copies settings from Secrets Manager into a Kubernetes Secret, pods pull from ECR, store media in object storage and connect to RDS for PostgreSQL Multi-AZ in private database subnets.](/images/deploy-moks-cms/deploy-eks-architecture.svg)
+:::
+
+| Part 2 (k3s) | Part 3 (EKS) | Why change |
+| --- | --- | --- |
+| Control plane on your VM | EKS control plane, run by AWS across three AZs | Upgrades and availability of the API server are AWS's job |
+| Traefik + ServiceLB | ALB via the AWS Load Balancer Controller | A managed, multi-AZ load balancer; TLS from ACM, renewed by AWS |
+| cert-manager + Let's Encrypt | ACM certificate | No in-cluster certificate handling at all |
+| CloudNativePG in the cluster | Amazon RDS for PostgreSQL, Multi-AZ | Backups, point-in-time restore, patching and failover are managed |
+| `kubectl create secret` | Secrets Manager + External Secrets Operator | Secrets live outside the cluster, with an audit trail |
+| A long-lived CI token | GitHub OIDC + an EKS access entry | No stored keys anywhere |
+
+The Deployment itself barely changes. That is the point of keeping the app a plain container.
+
+## Prerequisites
+
+- An AWS account where you may create VPCs, EKS clusters, RDS instances and IAM roles.
+- The domain's hosted zone in Route 53.
+- AWS CLI v2, `eksctl`, `kubectl`, `helm` and `jq` on your machine.
+- The image, built for `linux/arm64` as in [Part 1, step 4](/blog/deploy-moks-cms-linux-server-ec2-docker#step-4-build-and-push-the-image).
+
+Set these once; every command below uses them:
+
+```bash
+export AWS_REGION=us-east-1
+export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+export CLUSTER=moks-cms
+export DOMAIN=example.com
+export ZONE_ID=$(aws route53 list-hosted-zones-by-name --dns-name "$DOMAIN" --query 'HostedZones[0].Id' --output text | cut -d/ -f3)
+```
+
+Check which Kubernetes versions EKS offers now and use the newest in standard support (1.36 when this was written):
+
+```bash
+aws eks describe-cluster-versions --query 'clusterVersions[?status==`STANDARD_SUPPORT`].clusterVersion' --output text
+```
+
+## Step 1: Create the ECR repository and push the image
+
+```bash
+aws ecr create-repository --repository-name moks-cms \
+  --image-tag-mutability IMMUTABLE \
+  --image-scanning-configuration scanOnPush=true \
+  --encryption-configuration encryptionType=AES256
+
+REGISTRY=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
+
+TAG=$(git rev-parse --short=12 HEAD)
+docker buildx build services/www --platform linux/arm64 \
+  --build-arg GIT_SHA="$TAG" -t "$REGISTRY/moks-cms:$TAG" --push
+```
+
+`IMMUTABLE` tags mean a tag, once pushed, always means the same image. That is what makes `kubectl rollout undo` trustworthy later. Add a lifecycle policy that keeps the last 30 images so the repository does not grow forever:
+
+```bash
+aws ecr put-lifecycle-policy --repository-name moks-cms --lifecycle-policy-text '{
+  "rules":[{"rulePriority":1,"description":"keep the last 30 images",
+            "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":30},
+            "action":{"type":"expire"}}]}'
+```
+
+## Step 2: Create the cluster with eksctl
+
+One file describes the whole cluster: a new VPC across two Availability Zones with one NAT gateway, a Graviton node group in private subnets, the add-ons, and Pod Identity roles for the two controllers that need AWS access.
+
+```yaml
+# cluster.yaml
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+metadata:
+  name: moks-cms
+  region: us-east-1
+  version: "1.36"
+
+availabilityZones: [us-east-1a, us-east-1b]
+
+vpc:
+  cidr: 10.20.0.0/16
+  nat:
+    gateway: Single            # HighlyAvailable puts one in each AZ, at twice the cost
+  clusterEndpoints:
+    publicAccess: true
+    privateAccess: true
+
+accessConfig:
+  authenticationMode: API      # access entries only, no aws-auth ConfigMap
+
+addons:
+  - name: vpc-cni
+  - name: coredns
+  - name: kube-proxy
+  - name: eks-pod-identity-agent
+  - name: metrics-server
+
+iam:
+  podIdentityAssociations:
+    - namespace: kube-system
+      serviceAccountName: aws-load-balancer-controller
+      wellKnownPolicies:
+        awsLoadBalancerController: true
+    - namespace: external-secrets
+      serviceAccountName: external-secrets
+      permissionPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: [secretsmanager:GetSecretValue, secretsmanager:DescribeSecret]
+            Resource: arn:aws:secretsmanager:us-east-1:*:secret:moks-cms/*
+
+managedNodeGroups:
+  - name: web
+    instanceType: t4g.large    # 2 vCPU, 8 GiB, arm64
+    amiFamily: AmazonLinux2023
+    minSize: 2
+    desiredCapacity: 2
+    maxSize: 4
+    privateNetworking: true
+    volumeSize: 30
+    volumeEncrypted: true
+    labels: { role: web }
+```
+
+```bash
+eksctl create cluster -f cluster.yaml        # about 15 to 20 minutes
+kubectl get nodes -L topology.kubernetes.io/zone
+```
+
+Two nodes, one per zone. Pod Identity associations only map a ServiceAccount name to an IAM role, so they can exist before the ServiceAccounts do; the Helm charts in step 5 create those.
+
+## Step 3: Create the database on RDS
+
+Find what the cluster created: its VPC, its private subnets (eksctl tags them for internal load balancers) and the cluster security group, which every node carries:
+
+```bash
+VPC_ID=$(aws eks describe-cluster --name "$CLUSTER" --query cluster.resourcesVpcConfig.vpcId --output text)
+CLUSTER_SG=$(aws eks describe-cluster --name "$CLUSTER" --query cluster.resourcesVpcConfig.clusterSecurityGroupId --output text)
+PRIVATE_SUBNETS=$(aws ec2 describe-subnets \
+  --filters Name=vpc-id,Values="$VPC_ID" Name=tag:kubernetes.io/role/internal-elb,Values=1 \
+  --query 'Subnets[].SubnetId' --output text)
+```
+
+Allow PostgreSQL only from the cluster's security group, and group the private subnets for RDS:
+
+```bash
+DB_SG=$(aws ec2 create-security-group --group-name moks-cms-db --description "Moks CMS database" \
+  --vpc-id "$VPC_ID" --query GroupId --output text)
+aws ec2 authorize-security-group-ingress --group-id "$DB_SG" --protocol tcp --port 5432 --source-group "$CLUSTER_SG"
+
+aws rds create-db-subnet-group --db-subnet-group-name moks-cms \
+  --db-subnet-group-description "Moks CMS database" --subnet-ids $PRIVATE_SUBNETS
+```
+
+Pick the newest PostgreSQL 18 version RDS offers, then create the instance. `--multi-az` keeps a synchronous standby in the other zone and fails over to it on its own:
+
+```bash
+PG_VERSION=$(aws rds describe-db-engine-versions --engine postgres \
+  --query "DBEngineVersions[?starts_with(EngineVersion, '18.')].EngineVersion | [-1]" --output text)
+DB_PASSWORD=$(openssl rand -hex 24)
+
+aws rds create-db-instance \
+  --db-instance-identifier moks-cms \
+  --engine postgres --engine-version "$PG_VERSION" \
+  --db-instance-class db.t4g.small \
+  --allocated-storage 20 --max-allocated-storage 100 --storage-type gp3 --storage-encrypted \
+  --multi-az \
+  --db-name moks --master-username moks --master-user-password "$DB_PASSWORD" \
+  --db-subnet-group-name moks-cms --vpc-security-group-ids "$DB_SG" \
+  --no-publicly-accessible \
+  --backup-retention-period 7 \
+  --deletion-protection \
+  --copy-tags-to-snapshot
+
+aws rds wait db-instance-available --db-instance-identifier moks-cms   # 10 to 20 minutes
+DB_HOST=$(aws rds describe-db-instances --db-instance-identifier moks-cms \
+  --query 'DBInstances[0].Endpoint.Address' --output text)
+```
+
+RDS for PostgreSQL requires encrypted connections by default, so the connection string ends in `?sslmode=require`. The app's driver reads `sslmode` from the URL. `require` encrypts without checking the server's certificate; to check it too, ship the RDS CA bundle in the image and use `sslmode=verify-full&sslrootcert=/path/to/bundle.pem`.
+
+For a production database you would create a separate, less privileged role for the app. The master user keeps this guide short.
+
+## Step 4: Store the app's settings in Secrets Manager
+
+One secret holds every variable the app needs. Build it from a file, so nothing lands in your shell history, then delete the file:
+
+```bash
+umask 077
+cat > /tmp/moks-cms-web.json <<EOF
+{
+  "DATABASE_URL": "postgres://moks:${DB_PASSWORD}@${DB_HOST}:5432/moks?sslmode=require",
+  "BETTER_AUTH_SECRET": "$(openssl rand -hex 32)",
+  "SETTINGS_ENCRYPTION_KEY": "$(openssl rand -hex 32)",
+  "ADMIN_BOOTSTRAP_TOKEN": "$(openssl rand -hex 24)",
+  "TURNSTILE_SITE_KEY": "",
+  "TURNSTILE_SECRET_KEY": ""
+}
+EOF
+aws secretsmanager create-secret --name moks-cms/web --secret-string file:///tmp/moks-cms-web.json
+rm /tmp/moks-cms-web.json
+unset DB_PASSWORD
+```
+
+The IAM policy from step 2 lets External Secrets read `moks-cms/*` and nothing else. Secrets Manager also keeps every version, so a bad edit is recoverable.
+
+## Step 5: Install the two controllers
+
+The AWS Load Balancer Controller turns an Ingress into an ALB. Pass the region and VPC explicitly: Amazon Linux 2023 nodes limit the instance metadata service to one network hop, so pods cannot look these up themselves.
+
+```bash
+helm repo add eks https://aws.github.io/eks-charts
+helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+  --namespace kube-system \
+  --set clusterName="$CLUSTER" \
+  --set region="$AWS_REGION" \
+  --set vpcId="$VPC_ID" \
+  --set serviceAccount.name=aws-load-balancer-controller
+kubectl -n kube-system rollout status deploy/aws-load-balancer-controller
+```
+
+External Secrets Operator copies a Secrets Manager secret into a Kubernetes Secret and keeps it in sync:
+
+```bash
+helm repo add external-secrets https://charts.external-secrets.io
+helm upgrade --install external-secrets external-secrets/external-secrets \
+  --namespace external-secrets --create-namespace
+kubectl -n external-secrets rollout status deploy/external-secrets
+```
+
+Both charts create ServiceAccounts with exactly the names the Pod Identity associations expect, so the controllers get their AWS permissions with no keys and no annotations.
+
+## Step 6: Deploy the app
+
+Connect the cluster to Secrets Manager and ask for the app's Secret:
+
+```yaml
+# secrets.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: moks-cms
+---
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: aws-secrets-manager
+spec:
+  provider:
+    aws:
+      service: SecretsManager
+      region: us-east-1
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: moks-cms-env
+  namespace: moks-cms
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: aws-secrets-manager
+  target:
+    name: moks-cms-env
+  dataFrom:
+    - extract:
+        key: moks-cms/web
+```
+
+```bash
+kubectl apply -f secrets.yaml
+kubectl -n moks-cms get externalsecret moks-cms-env   # STATUS SecretSynced
+```
+
+The Deployment is Part 2's with three changes: the image comes from ECR (nodes can pull from ECR in their own account with no pull secret), `DATABASE_URL` arrives with the other settings, and replicas spread across zones rather than hosts.
+
+```yaml
+# app.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: moks-cms
+  namespace: moks-cms
+  labels: { app: moks-cms }
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: { app: moks-cms }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  template:
+    metadata:
+      labels: { app: moks-cms }
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: moks-cms }
+      containers:
+        - name: web
+          image: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/moks-cms:REPLACE_WITH_TAG
+          ports:
+            - { name: http, containerPort: 3000 }
+          env:
+            - { name: APP_ENV, value: production }
+            - { name: SITE_URL, value: https://example.com }
+          envFrom:
+            - secretRef: { name: moks-cms-env }
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: "2", memory: 1536Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          startupProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 20
+            failureThreshold: 3
+            timeoutSeconds: 3
+          lifecycle:
+            preStop:
+              exec: { command: ["sleep", "15"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: next-cache, mountPath: /app/.next/cache }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+        - name: next-cache
+          emptyDir: { sizeLimit: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: moks-cms
+  namespace: moks-cms
+spec:
+  selector: { app: moks-cms }
+  ports:
+    - { name: http, port: 80, targetPort: http }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: moks-cms
+  namespace: moks-cms
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: moks-cms }
+```
+
+The `preStop` sleep is longer here than in Part 2 (15 seconds instead of 5). The ALB sends traffic straight to pod IPs, and it takes longer than Traefik to stop sending to a pod that is shutting down. The sleep keeps the pod answering until the ALB has deregistered it. It must stay below `terminationGracePeriodSeconds`.
+
+```bash
+sed -i.bak "s/ACCOUNT_ID/$ACCOUNT_ID/; s/REPLACE_WITH_TAG/$TAG/" app.yaml
+kubectl apply -f app.yaml
+kubectl -n moks-cms rollout status deploy/moks-cms
+kubectl -n moks-cms logs deploy/moks-cms --tail=30   # migrations against RDS, then ready
+```
+
+## Step 7: Put the ALB in front, with an ACM certificate
+
+Request a certificate for the apex and `www`, and validate it through Route 53:
+
+```bash
+CERT_ARN=$(aws acm request-certificate --domain-name "$DOMAIN" \
+  --subject-alternative-names "www.$DOMAIN" --validation-method DNS \
+  --query CertificateArn --output text)
+sleep 10   # ACM needs a moment to produce the validation records
+
+aws acm describe-certificate --certificate-arn "$CERT_ARN" \
+  --query 'Certificate.DomainValidationOptions[].ResourceRecord' --output json \
+| jq '{Changes: [unique_by(.Name)[] | {Action: "UPSERT", ResourceRecordSet:
+        {Name: .Name, Type: .Type, TTL: 300, ResourceRecords: [{Value: .Value}]}}]}' \
+> /tmp/acm-validation.json
+aws route53 change-resource-record-sets --hosted-zone-id "$ZONE_ID" --change-batch file:///tmp/acm-validation.json
+aws acm wait certificate-validated --certificate-arn "$CERT_ARN"
+echo "$CERT_ARN"
+```
+
+ACM renews this certificate by itself as long as the validation records stay in place. Now the Ingress. The annotations do the work: an internet-facing ALB, traffic straight to pod IPs, HTTPS with a modern TLS policy, HTTP redirected, health checks on `/api/health`, and a redirect from `www` to the apex handled by the ALB itself:
+
+```yaml
+# ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: moks-cms
+  namespace: moks-cms
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/certificate-arn: CERT_ARN
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+    alb.ingress.kubernetes.io/healthcheck-path: /api/health
+    alb.ingress.kubernetes.io/target-group-attributes: deregistration_delay.timeout_seconds=10
+    alb.ingress.kubernetes.io/actions.www-to-apex: >
+      {"type":"redirect","redirectConfig":{"host":"example.com","path":"/#{path}","query":"#{query}",
+       "protocol":"HTTPS","port":"443","statusCode":"HTTP_301"}}
+spec:
+  ingressClassName: alb
+  rules:
+    - host: www.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: www-to-apex, port: { name: use-annotation } }
+    - host: example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: moks-cms, port: { name: http } }
+```
+
+`www-to-apex` is not a real Service. The controller reads the action of that name from the annotation. `deregistration_delay` at 10 seconds pairs with the 15-second `preStop`: the ALB stops sending new requests within the delay, and the pod is still alive to finish them.
+
+```bash
+sed -i.bak "s#CERT_ARN#$CERT_ARN#" ingress.yaml
+kubectl apply -f ingress.yaml
+kubectl -n moks-cms get ingress moks-cms -w   # ADDRESS fills in after a minute or two
+```
+
+## Step 8: Point the domain at the ALB
+
+Route 53 alias records are free to query and follow the ALB if its addresses change:
+
+```bash
+ALB_DNS=$(kubectl -n moks-cms get ingress moks-cms -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+ALB_ZONE=$(aws elbv2 describe-load-balancers \
+  --query "LoadBalancers[?DNSName=='$ALB_DNS'].CanonicalHostedZoneId" --output text)
+
+aws route53 change-resource-record-sets --hosted-zone-id "$ZONE_ID" --change-batch "{
+  \"Changes\": [
+    {\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"$DOMAIN\",\"Type\":\"A\",
+      \"AliasTarget\":{\"HostedZoneId\":\"$ALB_ZONE\",\"DNSName\":\"$ALB_DNS\",\"EvaluateTargetHealth\":true}}},
+    {\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"www.$DOMAIN\",\"Type\":\"A\",
+      \"AliasTarget\":{\"HostedZoneId\":\"$ALB_ZONE\",\"DNSName\":\"$ALB_DNS\",\"EvaluateTargetHealth\":true}}}
+  ]}"
+```
+
+:::callout{type="warning" title="Finish /setup straight away"}
+Once DNS resolves, open `https://example.com/setup`, enter `ADMIN_BOOTSTRAP_TOKEN` (read it with `aws secretsmanager get-secret-value --secret-id moks-cms/web`), and create the admin account. Setup also imports the articles and pages shipped in the image. The page asks for the token, but do not leave a fresh install waiting: the WordPress site that ran on jithendar.com before Moks CMS was taken over through a first-run window like this one. Then remove `ADMIN_BOOTSTRAP_TOKEN` from the secret; External Secrets syncs the change within the hour, or at once with `kubectl -n moks-cms annotate externalsecret moks-cms-env force-sync=$(date +%s) --overwrite`.
+:::
+
+## Check the deployment
+
+```bash
+D=https://$DOMAIN
+curl -fsS "$D/api/health"                                         # {"status":"ok","version":"<tag>"}
+for p in / /sitemap.xml /feed.xml /robots.txt; do
+  printf '%s %s\n' "$(curl -s -o /dev/null -w '%{http_code}' "$D$p")" "$p"
+done
+curl -s -o /dev/null -w '%{redirect_url}\n' "http://$DOMAIN/"               # https://example.com/
+curl -s -o /dev/null -w '%{redirect_url}\n' "https://www.$DOMAIN/blog"      # https://example.com/blog
+
+TG_ARN=$(aws elbv2 describe-target-groups --query "TargetGroups[?contains(TargetGroupName, 'moks-cms')].TargetGroupArn | [0]" --output text)
+aws elbv2 describe-target-health --target-group-arn "$TG_ARN" \
+  --query 'TargetHealthDescriptions[].[Target.Id,TargetHealth.State]' --output table   # two healthy pod IPs
+```
+
+Then test the failures you are paying for. Reboot the database with a forced failover and watch the site:
+
+```bash
+aws rds reboot-db-instance --db-instance-identifier moks-cms --force-failover
+```
+
+A Multi-AZ failover usually completes in one to two minutes. Requests that need the database fail during that window and recover on their own; the app's connections reconnect to the same endpoint, which now points at the new primary.
+
+## Ship from GitHub Actions without stored keys
+
+:::figure{caption="Figure 2. CI holds no AWS keys and no kubeconfig. Each run gets a one-hour session from GitHub's OIDC token."}
+![Five steps: GitHub Actions assumes an IAM role through OIDC for one hour, builds an arm64 image on an arm runner and pushes it to ECR tagged with the commit, gets a kubeconfig through an EKS access entry limited to namespace moks-cms, sets the new image and waits for the rollout, then runs a smoke test. A failed rollout is undone with kubectl rollout undo.](/images/deploy-moks-cms/deploy-eks-delivery.svg)
+:::
+
+The Moks CMS repository pushed its images to ECR this way until its releases moved to a self-hosted Harbor registry: an IAM role that trusts GitHub's OIDC provider, and only for pushes from one repository's default branch. Create the OIDC provider once per account if it does not exist yet, then the role:
+
+```bash
+aws iam create-open-id-connect-provider --url https://token.actions.githubusercontent.com \
+  --client-id-list sts.amazonaws.com   # skip if the account already has it
+
+cat > /tmp/trust.json <<EOF
+{"Version":"2012-10-17","Statement":[{"Effect":"Allow",
+  "Principal":{"Federated":"arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"},
+  "Action":"sts:AssumeRoleWithWebIdentity",
+  "Condition":{"StringEquals":{
+    "token.actions.githubusercontent.com:aud":"sts.amazonaws.com",
+    "token.actions.githubusercontent.com:sub":"repo:your-user/your-repo:ref:refs/heads/main"}}}]}
+EOF
+aws iam create-role --role-name github-moks-cms-deploy --assume-role-policy-document file:///tmp/trust.json \
+  --max-session-duration 3600
+
+aws iam put-role-policy --role-name github-moks-cms-deploy --policy-name deploy --policy-document "{
+  \"Version\":\"2012-10-17\",\"Statement\":[
+    {\"Effect\":\"Allow\",\"Action\":\"ecr:GetAuthorizationToken\",\"Resource\":\"*\"},
+    {\"Effect\":\"Allow\",\"Action\":[\"ecr:BatchCheckLayerAvailability\",\"ecr:InitiateLayerUpload\",\"ecr:UploadLayerPart\",
+      \"ecr:CompleteLayerUpload\",\"ecr:PutImage\",\"ecr:BatchGetImage\"],
+      \"Resource\":\"arn:aws:ecr:${AWS_REGION}:${ACCOUNT_ID}:repository/moks-cms\"},
+    {\"Effect\":\"Allow\",\"Action\":\"eks:DescribeCluster\",
+      \"Resource\":\"arn:aws:eks:${AWS_REGION}:${ACCOUNT_ID}:cluster/${CLUSTER}\"}]}"
+```
+
+Then let that role into the cluster, in one namespace only, with an access entry:
+
+```bash
+ROLE_ARN=arn:aws:iam::$ACCOUNT_ID:role/github-moks-cms-deploy
+aws eks create-access-entry --cluster-name "$CLUSTER" --principal-arn "$ROLE_ARN"
+aws eks associate-access-policy --cluster-name "$CLUSTER" --principal-arn "$ROLE_ARN" \
+  --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy \
+  --access-scope type=namespace,namespaces=moks-cms
+```
+
+`AmazonEKSEditPolicy` is wider than CI needs: in its namespace it can read Secrets. For a tighter fit, give the access entry a Kubernetes group (`--kubernetes-groups ci-deployers`) and bind that group to the narrow Role from [Part 2](/blog/deploy-moks-cms-kubernetes-k3s#let-ci-deploy-with-a-narrow-key) instead of associating a policy.
+
+The workflow builds on GitHub's arm64 runners, so there is no emulation and the image matches the Graviton nodes. Pin each action to a full commit SHA with the version as a comment, as the Moks CMS workflows do:
+
+```yaml
+# .github/workflows/deploy-eks.yml
+name: deploy to EKS
+on:
+  push:
+    branches: [main]
+permissions:
+  id-token: write      # lets the job request an OIDC token
+  contents: read
+concurrency: deploy-eks
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04-arm
+    env:
+      AWS_REGION: us-east-1
+      CLUSTER: moks-cms
+    steps:
+      - uses: actions/checkout@<full-sha>  # v7
+      - uses: aws-actions/configure-aws-credentials@<full-sha>  # v6
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/github-moks-cms-deploy
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Build and push
+        run: |
+          TAG=$(git rev-parse --short=12 HEAD)
+          REGISTRY=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
+          docker buildx build services/www --platform linux/arm64 \
+            --build-arg GIT_SHA="$TAG" -t "$REGISTRY/moks-cms:$TAG" --push
+          echo "IMAGE=$REGISTRY/moks-cms:$TAG" >> "$GITHUB_ENV"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+      - name: Roll out
+        run: |
+          aws eks update-kubeconfig --name "$CLUSTER"
+          kubectl -n moks-cms set image deploy/moks-cms web="$IMAGE"
+          if ! kubectl -n moks-cms rollout status deploy/moks-cms --timeout=5m; then
+            kubectl -n moks-cms rollout undo deploy/moks-cms
+            exit 1
+          fi
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 30); do
+            curl -fsS https://example.com/api/health | grep -q "\"version\":\"$TAG\"" && exit 0
+            sleep 2
+          done
+          exit 1
+```
+
+With immutable tags, `rollout undo` returns exactly the previous image. Migrations still only move forward, so the previous image must run on the new schema; the [same rule as Part 1](/blog/deploy-moks-cms-linux-server-ec2-docker#releasing-a-new-version) applies.
+
+## Scaling and observing
+
+- **Pods.** `metrics-server` was installed as an add-on, so `kubectl -n moks-cms autoscale deploy/moks-cms --cpu-percent=70 --min=2 --max=6` works as is. With more than two replicas, set `CACHE_BUS_REDIS_URL` (an ElastiCache or Valkey URL) so admin edits reach every replica within a second; see [Part 2, scaling out](/blog/deploy-moks-cms-kubernetes-k3s#scaling-out).
+- **Nodes.** The node group's `maxSize` is 4, but nothing adds nodes yet. Install Karpenter or the Cluster Autoscaler before relying on pod autoscaling past what two nodes hold.
+- **Database.** Turn on RDS Performance Insights and set CloudWatch alarms on `CPUUtilization`, `FreeStorageSpace` and `DatabaseConnections`. The app opens at most five connections per replica (`DATABASE_POOL_MAX`), which is easy to keep within a `db.t4g.small`'s limit.
+- **Logs and metrics.** The `amazon-cloudwatch-observability` add-on sends container logs and metrics to CloudWatch. The app also serves Prometheus metrics on port 9464, if you run Prometheus.
+
+## Troubleshooting
+
+| Symptom | Likely cause | Check |
+| --- | --- | --- |
+| The Ingress never gets an address | The controller lacks permissions or cannot find public subnets | `kubectl -n kube-system logs deploy/aws-load-balancer-controller`; public subnets need the tag `kubernetes.io/role/elb=1` (eksctl adds it) |
+| ALB returns 503 | No healthy targets | `aws elbv2 describe-target-health`, and whether the pods are ready |
+| Pods stuck in `CreateContainerConfigError` | `moks-cms-env` does not exist yet | `kubectl -n moks-cms describe externalsecret moks-cms-env` (wrong secret name, or the Pod Identity association is missing) |
+| Logs show a timeout connecting to the database | The database security group does not allow the cluster security group | `aws ec2 describe-security-groups --group-ids $DB_SG` |
+| Logs show `no pg_hba.conf entry ... no encryption` | `sslmode=require` missing from `DATABASE_URL` | the secret's value |
+| Rollouts cause a burst of 502s | Pods stop before the ALB has deregistered them | `preStop` sleep and `deregistration_delay` from step 7 |
+| Sign-in fails | `SITE_URL` does not match the address in the browser | the Deployment's env |
+| Every page is `noindex` | `APP_ENV` is not `production`, or the domain is not `PRODUCTION_HOST` | page source |
+
+## What it costs
+
+Approximate on-demand prices in `us-east-1`. Check them on the AWS pricing pages when you build this, since they change:
+
+| Item | Monthly |
+| --- | --- |
+| EKS control plane ($0.10 an hour) | about $73 |
+| Two `t4g.large` nodes | about $98 |
+| NAT gateway, one, before data processing | about $33 |
+| Application Load Balancer, before capacity units | about $16 |
+| RDS `db.t4g.small` Multi-AZ, 20 GB gp3 | about $50 |
+| Public IPv4 addresses (ALB, NAT) | about $11 |
+| Secrets Manager, Route 53, ECR storage | about $2 |
+| **Total** | **about $280** |
+
+That is roughly nine times Part 1 for the same site. Most of it is fixed cost that buys availability: the control plane, two nodes in two zones, a standby database and a NAT gateway. A single-AZ database and `t4g.medium` nodes bring it to about $200; dropping the NAT gateway needs VPC endpoints for ECR, S3, STS and Secrets Manager, which cost money of their own. If one zone failing is a risk you can accept, Part 1 or Part 2 is the better buy.
+
+## Tear it down
+
+Delete in this order. The Ingress goes first, so the controller deletes the ALB it created; deleting the cluster first leaves the ALB and its security groups orphaned and still billing.
+
+```bash
+kubectl -n moks-cms delete ingress moks-cms          # wait until the ALB is gone from the console
+aws rds modify-db-instance --db-instance-identifier moks-cms --no-deletion-protection --apply-immediately
+aws rds delete-db-instance --db-instance-identifier moks-cms --final-db-snapshot-identifier moks-cms-final
+aws rds wait db-instance-deleted --db-instance-identifier moks-cms
+aws rds delete-db-subnet-group --db-subnet-group-name moks-cms
+aws ec2 delete-security-group --group-id "$DB_SG"
+eksctl delete cluster -f cluster.yaml --wait
+aws secretsmanager delete-secret --secret-id moks-cms/web --recovery-window-in-days 7
+aws acm delete-certificate --certificate-arn "$CERT_ARN"
+aws ecr delete-repository --repository-name moks-cms --force
+```
+
+Remove the Route 53 records and the ACM validation records by hand, and delete the final snapshot when you no longer need it.
+
+## Where to go next
+
+- [Part 1: One Linux server](/blog/deploy-moks-cms-linux-server-ec2-docker) for the cheapest version.
+- [Part 2: Kubernetes on k3s](/blog/deploy-moks-cms-kubernetes-k3s) for a cluster on servers you own.
+- [Deploying RoboShop AI on EKS](/blog/deploy-roboshop-ai-amazon-eks) for a larger EKS setup with Terraform, Argo CD and Istio.

@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 700" width="900" height="700" role="img" aria-labelledby="lets-encrypt-k3s-architecture-title lets-encrypt-k3s-architecture-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="lets-encrypt-k3s-architecture-title">TLS on mk4: cert-manager issues one wildcard certificate over DNS-01 and the Istio gateway serves it</title>
+<desc id="lets-encrypt-k3s-architecture-desc">Outside the cluster: a visitor, Cloudflare DNS for the zone jithendar.com and Let&#x27;s Encrypt. A Hetzner load balancer named mk4-edge forwards ports 80 and 443 with a PROXY protocol header to the Istio ingress gateway in the k3s cluster, which terminates TLS with the Secret jithendar-com-gateway-tls. In namespace cert-manager, cert-manager v1.20.4 uses the ClusterIssuer letsencrypt-dns and the Secret cloudflare-api-token to write a TXT record through the Cloudflare API, Let&#x27;s Encrypt looks the record up and signs, and cert-manager writes the certificate into the gateway Secret. A second Certificate, jithendar-com-wildcard in namespace jithendar, holds the same names. No HTTP route is involved in issuance or renewal.</desc>
+<rect width="900" height="700" fill="#ffffff"/>
+<defs>
+<marker id="lets-encrypt-k3s-architecture-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+<marker id="lets-encrypt-k3s-architecture-write" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b45309"/></marker>
+<marker id="lets-encrypt-k3s-architecture-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#be123c"/></marker>
+<marker id="lets-encrypt-k3s-architecture-reject" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b91c1c"/></marker>
+<marker id="lets-encrypt-k3s-architecture-dashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+<marker id="lets-encrypt-k3s-architecture-life" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#cbd5e1"/></marker>
+</defs>
+<rect x="15" y="12" width="870" height="110" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="28" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Internet</text>
+<rect x="15" y="138" width="870" height="96" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="154" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Hetzner Cloud</text>
+<rect x="15" y="250" width="870" height="130" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="266" text-anchor="start" font-size="12" font-weight="600" fill="#475569">k3s cluster mk4: namespace istio-ingress</text>
+<rect x="15" y="396" width="870" height="130" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="412" text-anchor="start" font-size="12" font-weight="600" fill="#475569">k3s cluster mk4: namespace cert-manager</text>
+<rect x="15" y="542" width="870" height="146" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="558" text-anchor="start" font-size="12" font-weight="600" fill="#475569">k3s cluster mk4: namespace jithendar</text>
+<polyline points="155.0,108 155.0,164" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#lets-encrypt-k3s-architecture-sync)"/>
+<polyline points="155.0,222 155.0,278" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#lets-encrypt-k3s-architecture-sync)"/>
+<polyline points="280,322.0 325,322.0" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#lets-encrypt-k3s-architecture-dashed)"/>
+<polyline points="620,322.0 575,322.0" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#lets-encrypt-k3s-architecture-write)"/>
+<polyline points="745.0,424 745.0,366" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#lets-encrypt-k3s-architecture-dashed)"/>
+<polyline points="620,468.0 575,468.0" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#lets-encrypt-k3s-architecture-dashed)"/>
+<polyline points="325,468.0 280,468.0" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#lets-encrypt-k3s-architecture-dashed)"/>
+<polyline points="450.0,424 450,388 302,388 302,130 450,130 450.0,108" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#lets-encrypt-k3s-architecture-write)"/>
+<polyline points="620,73.0 575,73.0" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#lets-encrypt-k3s-architecture-dashed)"/>
+<polyline points="870,450.4 880,450 880,73 870,73.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#lets-encrypt-k3s-architecture-sync)"/>
+<polyline points="745.0,512 745,614 575,614.0" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#lets-encrypt-k3s-architecture-dashed)"/>
+<polyline points="325,614.0 280,614.0" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#lets-encrypt-k3s-architecture-write)"/>
+<rect x="30" y="38" width="250" height="70" rx="7" fill="#f8fafc" stroke="#334155" stroke-width="1.4"/>
+<text x="155.0" y="64.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Visitor</text>
+<text x="155.0" y="80.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">https://jithendar.com</text>
+<text x="155.0" y="96.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">and *.jithendar.com</text>
+<rect x="325" y="38" width="250" height="70" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="450.0" y="64.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">Cloudflare DNS</text>
+<text x="450.0" y="80.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">zone jithendar.com</text>
+<text x="450.0" y="96.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">TXT _acme-challenge</text>
+<rect x="620" y="38" width="250" height="70" rx="7" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+<text x="745.0" y="64.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Let&#x27;s Encrypt</text>
+<text x="745.0" y="80.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">ACME v2, production</text>
+<text x="745.0" y="96.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">staging issuer for tests</text>
+<rect x="30" y="164" width="250" height="58" rx="7" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+<text x="155.0" y="192.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e1b4b">Load balancer mk4-edge</text>
+<text x="155.0" y="208.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">80/443 + PROXY protocol</text>
+<rect x="30" y="278" width="250" height="88" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="155.0" y="305.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">Istio ingress gateway</text>
+<text x="155.0" y="321.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">2 replicas, Gateway public</text>
+<text x="155.0" y="337.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">TLS ends here</text>
+<text x="155.0" y="353.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">reads the Secret over SDS</text>
+<rect x="325" y="278" width="250" height="88" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="450.0" y="313.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">Gateway TLS Secret</text>
+<text x="450.0" y="329.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">jithendar-com-gateway-tls</text>
+<text x="450.0" y="345.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">tls.crt + tls.key</text>
+<rect x="620" y="278" width="250" height="88" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="745.0" y="313.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">Certificate jithendar-com</text>
+<text x="745.0" y="329.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">jithendar.com + *.jithendar.com</text>
+<text x="745.0" y="345.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">issuer letsencrypt-dns</text>
+<rect x="30" y="424" width="250" height="88" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="155.0" y="459.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">Cloudflare API token Secret</text>
+<text x="155.0" y="475.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Zone DNS Edit + Zone Read</text>
+<text x="155.0" y="491.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">created by hand, not in Git</text>
+<rect x="325" y="424" width="250" height="88" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="450.0" y="459.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">ClusterIssuer</text>
+<text x="450.0" y="475.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">letsencrypt-dns</text>
+<text x="450.0" y="491.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">DNS-01 solver: Cloudflare</text>
+<rect x="620" y="424" width="250" height="88" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="745.0" y="459.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">cert-manager v1.20.4</text>
+<text x="745.0" y="475.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">controller, webhook, cainjector</text>
+<text x="745.0" y="491.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Terraform Helm release</text>
+<rect x="325" y="570" width="250" height="88" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="450.0" y="605.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">Second Certificate</text>
+<text x="450.0" y="621.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">jithendar-com-wildcard</text>
+<text x="450.0" y="637.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">same two names, same issuer</text>
+<rect x="30" y="570" width="250" height="88" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="155.0" y="605.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">Site TLS Secret</text>
+<text x="155.0" y="621.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">jithendar-com-wildcard-tls</text>
+<text x="155.0" y="637.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">second copy of the certificate</text>
+<rect x="310.8" y="190.2" width="70.4" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="346.0" y="202.2" text-anchor="middle" font-size="12" fill="#0f172a">TXT record</text>
+<rect x="800.8" y="153.9" width="70.4" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="836.0" y="165.9" text-anchor="middle" font-size="12" fill="#0f172a">ACME order</text>
+</svg>

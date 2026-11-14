@@ -1,0 +1,331 @@
+---
+title: "How I Use FastAPI and FastMCP Across My AI Projects"
+slug: fastapi-and-fastmcp-ai-projects
+description: "How I use FastAPI and FastMCP in RoboShop AI and MOKS: real routes, tools, auth, transports and limits, and why the two never share a process."
+seoTitle: "FastAPI and FastMCP: How I Use Them in My AI Projects"
+seoDescription: "How I use FastAPI and FastMCP in RoboShop AI and MOKS: real routes, tools, auth, transports and limits, and why the two never share a process."
+author: jithendar-dharmapuri
+category: ai-agents
+tags: [FastAPI, FastMCP, MCP, Model Context Protocol, Python, AI Agents]
+contentType: tutorial
+status: review
+related:
+  - blog/roboshop-ai-mcp-server
+  - blog/roboshop-ai-gateway
+  - blog/moks-rag-and-skills-design
+  - projects/moks
+  - projects/roboshop-ai
+sources:
+  - title: "RoboShop AI source at commit c81e85a"
+    url: https://github.com/mrjithendar/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b
+    publisher: GitHub
+  - title: "MOKS source at commit ab99cf7"
+    url: https://github.com/mrjithendar/moks/tree/ab99cf7b17acef3f7af4ca4e11b64267563133fb
+    publisher: GitHub
+  - title: "FastMCP documentation"
+    url: https://gofastmcp.com/getting-started/welcome
+    publisher: FastMCP
+  - title: "Upgrading from MCP SDK v1 to FastMCP"
+    url: https://gofastmcp.com/getting-started/upgrading/from-mcp-sdk-v1
+    publisher: FastMCP
+  - title: "FastMCP HTTP deployment"
+    url: https://gofastmcp.com/deployment/http
+    publisher: FastMCP
+  - title: "MCP Tools, revision 2026-07-28"
+    url: https://modelcontextprotocol.io/specification/2026-07-28/server/tools
+    publisher: Model Context Protocol
+  - title: "MCP Authorization, revision 2026-07-28"
+    url: https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization
+    publisher: Model Context Protocol
+  - title: "Concurrency and async/await"
+    url: https://fastapi.tiangolo.com/async/
+    publisher: FastAPI
+  - title: "Dependencies with yield"
+    url: https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/
+    publisher: FastAPI
+---
+
+I use FastAPI and FastMCP in two projects, [RoboShop AI](/projects/roboshop-ai) and [MOKS](/projects/moks), across four services. They are easy to describe as a pair, but the code says otherwise: **no service I have uses both.** FastAPI answers people and internal services, FastMCP answers AI clients, and where they meet, they meet over plain HTTP between separate pods.
+
+This article shows what each package does in that code, where the design holds up and where it falls short. It was checked against [RoboShop AI at c81e85a](https://github.com/mrjithendar/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b) and [MOKS at ab99cf7](https://github.com/mrjithendar/moks/tree/ab99cf7b17acef3f7af4ca4e11b64267563133fb). On 6 November 2026, `moks-api` and `moks-terminal` were running on my mk4 cluster; RoboShop AI's services were not deployed anywhere, because its EKS cluster was deleted on 2 November.
+
+::toc
+
+## Where each package runs
+
+| Project | Component | Package | Role |
+| --- | --- | --- | --- |
+| RoboShop AI | `ai-gateway` | FastAPI 0.159.1 | Public store API and authorization boundary |
+| RoboShop AI | `mcp-server` | FastMCP 4.1.3 | Tools for external AI clients |
+| MOKS | `moks-api` | FastAPI 0.162.0 | Portal API, Server-Sent Events, web UI |
+| MOKS | `moks-terminal` | FastAPI 0.162.0 | Optional terminal gateway with WebSocket |
+
+Not on the list: RoboShop's `moks` assistant runs on Waitress, other RoboShop services use neither package, and the MOKS portal has no MCP code despite its tool layer.
+
+:::figure{caption="Figure 1. Four services across two projects use these packages, and none uses both. Browsers reach moks-terminal over REST and WebSocket as well as moks-api."}
+![Overview of FastAPI and FastMCP across my projects. In RoboShop AI, a browser reaches ai-gateway, which uses FastAPI 0.159.1 on Uvicorn port 3000. An external MCP host and client reaches mcp-server, which uses FastMCP 4.1.3 on Uvicorn port 4107, by POST /mcp or stdio. mcp-server calls ai-gateway over HTTP with the caller's session. ai-gateway calls the moks assistant, which uses Waitress, and the domain services, which use neither package. In the MOKS portal, a browser reaches moks-api and moks-terminal, both FastAPI 0.162.0. moks-api uses PostgreSQL. A moks worker with no HTTP API claims jobs from PostgreSQL and runs typed tools against Kubernetes, Prometheus and Loki. No MOKS component uses MCP.](/images/fastapi-fastmcp/fastapi-fastmcp-overview.svg)
+:::
+
+## An HTTP API and an agent tool are different contracts
+
+An HTTP API is written for a client I control, and if the contract changes, I change both sides. An agent tool is written for a caller that chooses at run time: an MCP client hands a server's tool names, descriptions and JSON Schemas to a language model, and the model picks. A tool definition is an API contract and a prompt at once. So FastAPI holds the application boundary, and FastMCP publishes a small, described part of it to callers I don't control.
+
+## FastAPI in practice
+
+MOKS uses FastAPI conventionally. The RoboShop gateway uses it as little more than a transport shell.
+
+### MOKS: routers, models and dependencies
+
+`create_app()` in [`backend/moks/main.py`](https://github.com/mrjithendar/moks/blob/ab99cf7b17acef3f7af4ca4e11b64267563133fb/backend/moks/main.py) mounts 20 routers under one prefix, giving 142 paths and 161 operations in the OpenAPI schema. Any unrecognised API path hits a catch-all that returns a JSON 404, so a mistyped call can't fall through to the single-page app.
+
+Request validation happens before the route runs. This is the body for starting an investigation:
+
+```python
+# backend/moks/api/investigations.py
+class CreateIn(BaseModel):
+    question: str = Field(min_length=3, max_length=2000)
+    # Both optional: MOKS resolves them from the question (see resolve_scope).
+    environment: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,99}$")
+    namespace: str | None = Field(default=None, pattern=r"^(\*|[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)$")
+    minutes: int | None = Field(default=None, ge=5, le=10080)
+```
+
+A signed-in request with a one-character question or a namespace such as `BAD!` gets a 422 listing both fields. An unsigned one gets a 401, because the auth dependency raises first. The patterns also limit what can reach a Kubernetes or Loki query later.
+
+Only one route declares a `response_model`; the rest return `dict[str, Any]`, so nothing filters a field a handler adds by accident.
+
+### Authentication and authorization as dependencies
+
+Authentication is a dependency, so no route reaches its logic without it:
+
+```python
+# backend/moks/auth/deps.py
+async def get_auth(request: Request, db: AsyncSession = Depends(get_db, scope="function")) -> AuthContext:
+    ctx = await load(db, request.cookies.get(COOKIE))
+    if ctx is None:
+        raise HTTPException(401, "Not signed in")
+    s = get_settings()
+    limiter.check(f"api:{ctx.session.id}", s.rate_api_per_minute)
+    if request.method in UNSAFE:
+        if not _origin_ok(request) or not csrf_ok(ctx.session, request.headers.get("x-csrf-token")):
+```
+
+It covers the signed cookie session, a per-session rate limit, and Origin and CSRF checks on unsafe methods. Permission checks are separate and take an environment and namespace; a denial writes an audit record.
+
+Note `scope="function"`. A `yield` dependency normally exits [after the response is sent](https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/), and mine commits on exit, so a client could read before the write landed: a test docstring records a sign-in followed by an immediate 401. A test now fails on any `Depends(get_db)` without the argument.
+
+### Async, blocking work and streaming
+
+MOKS is async throughout, except `boto3`, which goes through `asyncio.to_thread`: FastAPI [runs a plain `def` route in a thread pool](https://fastapi.tiangolo.com/async/) but trusts an `async def` route not to block.
+
+Investigations take too long for one request, so the API writes a queued row and returns 201. A worker claims the row with `FOR UPDATE SKIP LOCKED`, and the browser follows progress over Server-Sent Events:
+
+```python
+# backend/moks/api/investigations.py
+    await db.commit()  # release the pooled connection; the stream uses short sessions
+```
+
+The pool defaults to five connections, and a stream holding one would exhaust it. The generator opens a short session per poll, runs at most ten minutes, resumes from `Last-Event-ID`, and ends with a `revoked` event if a five-second recheck finds access gone.
+
+`moks-terminal` uses FastAPI's WebSocket support and checks the Origin header before accepting the upgrade. It shares the codebase but runs as its own process with its own routes and no OpenAPI endpoints.
+
+### RoboShop gateway: FastAPI as a transport shell
+
+[`asgi_app.py`](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/ai-gateway/asgi_app.py) registers four named routes and one catch-all, all pointing at the same function:
+
+```python
+# services/ai-gateway/asgi_app.py
+    app.add_api_route('/api/admin/llm/status', dispatch, methods=['GET'])
+    app.add_api_route('/health/live', dispatch, methods=['GET'], response_model=HealthResponse)
+    app.add_api_route('/health/ready', dispatch, methods=['GET'])
+    app.add_api_route('/{path:path}', dispatch, methods=['GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS'], include_in_schema=False)
+```
+
+`dispatch` reads the raw body, enforces size limits and hands off to `Gateway.handle`, so FastAPI provides only the ASGI interface, lifespan, CORS and a small OpenAPI document. `ChatRequest` is `strict`, but FastAPI never applies it because `dispatch` takes a raw `Request`; it appears in OpenAPI through `openapi_extra`, and the real check runs later:
+
+```python
+# services/ai-gateway/server.py
+            authenticate_service(req.headers)
+            user = require_role(req.user)
+            self.limit(req, True)
+            data = req.body()
+            message = text(validate(ChatRequest, data).message)
+```
+
+The order is deliberate: schemas must not bypass or disclose authentication decisions. `{"message": 5}` returned 403 without the service token and a generic 400 with it, never a FastAPI 422.
+
+MongoDB, Redis and SDK calls are synchronous, so `dispatch` admits a request to one of eight slots and runs it on a worker thread:
+
+```python
+# services/ai-gateway/asgi_app.py
+                with anyio.CancelScope(shield=True):
+                    result = await anyio.to_thread.run_sync(invoke, abandon_on_cancel=False)
+```
+
+The shield is for payments: a browser disconnecting mid-checkout cannot abandon the work. A ninth concurrent request gets `503 Gateway busy`.
+
+:::figure{caption="Figure 2. A MOKS investigation: the API validates, authorizes and commits, then a separate worker does the slow work. Orange arrows are writes."}
+![FastAPI request sequence for a MOKS investigation. The browser sends POST /investigations with its cookie and x-csrf-token. get_auth checks the session and CSRF, and moks-api validates CreateIn, returning 422 if invalid. require and effective_scope apply policy, returning 403 and an audit record on denial. moks-api inserts a queued row, event zero and an audit record into PostgreSQL, commits before the response, and returns 201 with the investigation id. The browser opens GET /investigations/{id}/events. The moks worker claims the row with SKIP LOCKED, runs the graph with ToolExecutor against live systems and inserts events. moks-api polls for new events every 0.5 seconds and streams them until event: end. The browser can reconnect with Last-Event-ID.](/images/fastapi-fastmcp/fastapi-request-sequence.svg)
+:::
+
+## FastMCP in practice
+
+The Model Context Protocol (MCP) lets an AI application discover and call capabilities it wasn't built with: a server publishes tools, resources and prompts, and any compatible client can use them.
+
+### Which FastMCP this is
+
+`mcp-server` uses the standalone `fastmcp` package from PyPI, pinned to 4.1.3:
+
+```python
+# services/mcp-server/server.py
+from fastmcp import FastMCP
+from fastmcp.tools import Tool, ToolResult
+from fastmcp.server.auth import AccessToken, TokenVerifier
+```
+
+This is not the class once at `mcp.server.fastmcp`. [FastMCP's high-level API was incorporated into the official MCP Python SDK in 2024](https://gofastmcp.com/getting-started/welcome) and the two then diverged; in the pinned SDK 2.3.0, importing that module raises an error naming the renamed `MCPServer`. The SDK remains a dependency because [FastMCP 4 is built on SDK v2](https://gofastmcp.com/getting-started/upgrading/from-mcp-sdk-v1).
+
+### Host, client and server
+
+Of MCP's three roles, only the server (`services/mcp-server/server.py`) is in the repository. The host is whatever AI application a user runs, holding the model and the session token, and the client lives inside it; `demo/demo.py` is an example using FastMCP's `Client`. No workload carries the `roboshop.ai/mcp-client` label the server's NetworkPolicy admits, and the shopping assistant [does not use MCP](/blog/roboshop-ai-shopping-agent). No model runs on the server's side, so `mcp-server` only validates and forwards.
+
+### How tools are registered
+
+Most FastMCP tutorials put `@mcp.tool` on a function and let type hints generate the schema. I don't. Each tool is a plain `ToolSpec` entry in `gateway_tools.py` with a hand-written JSON Schema, and one `Tool` subclass runs all of them:
+
+```python
+# services/mcp-server/gateway_tools.py
+    ToolSpec(
+        "update_cart", "Set cart quantity",
+        "Set the quantity of one SKU in the signed-in shopper's own cart; 0 removes it. Repeating the same call "
+        "has no further effect. Does not reserve stock, take payment or place an order. Fails with a conflict "
+        "while a payment is pending or when stock is insufficient.",
+        {"sku": SKU, "quantity": {"type": "integer", "minimum": 0, "maximum": 20}},
+        ["sku", "quantity"], CART,
+        lambda args: ("POST", "/api/cart", None, {"sku": args["sku"], "quantity": args["quantity"]}),
+        cart_view,
+        roles=CUSTOMER, write=True, destructive=True, idempotent=True,
+    ),
+```
+
+The description says what the tool will *not* do, which a model would otherwise guess, and the quantity is absolute, so a repeated call doesn't double an order. Registration is a loop:
+
+```python
+# services/mcp-server/server.py
+    for spec in TOOLS:
+        if not spec.confirm or admin_writes:
+            server.add_tool(GatewayTool(spec, app))
+```
+
+Eleven of fifteen tools are registered, because the four admin writes need `MCP_ENABLE_ADMIN_WRITES=true`. FastMCP supplies the plumbing: the protocol, HTTP app, `TokenVerifier`, per-tool `auth` checks, health routes, test client and telemetry hooks.
+
+### Discovery, validation and errors
+
+Over HTTP, each tool's `auth` callback filters the list by role. With the real server and client against a synthetic gateway, I got 8 tools as a customer, 9 as an admin and 11 as a super admin. Calling a tool you can't see returns `Unknown tool: 'admin_list_users'`, so its existence isn't confirmed.
+
+Calling `update_cart` with `quantity: "2"` produced this (correlation ID shortened):
+
+```json
+{"error": {"code": "invalid_argument", "message": "The arguments do not match this tool's input schema.", "retryable": false, "correlationId": "0f79..."}}
+```
+
+Nothing reached `POST /api/cart`: the validator refuses unknown fields, type coercion and control characters first. Failures are results with `isError: true`, as [the specification recommends](https://modelcontextprotocol.io/specification/2026-07-28/server/tools), and `retryable` is never true for a write. Output is checked against a compiled JSON Schema too, so a malformed upstream response becomes `invalid_response`.
+
+### Transports and lifecycle
+
+| | stdio | Streamable HTTP |
+| --- | --- | --- |
+| Used by | A local client launching `server.py` | The Kubernetes Deployment, port 4107 |
+| Identity | `MCP_SESSION_TOKEN` from the environment | `Authorization: Bearer` on every request |
+| Tool list | All registered tools, unfiltered | Filtered by role |
+
+`MCP_TRANSPORT` picks one. The HTTP options are short:
+
+```python
+# services/mcp-server/server.py
+    return {"path": "/mcp", "stateless_http": True, "json_response": True, "host_origin_protection": True,
+            "allowed_hosts": hosts, "allowed_origins": origins}
+```
+
+With `stateless_http`, no session state can leak between users, at the cost of one uncached `GET /api/auth/me` per request, so a revoked session fails on its next call. The server implements tools only, plus elicitation for the optional admin writes.
+
+:::figure{caption="Figure 3. One read and one write. The session is verified on every request, which the diagram shows once for clarity, and the gateway authorizes both calls again."}
+![MCP tool call sequence with four participants across two trust boundaries. In the user's AI application are the host with its model and the MCP client. In the cluster namespace roboshop-ai are mcp-server using FastMCP and ai-gateway using FastAPI. The client sends tools/list with a bearer session. mcp-server applies Host, Origin and 256 KiB checks, calls GET /api/auth/me, receives the id and role, and returns 8 tools for a customer. The client gives the schemas to the host. The model picks search_products, a read: the client sends tools/call, mcp-server calls GET /api/recommendations and returns structuredContent. The model then picks update_cart, a write: after role, schema and limit checks, mcp-server sends POST /api/cart with no retry, and the gateway returns the cart or a refusal, which reaches the client as a result or isError.](/images/fastapi-fastmcp/fastmcp-tool-call-sequence.svg)
+:::
+
+## Two walkthroughs
+
+### RoboShop AI: one tool call
+
+For `tools/call update_cart`, `HTTPTracing` bounds the body at 256 KiB, FastMCP checks Host and Origin, and `ShopSessionVerifier` validates the bearer token against the gateway. `GatewayTool.run` checks the schema and per-user admission, then `GatewayClient` sends a new `POST /api/cart` with only the `accept`, `cookie: rs_auth=…`, `origin` and trace headers. The gateway treats it like any browser call, and the write is never retried, so a timeout returns `retryable: false`.
+
+The MCP server holds no business data or privileged credential, so it can do only what the signed-in user could. The costs: two gateway requests per tool call, no confirmation step before `update_cart` changes a cart, and a gateway limited to one process, because its JSON order ledger allows one writer.
+
+### MOKS: one investigation
+
+Figure 2 shows it: validation, auth, rate limit and scope checks, then a commit before the 201, then a worker running the LangGraph investigation with every tool call through `ToolExecutor`. PostgreSQL is the only queue.
+
+**Why no MCP.** MOKS's typed tools run in-process behind `ToolExecutor`, and [the investigation code](/blog/langchain-vs-langgraph-sre-agent-moks) decides what to call. With no third-party client, MCP would add a protocol layer and solve nothing.
+
+**Trade-offs.** Progress is polled from PostgreSQL every half second per open stream, which is simple and resumable but not free, and rate limits are per replica. At the pinned commit, `docs/LIMITATIONS.md` listed streaming through the ingress as unchecked and said the terminal had never run on a cluster; `moks-terminal` has since run on mk4, but the document still says otherwise.
+
+## How they work together
+
+:::figure{caption="Figure 4. The only integration between FastMCP and FastAPI in my code is an HTTP call from one pod to another."}
+![Integration of FastMCP and FastAPI in RoboShop AI. Pod ai-gateway contains dispatch, with a body limit and eight worker slots, which passes through a thread pool to Gateway.handle, the authorization boundary for session, role and ownership, which calls domain services over internal HTTP. Pod mcp-server contains HTTPTracing with http_app, handling Host, Origin, Bearer and 256 KiB checks; GatewayTool.run, handling schema, role, rate and deadline; GatewayClient, sending allowlisted headers only; and the ToolSpec catalogue. A browser reaches dispatch by HTTPS through web. An MCP client reaches http_app by POST /mcp. GatewayClient calls dispatch over plain HTTP. The pods have no mount and no shared process.](/images/fastapi-fastmcp/fastapi-fastmcp-integration.svg)
+:::
+
+FastMCP [can be mounted inside a FastAPI app](https://gofastmcp.com/deployment/http) with `http_app()`. I don't do this; `fastapi` isn't even installed in the `mcp-server` environment. The gateway holds database and payment credentials and the MCP server holds none, so a compromise there reaches only what a forwarded session allows, and the two handle concurrency differently (an async client versus blocking work under a slot limit). The cost is another deployment and a network hop per tool call.
+
+| Use a direct API when | Use MCP when |
+| --- | --- |
+| You own the only client | Clients are third-party or varied |
+| Code decides what to call | A model chooses among tools |
+| The call is fixed at build time | Discovery matters |
+
+The RoboShop assistant calls the catalogue and gateway directly, and the MOKS worker calls its tools in-process. Only `mcp-server` faces clients I can't predict, which is the case the protocol exists for.
+
+### Discovery is not authorization
+
+Over stdio, all eleven tools are listed to everyone, and a customer calling `admin_list_users` is refused by the gateway. As `gateway_tools.py` puts it, "Roles only filter discovery and fail fast". Annotations such as `readOnlyHint` are not controls either; clients [must treat them as untrusted](https://modelcontextprotocol.io/specification/2026-07-28/server/tools). The protection is the authorization decision in `Gateway.handle`, behind every path.
+
+## Deployment and operations
+
+All four services run under Uvicorn; the RoboShop images use `python:3.14-slim` and MOKS `python:3.12-slim`, defined as manifests or a Helm chart and delivered by Argo CD.
+
+| Concern | `ai-gateway` | `mcp-server` | `moks-api` |
+| --- | --- | --- | --- |
+| Replicas | 1: single ledger writer | 1 | 2 (also on mk4) |
+| Liveness and readiness | `/health/live`, `/health/ready` | `/health`, `/ready` | `/healthz`, `/readyz` |
+| Concurrency limit | 8 slots, 100 connections | 16 upstream, 32 in flight, 64 connections | Pool of 5, plus overflow of 5 |
+| Time limits | 10 s body read, 23 s handler | 10 s per tool, 3 s session check | 2 s readiness query, 10 min stream |
+| Rate limit | 300 a minute per client address, 10 for chat | 60 calls a minute per user | 600 a minute per session |
+| Secrets | Kubernetes Secrets | Caller's session only | Kubernetes Secrets |
+| API docs | On by default | None | Off unless `MOKS_API_DOCS` is set |
+
+Logs are structured JSON everywhere and trace context propagates; `mcp-server` allowlists span attributes because FastMCP may attach tool arguments. RoboShop's EKS configuration set `OTEL_SDK_DISABLED=true`.
+
+`mcp-server` runs its unit tests during the image build. On 1 November its 20 tests and the gateway's 28 FastAPI, chat-history and user-service tests passed on Python 3.11; six admin-console tests errored in a fixture with the unpinned `mongomock` 4.3.0. The MOKS backend gave 835 passed, 3 failed (Helm render tests for terminal defaults) and 4 skipped.
+
+### Read tools, write tools and least privilege
+
+- Read tools can retry once on a transient failure, inside one deadline. Write tools never retry.
+- `update_cart` is the only write a customer can reach.
+- Admin writes aren't registered by default. When enabled, a model's boolean isn't accepted as approval: the first call returns an elicitation with HMAC-signed state bound to the caller, the tool, a hash of the arguments, a two-minute expiry and a one-time nonce. Its docstring admits the limit: it proves the confirmation came through the authenticated client for those arguments, not that a person clicked.
+- No tool takes a URL, SQL, a shell command or a payment action.
+- MOKS routes `ToolExecutor` denials into the audit log and checks namespace scope on each call.
+
+## Lessons and improvements
+
+Keep the authorization decision below the protocol, so a new MCP tool can't grant anything the gateway refuses. Treat validation as layers. And a framework only works where you let it: MOKS gets FastAPI's validation and schema, while the gateway's catch-all keeps its authorization order at the price of an OpenAPI document covering four paths.
+
+Recommendations, not current behaviour:
+
+1. **Turn off the gateway's default docs** (`/docs`, `/redoc`, `/openapi.json`). NGINX doesn't route them, but off by default, as in MOKS, is safer.
+2. **Add OAuth before any public MCP endpoint.** A shop-session bearer carries the user's full authority for up to eight hours, short of [the MCP authorization profile](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization); the README forbids exposing `/mcp`.
+3. **Sanitize tool output.** Product descriptions reach the client's model unmodified.
+4. **Add an inbound mesh policy for `mcp-server`** before enforcing `allow-nothing`, or a future in-cluster client will be blocked.
+5. **Add response models to MOKS** for routes that return user or security data, so a stray field can't leak.
+6. **Share rate limits across replicas** if MOKS scales past a few API pods.
+
+If I had one piece of advice from this code, it would be to decide where authorization lives before choosing a protocol. FastAPI and FastMCP both make it easy to expose things; neither decides who should be allowed to use them.

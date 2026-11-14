@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 790" width="620" height="790" role="img" aria-labelledby="moks-rerank-sequence-title moks-rerank-sequence-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="moks-rerank-sequence-title">Retrieval, reranking and context selection in MOKS, including fallback</title>
+<desc id="moks-rerank-sequence-desc">kb_search calls search with the question and the investigation&#x27;s scope. Search resolves grants, gathers keyword, identifier and vector candidates and fuses them, then asks PostgreSQL which chunks are active and readable. It applies small scoring signals and prepares up to 30 candidates with at most 4 per document, then posts them to moks-reranker with a bearer token and a 1500 ms deadline. The service queues at most 4 requests behind 1 worker and scores in batches of 16. Search accepts the answer only if it scores exactly the ids it sent with the pinned model and revision; on a timeout, overload, error or mismatch it keeps the existing order. It then pins exact identifiers, moves superseded documents last, selects at most 3 passages per document, rechecks PostgreSQL when reranking was applied, and returns passages with citations.</desc>
+<rect width="620" height="790" fill="#ffffff"/>
+<defs>
+<marker id="moks-rerank-sequence-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+<marker id="moks-rerank-sequence-write" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b45309"/></marker>
+<marker id="moks-rerank-sequence-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#be123c"/></marker>
+<marker id="moks-rerank-sequence-reject" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b91c1c"/></marker>
+<marker id="moks-rerank-sequence-dashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+<marker id="moks-rerank-sequence-life" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#cbd5e1"/></marker>
+</defs>
+<line x1="95.0" y1="66" x2="95.0" y2="774" stroke="#cbd5e1" stroke-width="1.2" stroke-dasharray="4 4"/>
+<line x1="238.0" y1="66" x2="238.0" y2="774" stroke="#cbd5e1" stroke-width="1.2" stroke-dasharray="4 4"/>
+<line x1="382.0" y1="66" x2="382.0" y2="774" stroke="#cbd5e1" stroke-width="1.2" stroke-dasharray="4 4"/>
+<line x1="525.0" y1="66" x2="525.0" y2="774" stroke="#cbd5e1" stroke-width="1.2" stroke-dasharray="4 4"/>
+<polyline points="95.5,96.0 237.5,96.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#moks-rerank-sequence-sync)"/>
+<polyline points="238.5,206.0 381.5,206.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#moks-rerank-sequence-sync)"/>
+<polyline points="381.5,238.0 238.5,238.0" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#moks-rerank-sequence-dashed)"/>
+<polyline points="238.5,352.0 524.5,352.0" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#moks-rerank-sequence-write)"/>
+<polyline points="524.5,458.0 238.5,458.0" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#moks-rerank-sequence-dashed)"/>
+<polyline points="524.5,490.0 238.5,490.0" fill="none" stroke="#b91c1c" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#moks-rerank-sequence-reject)"/>
+<polyline points="238.5,668.0 381.5,668.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#moks-rerank-sequence-sync)"/>
+<polyline points="381.5,700.0 238.5,700.0" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#moks-rerank-sequence-dashed)"/>
+<polyline points="237.5,740.0 95.5,740.0" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#moks-rerank-sequence-dashed)"/>
+<rect x="30" y="16" width="130" height="50" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="95.0" y="40.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">kb_search</text>
+<text x="95.0" y="56.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">moks-worker</text>
+<rect x="173" y="16" width="130" height="50" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="238.0" y="40.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">search()</text>
+<text x="238.0" y="56.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">rag/service.py</text>
+<rect x="317" y="16" width="130" height="50" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="382.0" y="40.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">PostgreSQL</text>
+<text x="382.0" y="56.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">authority</text>
+<rect x="460" y="16" width="130" height="50" rx="7" fill="#fdf2f8" stroke="#be185d" stroke-width="1.4"/>
+<text x="525.0" y="40.0" text-anchor="middle" font-size="14" font-weight="600" fill="#500724">moks-reranker</text>
+<text x="525.0" y="56.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">PyTorch, CPU</text>
+<rect x="131" y="108" width="214" height="62" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="238.0" y="130.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">Grants for the scope</text>
+<text x="238.0" y="146.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">keyword, identifier, vector</text>
+<text x="238.0" y="162.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">fused with RRF</text>
+<rect x="131" y="250" width="214" height="62" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="238.0" y="272.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">_score: small signals</text>
+<text x="238.0" y="288.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">_prepare: at most 30,</text>
+<text x="238.0" y="304.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">4 per document, no repeats</text>
+<rect x="398" y="364" width="214" height="62" rx="7" fill="#fdf2f8" stroke="#be185d" stroke-width="1.4"/>
+<text x="505.0" y="386.0" text-anchor="middle" font-size="14" font-weight="600" fill="#500724">Gate: 1 worker, 4 queued</text>
+<text x="505.0" y="402.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">429 if full, 504 at deadline</text>
+<text x="505.0" y="418.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">batches of 16, raw logits</text>
+<rect x="131" y="502" width="214" height="62" rx="7" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.4"/>
+<text x="238.0" y="524.0" text-anchor="middle" font-size="14" font-weight="600" fill="#7f1d1d">Accept only the exact ids,</text>
+<text x="238.0" y="540.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">finite scores, same revision;</text>
+<text x="238.0" y="556.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">else keep the existing order</text>
+<rect x="131" y="574" width="214" height="62" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="238.0" y="596.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">Pin exact identifiers,</text>
+<text x="238.0" y="612.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">superseded last; _select:</text>
+<text x="238.0" y="628.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">3 per document, no near repeats</text>
+<rect x="106.3" y="74.5" width="120.3" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="166.5" y="86.5" text-anchor="middle" font-size="12" fill="#0f172a">1. query and scope</text>
+<rect x="246.7" y="184.5" width="126.6" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="310.0" y="196.5" text-anchor="middle" font-size="12" fill="#0f172a">2. chunk rows by id</text>
+<rect x="221.8" y="216.5" width="176.5" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="310.0" y="228.5" text-anchor="middle" font-size="12" fill="#0f172a">3. active and readable only</text>
+<rect x="305.7" y="315.0" width="151.5" height="32" fill="#ffffff" opacity="0.92"/>
+<text x="381.5" y="327.0" text-anchor="middle" font-size="12" fill="#0f172a">4. POST /rerank, Bearer</text>
+<text x="381.5" y="342.0" text-anchor="middle" font-size="12" fill="#0f172a">ids + text, 1500 ms</text>
+<rect x="280.8" y="436.5" width="201.4" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="381.5" y="448.5" text-anchor="middle" font-size="12" fill="#0f172a">5. ids, scores, model, revision</text>
+<rect x="293.3" y="468.5" width="176.5" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="381.5" y="480.5" text-anchor="middle" font-size="12" fill="#0f172a">timeout, 429, 5xx: fallback</text>
+<rect x="218.6" y="646.5" width="182.7" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="310.0" y="658.5" text-anchor="middle" font-size="12" fill="#0f172a">6. recheck, only if reranked</text>
+<rect x="228.0" y="678.5" width="164.0" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="310.0" y="690.5" text-anchor="middle" font-size="12" fill="#0f172a">7. documents still usable</text>
+<rect x="90.7" y="718.5" width="151.5" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="166.5" y="730.5" text-anchor="middle" font-size="12" fill="#0f172a">8. passages + citations</text>
+</svg>

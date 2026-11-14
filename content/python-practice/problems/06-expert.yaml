@@ -1,0 +1,934 @@
+# Expert: distributed systems, resilient AI gateways, agent orchestration and scheduling — working code, not diagrams.
+- slug: resilient-llm-gateway
+  title: Build a resilient LLM gateway
+  difficulty: expert
+  roles: [genai-engineer, ai-engineer, solutions-architect, platform-engineer]
+  topics: [resilience, retries, llm-integration, classes]
+  minutes: 60
+  entrypoint: Gateway
+  description: |
+    Implement `Gateway(providers, clock, sleep, max_retries, breaker_threshold, cooldown)` with
+    `complete(prompt) -> {"text", "provider", "attempts"}`. `providers` is a list of objects with a `name` and
+    a `complete(prompt)` method that returns text or raises `ProviderError` (provided) with a `status`.
+
+    Policy:
+
+    1. Try providers in list order. Skip a provider whose circuit is **open** (it opened less than `cooldown`
+       seconds ago by `clock()`).
+    2. On a provider, retry **retryable** errors (status 429, 500, 503) up to `max_retries` times, sleeping
+       `0.5 × 2**i` seconds before retry i (0, 1, …) using `sleep`. Then move on to the next provider.
+    3. Every failed call (retryable or not) increments that provider's consecutive-failure count; a success
+       resets it. When the count reaches `breaker_threshold`, the circuit opens (stop using that provider
+       immediately, even mid-retries). A provider whose cooldown has passed is tried again; a success closes
+       its circuit, a failure re-opens it.
+    4. Status 400 is the caller's fault: raise `BadRequest` (provided) at once — don't try other providers.
+    5. If no provider succeeds, raise `AllProvidersFailed` (provided).
+
+    `attempts` counts every provider call made for this prompt. The harness replays prompts with scripted
+    provider failures; each provider call takes 1 second on the fake clock.
+  io: { input: "providers, clock, sleep, max_retries: int, breaker_threshold: int, cooldown: float", output: "a class" }
+  prelude: |
+    class ProviderError(Exception):
+        def __init__(self, status):
+            super().__init__(f"HTTP {status}")
+            self.status = status
+
+    class BadRequest(Exception):
+        pass
+
+    class AllProvidersFailed(Exception):
+        pass
+
+    class FakeProvider:
+        def __init__(self, name, script, now):
+            self.name, self.script, self.now, self.calls = name, list(script), now, 0
+
+        def complete(self, prompt):
+            self.calls += 1
+            self.now["t"] += 1.0
+            outcome = self.script.pop(0) if self.script else "ok"
+            if outcome != "ok":
+                raise ProviderError(outcome)
+            return f"{self.name}:{prompt}"
+
+    def __harness__(cls, scripts, prompts, max_retries, threshold, cooldown):
+        now = {"t": 0.0}
+        providers = [FakeProvider(name, script, now) for name, script in scripts]
+
+        def sleep(seconds):
+            now["t"] += seconds
+
+        gateway = cls(providers, lambda: now["t"], sleep, max_retries, threshold, cooldown)
+        results = []
+        for p in prompts:
+            try:
+                r = gateway.complete(p)
+                results.append([r["provider"], r["attempts"]])
+            except BadRequest:
+                results.append("bad_request")
+            except AllProvidersFailed:
+                results.append("all_failed")
+        return {"results": results, "calls": {p.name: p.calls for p in providers}, "clock": round(now["t"], 3)}
+  starter: |
+    class Gateway:
+        def __init__(self, providers, clock, sleep, max_retries, breaker_threshold, cooldown):
+            self.providers = providers
+
+        def complete(self, prompt):
+            p = self.providers[0]
+            return {"text": p.complete(prompt), "provider": p.name, "attempts": 1}
+  hints:
+    - "Keep per-provider state (failures, opened_at) in dictionaries keyed by provider name."
+    - "Structure: for provider in order → skip if open → for i in range(max_retries + 1) → try call → on success reset & return; on error record failure, raise BadRequest for 400, break if circuit opened or not retryable, else sleep(0.5 * 2**i) unless it was the last attempt."
+    - |
+      def _fail(name): failures[name] += 1; if failures[name] >= threshold: opened[name] = clock()
+      def _open(name): return name in opened and clock() - opened[name] < cooldown
+      success: failures[name] = 0; opened.pop(name, None)
+  solution:
+    code: |
+      RETRYABLE = {429, 500, 503}
+
+      class Gateway:
+          def __init__(self, providers, clock, sleep, max_retries, breaker_threshold, cooldown):
+              self.providers = providers
+              self.clock = clock
+              self.sleep = sleep
+              self.max_retries = max_retries
+              self.threshold = breaker_threshold
+              self.cooldown = cooldown
+              self.failures: dict[str, int] = {p.name: 0 for p in providers}
+              self.opened_at: dict[str, float] = {}
+
+          def _is_open(self, name: str) -> bool:
+              opened = self.opened_at.get(name)
+              return opened is not None and self.clock() - opened < self.cooldown
+
+          def _record_failure(self, name: str) -> bool:
+              """Count a failure; True if the circuit is now open."""
+              self.failures[name] += 1
+              if self.failures[name] >= self.threshold:
+                  self.opened_at[name] = self.clock()
+                  return True
+              return False
+
+          def complete(self, prompt):
+              attempts = 0
+              for provider in self.providers:
+                  name = provider.name
+                  if self._is_open(name):
+                      continue
+                  for i in range(self.max_retries + 1):
+                      attempts += 1
+                      try:
+                          text = provider.complete(prompt)
+                      except ProviderError as err:
+                          opened = self._record_failure(name)
+                          if err.status == 400:
+                              raise BadRequest(str(err)) from err
+                          if opened or err.status not in RETRYABLE or i == self.max_retries:
+                              break
+                          self.sleep(0.5 * 2**i)
+                          continue
+                      self.failures[name] = 0
+                      self.opened_at.pop(name, None)
+                      return {"text": text, "provider": name, "attempts": attempts}
+              raise AllProvidersFailed(f"no provider answered after {attempts} attempts")
+    explanation: |
+      Three mechanisms cooperate: retries absorb blips on one provider, fallback absorbs a provider outage,
+      and the circuit breaker stops wasting latency on a provider known to be down until its cooldown
+      passes. A 400 is not an outage, so falling back would only burn money on every provider.
+    time: O(providers × (max_retries + 1)) calls per request
+    space: O(providers)
+    alternatives: ["Hedged requests to two providers for latency-critical paths", "Weighted routing by observed latency and cost", "LiteLLM / Bedrock cross-region inference implement parts of this"]
+    edge_cases: ["The breaker opens mid-retry", "A 400 on a fallback provider", "Cooldown expiring between requests", "Every provider open → all_failed without any call"]
+    production: ["Make retry budgets global (e.g. ≤ 10% extra load) to avoid retry storms", "Emit per-provider metrics and log prompt-free request traces", "Different providers need different prompts/models — keep a mapping per provider"]
+  examples:
+    - args: [[["primary", [503, 503]], ["backup", []]], ["a", "b"], 1, 3, 30]
+      expected: { results: [["backup", 3], ["primary", 1]], calls: { primary: 3, backup: 1 }, clock: 4.5 }
+      explanation: "Prompt a: primary fails, sleep 0.5, fails again (retries exhausted), backup answers. Prompt b: primary has 2 failures (below 3) and its script is empty now, so it answers."
+    - args: [[["primary", [500, 500, 500, 500]], ["backup", [400]]], ["x", "y"], 2, 2, 100]
+      expected: { results: ["bad_request", ["backup", 1]], calls: { primary: 2, backup: 2 }, clock: 4.5 }
+      explanation: "Two failures open primary's circuit; backup's 400 raises BadRequest for x. For y, primary is still open (skipped) and backup has one failure (below 2), so it is tried and answers."
+  hidden:
+    - { args: [[["p1", [429, 429, 429]], ["p2", [500]], ["p3", []]], ["q"], 2, 5, 10] }
+    - { args: [[["p1", [503]]], ["a", "b", "c"], 0, 1, 1.5] }
+    - { args: [[["only", [500, 500, 500, 500, 500, 500]]], ["1", "2", "3", "4"], 1, 2, 3] }
+
+- slug: agent-tool-orchestrator
+  title: Orchestrate an agent's tool plan
+  difficulty: expert
+  roles: [genai-engineer, ai-engineer, forward-deployed-engineer]
+  topics: [agents, graphs, retries]
+  minutes: 60
+  entrypoint: execute_plan
+  description: |
+    An LLM produced a plan of tool calls. Execute it safely:
+
+    - A step is `{"id", "tool", "args": {...}, "after": [step ids]}`.
+    - An argument value that is a string starting with `$` references an earlier result: `"$s1"` is step
+      s1's whole output, `"$s1.total"` is a key of s1's output (dict). Resolve references recursively inside
+      lists and dicts.
+    - Run in **waves**: each wave contains every not-yet-run step whose `after` steps have all finished
+      successfully, in plan order. Steps are run one at a time within a wave.
+    - A step whose dependency failed or was skipped is `"skipped"`. A step referencing an unknown step or a
+      missing key fails with `"bad_reference"`. An unknown tool fails with `"unknown_tool"`.
+    - Tools may raise `ToolError(retryable=True)`; retry those once. Other exceptions fail the step with
+      `"tool_error"`.
+    - Every tool invocation (including retries) consumes one unit of `budget`. When the budget is exhausted,
+      remaining runnable steps fail with `"budget_exhausted"`.
+    - Steps that never become runnable (cycles, unknown dependencies) are `"blocked"`.
+
+    Return `{"status": {id: "ok" | <reason>}, "outputs": {id: output for ok steps}, "waves": [[ids]], "calls": n}`.
+  io: { input: "plan: list[dict], budget: int", output: "dict" }
+  prelude: |
+    class ToolError(Exception):
+        def __init__(self, message, retryable=False):
+            super().__init__(message)
+            self.retryable = retryable
+
+    _flaky = {}
+
+    def _search(query):
+        return [f"{query}-doc{i}" for i in range(1, 3)]
+
+    def _fetch(doc):
+        return {"doc": doc, "words": len(doc) * 10}
+
+    def _sum(values):
+        return {"total": sum(values)}
+
+    def _flaky_tool(key):
+        _flaky[key] = _flaky.get(key, 0) + 1
+        if _flaky[key] == 1:
+            raise ToolError("temporarily unavailable", retryable=True)
+        return f"ok:{key}"
+
+    def _broken(**kwargs):
+        raise ValueError("bad input")
+
+    def _always_down(**kwargs):
+        raise ToolError("down", retryable=True)
+
+    TOOLS = {"search": _search, "fetch": _fetch, "sum": _sum, "flaky": _flaky_tool, "broken": _broken, "down": _always_down}
+
+    def __harness__(fn, plan, budget):
+        _flaky.clear()
+        return fn(plan, budget)
+  starter: |
+    def execute_plan(plan: list[dict], budget: int) -> dict:
+        outputs = {}
+        for step in plan:
+            outputs[step["id"]] = TOOLS[step["tool"]](**step["args"])
+        return {"status": {s["id"]: "ok" for s in plan}, "outputs": outputs, "waves": [[s["id"] for s in plan]], "calls": len(plan)}
+  hints:
+    - "Separate concerns: reference resolution, one-step execution (with retry and budget) and the wave loop."
+    - "The wave loop: repeat { mark steps with failed/skipped deps as skipped; collect steps whose deps are all ok; if none, stop }. Leftovers are blocked."
+    - |
+      def resolve(v): if isinstance(v, str) and v.startswith("$"): sid, _, key = v[1:].partition("."); look up outputs (KeyError → bad_reference)
+          elif list/dict: recurse; else: return v
+      run_step: for attempt in (1, 2): if calls == budget: fail budget_exhausted; calls += 1; try tool(**args) except ToolError as e: if e.retryable and attempt == 1: continue; fail
+  solution:
+    code: |
+      class BadReference(Exception):
+          pass
+
+      def resolve(value, outputs):
+          if isinstance(value, str) and value.startswith("$"):
+              sid, _, key = value[1:].partition(".")
+              if sid not in outputs:
+                  raise BadReference(value)
+              out = outputs[sid]
+              if not key:
+                  return out
+              if not isinstance(out, dict) or key not in out:
+                  raise BadReference(value)
+              return out[key]
+          if isinstance(value, list):
+              return [resolve(v, outputs) for v in value]
+          if isinstance(value, dict):
+              return {k: resolve(v, outputs) for k, v in value.items()}
+          return value
+
+      def execute_plan(plan: list[dict], budget: int) -> dict:
+          status: dict[str, str] = {}
+          outputs: dict = {}
+          waves: list[list[str]] = []
+          calls = 0
+
+          def run(step) -> None:
+              nonlocal calls
+              tool = TOOLS.get(step["tool"])
+              if tool is None:
+                  status[step["id"]] = "unknown_tool"
+                  return
+              try:
+                  args = resolve(step.get("args", {}), outputs)
+              except BadReference:
+                  status[step["id"]] = "bad_reference"
+                  return
+              for attempt in (1, 2):
+                  if calls >= budget:
+                      status[step["id"]] = "budget_exhausted"
+                      return
+                  calls += 1
+                  try:
+                      outputs[step["id"]] = tool(**args)
+                      status[step["id"]] = "ok"
+                      return
+                  except ToolError as err:
+                      if err.retryable and attempt == 1:
+                          continue
+                      status[step["id"]] = "tool_error"
+                      return
+                  except Exception:
+                      status[step["id"]] = "tool_error"
+                      return
+
+          while True:
+              changed = True
+              while changed:
+                  changed = False
+                  for step in plan:
+                      sid = step["id"]
+                      if sid in status:
+                          continue
+                      if any(d in status and status[d] != "ok" for d in step.get("after", [])):
+                          status[sid] = "skipped"
+                          changed = True
+              wave = [s for s in plan if s["id"] not in status and all(status.get(d) == "ok" for d in s.get("after", []))]
+              if not wave:
+                  break
+              waves.append([s["id"] for s in wave])
+              for step in wave:
+                  run(step)
+          for step in plan:
+              status.setdefault(step["id"], "blocked")
+          return {"status": status, "outputs": {k: v for k, v in outputs.items() if status.get(k) == "ok"}, "waves": waves, "calls": calls}
+    explanation: |
+      Treating the plan as a DAG executed in waves gives the natural parallelism of the plan (each wave could
+      run concurrently) while keeping results deterministic. Failures propagate as "skipped" instead of
+      crashing the run, and the budget caps cost even if the model writes a runaway plan.
+    time: O(waves × steps) scheduling plus tool time
+    space: O(steps + outputs)
+    alternatives: ["LangGraph state graphs", "Run each wave with asyncio.gather for real parallelism"]
+    edge_cases: ["Cycles are blocked", "A reference to a step that failed", "Budget exhausted mid-retry", "Dependency on an unknown step id"]
+    production: ["Validate the plan (schema, allowed tools, argument types) before executing anything", "Require human approval for side-effecting tools", "Trace every call with inputs/outputs for debugging and evaluation"]
+  examples:
+    - args:
+        - - { id: "s1", tool: "search", args: { query: "rag" } }
+          - { id: "s2", tool: "fetch", args: { doc: "$s1" }, after: ["s1"] }
+          - { id: "s3", tool: "flaky", args: { key: "x" } }
+          - { id: "s4", tool: "broken", args: {}, after: ["s3"] }
+          - { id: "s5", tool: "sum", args: { values: [1, 2] }, after: ["s4"] }
+        - 10
+      expected:
+        status: { s1: "ok", s3: "ok", s2: "ok", s4: "tool_error", s5: "skipped" }
+        outputs: { s1: ["rag-doc1", "rag-doc2"], s3: "ok:x", s2: { doc: ["rag-doc1", "rag-doc2"], words: 20 } }
+        waves: [["s1", "s3"], ["s2", "s4"]]
+        calls: 5
+  hidden:
+    - { args: [[], 5] }
+    - { args: [[{ id: "a", tool: "down", args: {} }, { id: "b", tool: "search", args: { query: "q" } }, { id: "c", tool: "nope", args: {} }], 2] }
+    - { args: [[{ id: "a", tool: "search", args: { query: "z" }, after: ["b"] }, { id: "b", tool: "search", args: { query: "y" }, after: ["a"] }, { id: "c", tool: "fetch", args: { doc: "$ghost" } }, { id: "d", tool: "sum", args: { values: ["$e.total"] }, after: ["e"] }, { id: "e", tool: "sum", args: { values: [2, 3] } }, { id: "f", tool: "fetch", args: { doc: "$e.missing" }, after: ["e"] }, { id: "g", tool: "search", args: { query: "q" }, after: ["missing-step"] }], 10] }
+
+- slug: raft-commit-index
+  title: Advance a Raft leader's commit index
+  difficulty: expert
+  roles: [platform-engineer, solutions-architect, backend-engineer]
+  topics: [simulation, sorting]
+  minutes: 45
+  entrypoint: commit_indexes
+  description: |
+    A Raft leader in term `term` has a log whose entries' terms are `log_terms` (entry 1 is `log_terms[0]`).
+    The cluster has `cluster_size` servers including the leader. The leader's own match index is always
+    `len(log_terms)`; followers start at match index 0, and the commit index starts at `commit`.
+
+    Process acknowledgements `[follower, match_index]` in order. A follower's match index only moves forward
+    (stale, lower acks are ignored). After each ack, set the commit index to the largest N such that:
+
+    - N > current commit index,
+    - a **majority** of servers (more than half of cluster_size) have match index ≥ N, and
+    - `log_terms[N - 1] == term` (a leader only commits entries from its own term by counting replicas).
+
+    If no such N exists, the commit index stays. Return the commit index after each ack.
+  io: { input: "log_terms: list[int], term: int, cluster_size: int, commit: int, acks: list[[str, int]]", output: "list[int]" }
+  starter: |
+    def commit_indexes(log_terms, term, cluster_size, commit, acks):
+        return [max(m for _, m in acks[: i + 1]) for i in range(len(acks))]
+  hints:
+    - "The majority-replicated index is an order statistic of all match indexes."
+    - "Sort all match indexes (leader included) descending; the value at position cluster_size // 2 is replicated on a majority."
+    - |
+      matches[f] = max(matches.get(f, 0), m); values = sorted([len(log)] + list(matches.values()) + zeros for missing followers, reverse=True)
+      candidate = values[cluster_size // 2]; for n in range(candidate, commit, -1): if log_terms[n - 1] == term: commit = n; break
+  solution:
+    code: |
+      def commit_indexes(log_terms, term, cluster_size, commit, acks):
+          matches: dict[str, int] = {}
+          out = []
+          for follower, match in acks:
+              matches[follower] = max(matches.get(follower, 0), min(match, len(log_terms)))
+              values = [len(log_terms)] + list(matches.values())
+              values += [0] * (cluster_size - len(values))
+              values.sort(reverse=True)
+              replicated = values[cluster_size // 2]
+              for n in range(replicated, commit, -1):
+                  if log_terms[n - 1] == term:
+                      commit = n
+                      break
+              out.append(commit)
+          return out
+    explanation: |
+      After sorting match indexes in descending order, the element at position ⌊size/2⌋ is held by
+      ⌊size/2⌋ + 1 servers — a majority. The current-term check is the subtle Raft rule (§5.4.2) that
+      prevents a new leader from committing an old-term entry that a future leader could overwrite. Once a
+      current-term entry commits, everything before it is committed too.
+    time: O(acks × (n log n + log length))
+    space: O(cluster_size)
+    alternatives: ["Keep match indexes in a sorted structure for O(log n) updates"]
+    edge_cases: ["Old-term entries replicated on a majority do not commit by themselves", "Stale acks", "A 3-node cluster commits with 1 follower ack", "Commit never goes backwards"]
+    production: ["Use etcd/raft or a managed consensus service — implementing Raft correctly is hard", "Persist term and vote before answering RPCs"]
+  examples:
+    - args: [[1, 1, 2, 3, 3], 3, 3, 0, [["f1", 3], ["f2", 5], ["f1", 2], ["f1", 4]]]
+      expected: [0, 5, 5, 5]
+      explanation: "Entry 3 (term 2) is on a majority after the first ack but isn't from term 3; once f2 has 5, entry 5 (term 3) commits and with it everything before."
+  hidden:
+    - { args: [[1, 1], 1, 5, 0, [["a", 1], ["b", 1], ["c", 2], ["d", 2]]] }
+    - { args: [[4, 4, 4], 4, 1, 0, [["none", 0]]] }
+    - { args: [[1, 2, 2, 2], 2, 4, 1, [["a", 4], ["b", 2], ["c", 3], ["b", 1]]] }
+
+- slug: vector-clock-ordering
+  title: Order events with vector clocks
+  difficulty: expert
+  roles: [solutions-architect, platform-engineer, backend-engineer]
+  topics: [simulation, dictionaries]
+  minutes: 40
+  entrypoint: vector_clocks
+  description: |
+    Processes exchange messages. Events are given in a valid global order: `{"proc", "type": "local" |
+    "send" | "recv", "msg"}` (`msg` names the message for send/recv). Assign vector clocks:
+
+    - Every event increments its own process's counter.
+    - `send` attaches the sender's clock (after incrementing) to the message.
+    - `recv` first takes the element-wise max of the receiver's clock and the message's clock, then
+      increments its own counter.
+
+    Clocks are lists ordered like `procs`. Then answer queries `[i, j]` (event indexes) with `"before"` (i
+    happened before j), `"after"`, `"concurrent"` or `"same"`.
+
+    Return `{"clocks": [...], "answers": [...]}`.
+  io: { input: "procs: list[str], events: list[dict], queries: list[[int, int]]", output: "dict" }
+  starter: |
+    def vector_clocks(procs, events, queries):
+        clocks = [[i] for i in range(len(events))]
+        answers = ["before" if i < j else "after" for i, j in queries]
+        return {"clocks": clocks, "answers": answers}
+  hints:
+    - "Wall-clock order is not causal order: two events far apart in the list can be concurrent."
+    - "Keep a current clock per process and a dict msg → attached clock. A ≤ B when every element of A ≤ B's."
+    - |
+      for e: c = current[p]; if recv: c = [max(a, b) for a, b in zip(c, sent[msg])]; c[idx[p]] += 1; if send: sent[msg] = c[:]
+      compare: le = all(a <= b), ge = all(a >= b); same if both; before if le; after if ge; else concurrent
+  solution:
+    code: |
+      def compare(a: list[int], b: list[int]) -> str:
+          le = all(x <= y for x, y in zip(a, b))
+          ge = all(x >= y for x, y in zip(a, b))
+          if le and ge:
+              return "same"
+          if le:
+              return "before"
+          if ge:
+              return "after"
+          return "concurrent"
+
+      def vector_clocks(procs, events, queries):
+          index = {p: i for i, p in enumerate(procs)}
+          current = {p: [0] * len(procs) for p in procs}
+          in_flight: dict[str, list[int]] = {}
+          clocks = []
+          for e in events:
+              clock = list(current[e["proc"]])
+              if e["type"] == "recv":
+                  clock = [max(a, b) for a, b in zip(clock, in_flight[e["msg"]])]
+              clock[index[e["proc"]]] += 1
+              if e["type"] == "send":
+                  in_flight[e["msg"]] = list(clock)
+              current[e["proc"]] = clock
+              clocks.append(clock)
+          return {"clocks": clocks, "answers": [compare(clocks[i], clocks[j]) for i, j in queries]}
+    explanation: |
+      A vector clock summarises everything an event could have known about. If every component of A is ≤ B,
+      information flowed from A to B (happened-before); if neither dominates, the events are concurrent and
+      no ordering between them is safe to assume — the basis of conflict detection in Dynamo-style stores.
+    time: O(events × processes + queries × processes)
+    space: O(events × processes)
+    alternatives: ["Lamport clocks (one integer) — consistent with causality but can't detect concurrency", "Hybrid logical clocks (used in CockroachDB)"]
+    edge_cases: ["Comparing an event with itself → same", "Concurrent events on different processes", "A receive that learns about a third process"]
+    production: ["Vector clocks grow with the number of writers; dotted version vectors or pruning keep them bounded"]
+  examples:
+    - args:
+        - ["A", "B", "C"]
+        - - { proc: "A", type: "send", msg: "m1" }
+          - { proc: "C", type: "local" }
+          - { proc: "B", type: "recv", msg: "m1" }
+          - { proc: "B", type: "send", msg: "m2" }
+          - { proc: "C", type: "recv", msg: "m2" }
+        - [[0, 4], [1, 3], [4, 1], [2, 2]]
+      expected:
+        clocks: [[1, 0, 0], [0, 0, 1], [1, 1, 0], [1, 2, 0], [1, 2, 2]]
+        answers: ["before", "concurrent", "after", "same"]
+  hidden:
+    - { args: [["X"], [{ proc: "X", type: "local" }, { proc: "X", type: "local" }], [[1, 0]]] }
+    - args:
+        - ["p", "q"]
+        - - { proc: "p", type: "send", msg: "a" }
+          - { proc: "q", type: "send", msg: "b" }
+          - { proc: "p", type: "recv", msg: "b" }
+          - { proc: "q", type: "recv", msg: "a" }
+          - { proc: "q", type: "local" }
+        - [[0, 1], [2, 3], [2, 4], [0, 4], [1, 2]]
+
+- slug: mcp-json-rpc-server
+  title: Route MCP tool calls over JSON-RPC
+  difficulty: expert
+  roles: [genai-engineer, ai-engineer, forward-deployed-engineer, backend-engineer]
+  topics: [mcp, validation, json]
+  minutes: 60
+  entrypoint: handle
+  description: |
+    Implement the request handler of a minimal MCP server: `handle(raw: str) -> str | None` takes one raw
+    JSON-RPC 2.0 message and returns the raw JSON response (or `None` when no response is due).
+
+    - Invalid JSON → error `-32700` (Parse error) with `"id": null`.
+    - A message that is not an object with `"jsonrpc": "2.0"` and a string `method` → `-32600` (Invalid
+      Request). Use its `id` if it has a valid one (string or integer), else `null`.
+    - A **batch** (JSON array) returns an array of the individual responses (omitting notifications); an
+      empty array is `-32600`; if every item was a notification, return `None`.
+    - A **notification** (no `id` key) gets no response, even if it fails.
+    - `initialize` → result `{"protocolVersion": "2025-06-18", "capabilities": {"tools": {}},
+      "serverInfo": {"name": "practice", "version": "1.0.0"}}`
+    - `tools/list` → `{"tools": [{"name", "description", "inputSchema"}]}` from the provided `TOOLS`, sorted
+      by name.
+    - `tools/call` with `params: {"name", "arguments"}`: unknown tool or arguments that violate the tool's
+      `inputSchema` (required keys; property types string / integer / number / boolean; integer excludes
+      booleans) → `-32602` (Invalid params). Otherwise call the tool: result
+      `{"content": [{"type": "text", "text": str(result)}], "isError": false}`. If the tool raises, return
+      a **result** with `isError: true` and the exception message as text (tool errors are not protocol
+      errors).
+    - Any other method → `-32601` (Method not found).
+
+    Error objects are `{"code": ..., "message": ...}` with the standard messages shown above.
+  io: { input: "raw: str", output: "str | None (JSON)" }
+  prelude: |
+    import json
+
+    def _add(a, b):
+        return a + b
+
+    def _greet(name, excited=False):
+        return f"Hello, {name}{'!' if excited else '.'}"
+
+    def _divide(a, b):
+        return a / b
+
+    TOOLS = {
+        "add": {"description": "Add two integers.", "fn": _add,
+                "inputSchema": {"type": "object", "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}}, "required": ["a", "b"]}},
+        "greet": {"description": "Greet someone.", "fn": _greet,
+                  "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "excited": {"type": "boolean"}}, "required": ["name"]}},
+        "divide": {"description": "Divide two numbers.", "fn": _divide,
+                   "inputSchema": {"type": "object", "properties": {"a": {"type": "number"}, "b": {"type": "number"}}, "required": ["a", "b"]}},
+    }
+
+    def __harness__(fn, messages):
+        out = []
+        for m in messages:
+            raw = fn(m)
+            out.append(None if raw is None else json.loads(raw))
+        return out
+  starter: |
+    import json
+
+    def handle(raw: str):
+        msg = json.loads(raw)
+        return json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {}})
+  hints:
+    - "Separate parsing, request validation, dispatch and response building. A batch just maps the single-message handler."
+    - "Write respond(id, result) and error(id, code, message) helpers; have the single handler return a dict or None, and json.dumps at the very end."
+    - |
+      try: msg = json.loads(raw) except ValueError: return dumps(error(None, -32700, "Parse error"))
+      if isinstance(msg, list): if not msg: invalid; responses = [r for m in msg if (r := one(m)) is not None]; return dumps(responses) if responses else None
+      one(m): validate; is_notification = "id" not in m; compute response; return None if is_notification else response
+  solution:
+    code: |
+      import json
+
+      TYPES = {
+          "string": lambda v: isinstance(v, str),
+          "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
+          "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+          "boolean": lambda v: isinstance(v, bool),
+      }
+
+      class RpcError(Exception):
+          def __init__(self, code: int, message: str):
+              super().__init__(message)
+              self.code, self.message = code, message
+
+      def error(id_, code, message):
+          return {"jsonrpc": "2.0", "id": id_, "error": {"code": code, "message": message}}
+
+      def valid_id(msg):
+          id_ = msg.get("id") if isinstance(msg, dict) else None
+          return id_ if isinstance(id_, str) or (isinstance(id_, int) and not isinstance(id_, bool)) else None
+
+      def check_arguments(schema: dict, args) -> bool:
+          if not isinstance(args, dict):
+              return False
+          if any(k not in args for k in schema.get("required", [])):
+              return False
+          for key, prop in schema.get("properties", {}).items():
+              if key in args and not TYPES[prop["type"]](args[key]):
+                  return False
+          return True
+
+      def dispatch(method: str, params):
+          if method == "initialize":
+              return {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "practice", "version": "1.0.0"}}
+          if method == "tools/list":
+              return {"tools": [{"name": n, "description": t["description"], "inputSchema": t["inputSchema"]} for n, t in sorted(TOOLS.items())]}
+          if method == "tools/call":
+              params = params if isinstance(params, dict) else {}
+              tool = TOOLS.get(params.get("name"))
+              args = params.get("arguments", {})
+              if tool is None or not check_arguments(tool["inputSchema"], args):
+                  raise RpcError(-32602, "Invalid params")
+              try:
+                  text, is_error = str(tool["fn"](**args)), False
+              except Exception as exc:
+                  text, is_error = str(exc), True
+              return {"content": [{"type": "text", "text": text}], "isError": is_error}
+          raise RpcError(-32601, "Method not found")
+
+      def one(msg):
+          if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0" or not isinstance(msg.get("method"), str):
+              return error(valid_id(msg), -32600, "Invalid Request")
+          notification = "id" not in msg
+          try:
+              response = {"jsonrpc": "2.0", "id": msg["id"] if not notification else None, "result": dispatch(msg["method"], msg.get("params"))}
+          except RpcError as exc:
+              response = error(valid_id(msg), exc.code, exc.message)
+          return None if notification else response
+
+      def handle(raw: str):
+          try:
+              msg = json.loads(raw)
+          except ValueError:
+              return json.dumps(error(None, -32700, "Parse error"))
+          if isinstance(msg, list):
+              if not msg:
+                  return json.dumps(error(None, -32600, "Invalid Request"))
+              responses = [r for r in (one(m) for m in msg) if r is not None]
+              return json.dumps(responses) if responses else None
+          response = one(msg)
+          return None if response is None else json.dumps(response)
+    explanation: |
+      MCP is JSON-RPC 2.0, so protocol errors (bad JSON, unknown method, invalid params) use JSON-RPC error
+      objects, while a tool that runs and fails returns a normal result with isError — the model can read
+      that and try something else. Validating arguments against the advertised schema before calling the
+      tool is the server's first line of defence against malformed model output.
+    time: O(message size)
+    space: O(message size)
+    alternatives: ["FastMCP / the official MCP Python SDK handle the protocol and schema generation for you"]
+    edge_cases: ["Notifications never get responses", "Batches mixing requests and notifications", "true passed for an integer", "Invalid request without an id", "Tool raising an exception"]
+    production: ["Authenticate the client (OAuth for remote MCP servers)", "Enforce timeouts and output size limits on tools", "Log tool calls with arguments redacted"]
+  examples:
+    - args:
+        - - "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"tools/call\", \"params\": {\"name\": \"add\", \"arguments\": {\"a\": 2, \"b\": 3}}}"
+          - "{\"jsonrpc\": \"2.0\", \"id\": 2, \"method\": \"tools/call\", \"params\": {\"name\": \"add\", \"arguments\": {\"a\": true, \"b\": 3}}}"
+          - "{\"jsonrpc\": \"2.0\", \"id\": \"x\", \"method\": \"tools/call\", \"params\": {\"name\": \"divide\", \"arguments\": {\"a\": 1, \"b\": 0}}}"
+          - "{\"jsonrpc\": \"2.0\", \"method\": \"notifications/initialized\"}"
+          - "{not json"
+      expected:
+        - { jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: "5" }], isError: false } }
+        - { jsonrpc: "2.0", id: 2, error: { code: -32602, message: "Invalid params" } }
+        - { jsonrpc: "2.0", id: "x", result: { content: [{ type: "text", text: "division by zero" }], isError: true } }
+        - null
+        - { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }
+  hidden:
+    - args:
+        - - "[]"
+          - "[{\"jsonrpc\": \"2.0\", \"method\": \"a\"}, {\"jsonrpc\": \"2.0\", \"method\": \"b\"}]"
+          - "[{\"jsonrpc\": \"2.0\", \"id\": 7, \"method\": \"tools/list\"}, {\"jsonrpc\": \"2.0\", \"method\": \"x\"}, 5]"
+    - args:
+        - - "{\"jsonrpc\": \"1.0\", \"id\": 3, \"method\": \"initialize\"}"
+          - "{\"jsonrpc\": \"2.0\", \"id\": 4, \"method\": \"initialize\"}"
+          - "{\"jsonrpc\": \"2.0\", \"id\": 5, \"method\": \"resources/list\"}"
+          - "{\"jsonrpc\": \"2.0\", \"id\": 6, \"method\": \"tools/call\", \"params\": {\"name\": \"greet\", \"arguments\": {\"name\": \"Ana\", \"excited\": true}}}"
+          - "{\"jsonrpc\": \"2.0\", \"id\": 8, \"method\": \"tools/call\", \"params\": {\"name\": \"nope\"}}"
+          - "{\"jsonrpc\": \"2.0\", \"id\": {\"bad\": 1}, \"method\": 5}"
+
+- slug: hpa-autoscaler-simulator
+  title: Simulate the Horizontal Pod Autoscaler
+  difficulty: expert
+  roles: [kubernetes-engineer, site-reliability-engineer, platform-engineer, mlops-engineer]
+  topics: [kubernetes, simulation, monitoring]
+  minutes: 45
+  entrypoint: simulate_hpa
+  description: |
+    Simulate the HPA's core algorithm for a CPU target. Each step:
+
+    1. Utilisation = `load[t] / (replicas × request_m) × 100` (load is total millicores in use).
+    2. If `|utilisation / target − 1| ≤ tolerance`, the **recommendation** is the current replica count.
+       Otherwise it is `ceil(replicas × utilisation / target)`.
+    3. Clamp the recommendation to `[min_replicas, max_replicas]`.
+    4. Scale-down stabilisation: keep the recommendations of the last `window` steps (including this one);
+       the new replica count is the **maximum** of them when that is below the current count. Scaling up
+       uses this step's recommendation directly.
+
+    Return the replica count after each step.
+  io: { input: "replicas: int, load: list[int], request_m: int, target: int, tolerance: float, min_replicas: int, max_replicas: int, window: int", output: "list[int]" }
+  starter: |
+    import math
+
+    def simulate_hpa(replicas, load, request_m, target, tolerance, min_replicas, max_replicas, window):
+        out = []
+        for l in load:
+            replicas = math.ceil(l / request_m)
+            out.append(replicas)
+        return out
+  hints:
+    - "Compute the raw recommendation exactly as written, then clamp, then apply stabilisation only for scale-down."
+    - "Keep a deque of the last `window` clamped recommendations; scale-down target = max(deque)."
+    - |
+      util = load / (replicas * request) * 100; ratio = util / target
+      rec = replicas if abs(ratio - 1) <= tol else ceil(replicas * ratio); rec = clamp; history.append(rec)
+      replicas = rec if rec > replicas else min(replicas, max(history))
+  solution:
+    code: |
+      import math
+      from collections import deque
+
+      def simulate_hpa(replicas, load, request_m, target, tolerance, min_replicas, max_replicas, window):
+          history: deque = deque(maxlen=window)
+          out = []
+          for current_load in load:
+              utilisation = current_load / (replicas * request_m) * 100
+              ratio = utilisation / target
+              recommendation = replicas if abs(ratio - 1) <= tolerance else math.ceil(round(replicas * ratio, 9))
+              recommendation = max(min_replicas, min(max_replicas, recommendation))
+              history.append(recommendation)
+              if recommendation > replicas:
+                  replicas = recommendation
+              else:
+                  replicas = min(replicas, max(history))
+              out.append(replicas)
+          return out
+    explanation: |
+      The tolerance band stops flapping around the target; the stabilisation window makes scale-down wait
+      until load has stayed low for the whole window (the max of recent recommendations), while scale-up
+      reacts immediately. Rounding before ceil avoids 3.0000000001 becoming 4.
+    time: O(steps)
+    space: O(window)
+    alternatives: ["KEDA for event-driven scaling (queue length)", "Custom behavior policies (percent or pods per period)"]
+    edge_cases: ["Within tolerance → no change", "Clamping at max", "Zero load scales to min only after the window"]
+    production: ["Requests must be set, or utilisation is undefined", "Readiness and startup time mean new pods help only later — keep headroom"]
+  examples:
+    - args: [2, [400, 900, 300, 300, 300, 300], 500, 50, 0.1, 1, 10, 3]
+      expected: [2, 4, 4, 4, 2, 2]
+      explanation: "900m on 2 pods is 90% → 4 pods. Low load recommends 2 pods, applied once the last three recommendations are all ≤ 2."
+  hidden:
+    - { args: [3, [], 100, 50, 0.1, 1, 5, 2] }
+    - { args: [1, [10000, 10000, 0, 0, 0, 0], 100, 80, 0.1, 1, 20, 2] }
+    - { args: [4, [210, 190, 200, 260], 100, 50, 0.1, 2, 8, 1] }
+
+- slug: exactly-once-event-processor
+  title: Exactly-once effects over at-least-once delivery
+  difficulty: expert
+  roles: [backend-engineer, data-engineer, solutions-architect]
+  topics: [simulation, hashing, etl]
+  minutes: 45
+  entrypoint: process
+  description: |
+    A queue delivers messages at least once and possibly out of order. Each message is
+    `{"msg_id", "key", "seq", "op": "add" | "set", "value"}` with `seq` starting at 1 per key. Apply each
+    key's operations exactly once, in `seq` order, to a value that starts at 0:
+
+    - A message whose `msg_id` was already seen, or whose `seq` was already applied for its key, is a
+      duplicate (count it, ignore it).
+    - A message that arrives before its predecessor is buffered and applied as soon as the gap is filled
+      (possibly releasing several buffered messages).
+    - Two different `msg_id`s with the same key and seq: the first one received wins; later ones are
+      duplicates.
+
+    Return `{"state": {key: value}, "applied": [msg_ids in apply order], "duplicates": n,
+    "pending": {key: [buffered seqs, ascending]}}` (keys with nothing pending omitted; state includes every
+    key that had at least one message applied).
+  io: { input: "messages: list[dict]", output: "dict" }
+  starter: |
+    def process(messages: list[dict]) -> dict:
+        state = {}
+        for m in messages:
+            state[m["key"]] = state.get(m["key"], 0) + m["value"]
+        return {"state": state, "applied": [m["msg_id"] for m in messages], "duplicates": 0, "pending": {}}
+  hints:
+    - "Per key you need: the next expected seq and a buffer of early arrivals keyed by seq."
+    - "On arrival: dedupe; if seq == next, apply it and then keep applying buffer[next] while present; if seq > next, buffer it."
+    - |
+      if msg_id in seen or seq < expected[key] or seq in buffer[key]: duplicates += 1; continue
+      seen.add(msg_id); buffer[key][seq] = m
+      while expected[key] in buffer[key]: apply(buffer[key].pop(expected[key])); expected[key] += 1
+  solution:
+    code: |
+      from collections import defaultdict
+
+      def process(messages: list[dict]) -> dict:
+          expected: dict[str, int] = defaultdict(lambda: 1)
+          buffer: dict[str, dict[int, dict]] = defaultdict(dict)
+          seen: set[str] = set()
+          state: dict[str, float] = {}
+          applied: list[str] = []
+          duplicates = 0
+          for m in messages:
+              key, seq = m["key"], m["seq"]
+              if m["msg_id"] in seen or seq < expected[key] or seq in buffer[key]:
+                  duplicates += 1
+                  continue
+              seen.add(m["msg_id"])
+              buffer[key][seq] = m
+              while expected[key] in buffer[key]:
+                  msg = buffer[key].pop(expected[key])
+                  if msg["op"] == "set":
+                      state[key] = msg["value"]
+                  else:
+                      state[key] = state.get(key, 0) + msg["value"]
+                  applied.append(msg["msg_id"])
+                  expected[key] += 1
+          pending = {k: sorted(b) for k, b in buffer.items() if b}
+          return {"state": state, "applied": applied, "duplicates": duplicates, "pending": pending}
+    explanation: |
+      Exactly-once processing is really "at-least-once delivery + idempotent, ordered application". The
+      per-key sequence number gives both: anything below the next expected seq is a replay, and anything
+      above it waits in a buffer until the gap closes.
+    time: O(n log n) worst case (sorting pending)
+    space: O(n)
+    alternatives: ["Store the last applied seq in the same database transaction as the state (transactional outbox/inbox)", "Kafka idempotent producers + transactions"]
+    edge_cases: ["Duplicate msg_id with a different seq", "A gap that never fills (stays pending)", "set after add resets the value", "Same seq, different msg_id"]
+    production: ["Persist expected seq and the dedupe set durably, with TTLs for the set", "Alert when a key's buffer grows — a lost message blocks the key forever"]
+  examples:
+    - args:
+        - - { msg_id: "m2", key: "acct", seq: 2, op: "add", value: 5 }
+          - { msg_id: "m1", key: "acct", seq: 1, op: "set", value: 100 }
+          - { msg_id: "m1", key: "acct", seq: 1, op: "set", value: 100 }
+          - { msg_id: "m4", key: "acct", seq: 4, op: "add", value: 1 }
+          - { msg_id: "x1", key: "other", seq: 1, op: "add", value: 2 }
+      expected: { state: { acct: 105, other: 2 }, applied: ["m1", "m2", "x1"], duplicates: 1, pending: { acct: [4] } }
+  hidden:
+    - { args: [[]] }
+    - args:
+        - - { msg_id: "a", key: "k", seq: 3, op: "add", value: 3 }
+          - { msg_id: "b", key: "k", seq: 2, op: "add", value: 2 }
+          - { msg_id: "c", key: "k", seq: 2, op: "add", value: 99 }
+          - { msg_id: "d", key: "k", seq: 1, op: "add", value: 1 }
+          - { msg_id: "a", key: "k", seq: 9, op: "add", value: 9 }
+          - { msg_id: "e", key: "k", seq: 1, op: "set", value: 0 }
+
+- slug: fair-share-scheduler
+  title: Weighted fair-share job scheduler
+  difficulty: expert
+  roles: [platform-engineer, mlops-engineer, solutions-architect]
+  topics: [heaps, simulation]
+  minutes: 60
+  entrypoint: schedule
+  description: |
+    A shared GPU cluster has `slots` identical slots. Tenants have weights; jobs are
+    `{"id", "tenant", "arrival", "duration"}`. Simulate weighted fair queuing:
+
+    - Each tenant has a virtual time, starting at 0. When a tenant's job starts, its virtual time increases
+      by `duration / weight`.
+    - Whenever a slot is free at time t, pick among jobs that have arrived (arrival ≤ t): first the tenant
+      with the lowest virtual time (ties by tenant name), then that tenant's earliest-arriving job (ties by
+      id).
+    - Fill free slots in slot-index order. Jobs finishing at time t free their slot at t (before scheduling
+      at t). If no job is waiting, jump to the next arrival or completion.
+
+    Return `[[job_id, start_time, slot], ...]` in the order jobs start.
+  io: { input: "slots: int, weights: dict[str, float], jobs: list[dict]", output: "list[list]" }
+  starter: |
+    def schedule(slots, weights, jobs):
+        out, t = [], 0
+        for i, job in enumerate(sorted(jobs, key=lambda j: j["arrival"])):
+            t = max(t, job["arrival"])
+            out.append([job["id"], t, i % slots])
+        return out
+  hints:
+    - "This is a discrete-event simulation: time only matters at arrivals and completions."
+    - "Keep a heap of (finish_time, slot) for running jobs and a per-tenant list of waiting jobs. At each event time: free finished slots, then repeatedly assign the best waiting job to the lowest free slot."
+    - |
+      t = 0; while jobs remain: free slots whose finish <= t; waiting = arrived and not started
+          while free slots and waiting: tenant = min(tenants with waiting, key=(vt, name)); job = earliest; start it
+          t = min(next arrival > t, earliest finish > t)
+  solution:
+    code: |
+      import heapq
+
+      def schedule(slots, weights, jobs):
+          pending = sorted(jobs, key=lambda j: (j["arrival"], j["id"]))
+          vt = {tenant: 0.0 for tenant in weights}
+          running: list[tuple[float, int]] = []
+          free = list(range(slots))
+          waiting: list[dict] = []
+          out = []
+          t, i = 0, 0
+          while i < len(pending) or waiting:
+              while running and running[0][0] <= t:
+                  free.append(heapq.heappop(running)[1])
+              free.sort()
+              while i < len(pending) and pending[i]["arrival"] <= t:
+                  waiting.append(pending[i])
+                  i += 1
+              while free and waiting:
+                  tenant = min({j["tenant"] for j in waiting}, key=lambda name: (vt[name], name))
+                  job = min((j for j in waiting if j["tenant"] == tenant), key=lambda j: (j["arrival"], j["id"]))
+                  waiting.remove(job)
+                  slot = free.pop(0)
+                  vt[tenant] += job["duration"] / weights[tenant]
+                  heapq.heappush(running, (t + job["duration"], slot))
+                  out.append([job["id"], t, slot])
+              # Everything due at t has been handled, so the next event is strictly later.
+              next_events = ([pending[i]["arrival"]] if i < len(pending) else []) + ([running[0][0]] if running else [])
+              if not next_events:
+                  break
+              t = min(next_events)
+          return out
+    explanation: |
+      Virtual time measures how much of its fair share each tenant has consumed: a tenant with weight 2 is
+      charged half as much per job, so it gets roughly twice the throughput when everyone is busy. Event
+      jumping makes the simulation cost proportional to the number of jobs, not to elapsed time.
+    time: O(n² ) as written (scanning the waiting list); per-tenant heaps make it O(n log n)
+    space: O(n)
+    alternatives: ["Dominant Resource Fairness when jobs need several resource types", "Kubernetes: Kueue / Volcano fair sharing"]
+    edge_cases: ["Idle gaps between arrivals", "Several slots free at once", "A tenant with only late jobs", "Ties on virtual time"]
+    production: ["Decay virtual time so a tenant that was idle doesn't get an unbounded burst", "Add preemption for priority jobs", "Cap per-tenant concurrency"]
+  examples:
+    - args:
+        - 1
+        - { a: 1, b: 2 }
+        - - { id: "a1", tenant: "a", arrival: 0, duration: 4 }
+          - { id: "a2", tenant: "a", arrival: 0, duration: 4 }
+          - { id: "b1", tenant: "b", arrival: 0, duration: 4 }
+          - { id: "b2", tenant: "b", arrival: 0, duration: 4 }
+          - { id: "b3", tenant: "b", arrival: 0, duration: 4 }
+      expected: [["a1", 0, 0], ["b1", 4, 0], ["b2", 8, 0], ["a2", 12, 0], ["b3", 16, 0]]
+      explanation: "a1 starts first (tie on 0, 'a' < 'b'); a's vt becomes 4, b's grows by 2 per job, so b runs twice before a runs again."
+  hidden:
+    - { args: [2, { x: 1 }, []] }
+    - args:
+        - 2
+        - { t1: 1, t2: 1 }
+        - - { id: "j1", tenant: "t1", arrival: 0, duration: 5 }
+          - { id: "j2", tenant: "t1", arrival: 0, duration: 1 }
+          - { id: "j3", tenant: "t2", arrival: 2, duration: 2 }
+          - { id: "j4", tenant: "t2", arrival: 10, duration: 1 }
+          - { id: "j5", tenant: "t1", arrival: 1, duration: 3 }

@@ -1,0 +1,217 @@
+---
+title: "How I Evaluate RAG on jithendar.com: Measuring Ask the Blog's Retrieval Before It Goes Live"
+slug: rag-evaluation-ask-the-blog-jithendar-com
+description: "How I test the retrieval behind Ask the Blog: a labelled question set, a manual GitHub Actions workflow with the production model, and the settings it decided."
+seoTitle: "RAG Evaluation in Practice: Testing Ask the Blog Retrieval"
+seoDescription: "A labelled question set, Recall@k, MRR, section hits and a calibrated score floor: how I evaluate RAG retrieval on jithendar.com with GitHub Actions."
+author: jithendar-dharmapuri
+category: ai-engineering
+tags: [RAG, Retrieval Evaluation, pgvector, Embeddings, GitHub Actions, AI Engineering, LLMOps]
+contentType: tutorial
+status: review
+featuredImage:
+  src: /images/rag-evaluation-ask-the-blog-jithendar-com/rag-eval-workflow.png
+  alt: "The rag-eval.yml workflow: a manual run on a GitHub-hosted runner sets up the locked dependencies, the pinned bge-small ONNX model, the blog's MDX files and a scratch pgvector database, builds an index per retriever configuration, runs 95 labelled questions, scores each configuration and writes reports that a person turns into settings."
+  width: 1922
+  height: 1770
+related:
+  - blog/how-i-built-jithendar-com
+  - blog/pytorch-rag-reranking-moks-sre-agent
+  - blog/moks-rag-and-skills-design
+---
+
+jithendar.com has an assistant called **Ask the Blog**. It answers questions only from my own articles and cites the section every statement comes from. An assistant like that is only as good as its retrieval. If the search step returns the wrong chunks, the model either says it doesn't know or, worse, answers from the wrong article with a confident citation.
+
+So before I switch it on, I wanted a way to *measure* retrieval instead of trying a few questions and feeling good about it. This post explains the RAG evaluation I built for the site: what it measures, how it runs in GitHub Actions, the settings it decided, and what it still can't tell me.
+
+One thing up front: in the cluster manifests Ask the Blog is still off (`ASK_BLOG_ENABLED: "false"`). The evaluation is part of how I decide when it's ready.
+
+## What Ask the Blog does with a question
+
+The answer path is a plain async pipeline in the `seo-agent` service. It is deliberately not a CrewAI crew, because a multi-agent run per visitor question would be too slow and too expensive.
+
+![Ask the Blog's answer path. A reader question of at most 500 characters passes guard_input, which refuses injection attempts, personal data and off-topic patterns. The retrieve step takes the top 6 chunks with vector search (the default) or hybrid search; this is what the retrieval evaluation measures. A cosine floor, ASK_BLOG_MIN_SCORE at 0.66, drops weak candidates; the evaluation calibrates that number. grade_relevance, on Haiku, keeps the excerpts that answer the question, and sends anything not relevant to a fallback that says there is no article on this yet and offers related links. answer_with_citations must cite an excerpt for every statement; the opt-in generation evaluation measures this step. guard_output sends an uncited answer or NO_ANSWER to the fallback and strips links, and the reader gets the answer with links to blog sections. Below, the retrieval evaluation reports Recall at 1, 3 and 6, MRR, the section-anchor hit rate, no-answer false positives at the floor, the calibrated floor and latency. The generation evaluation reports the answered and abstain rates, citation precision by labels and by an LLM judge, faithfulness, and is capped by a spending limit.](/images/rag-evaluation-ask-the-blog-jithendar-com/ask-the-blog-eval-map.svg)
+
+The important property is in the figure's note: the grader and the answer step only ever see the excerpts the retriever found. A perfect prompt can't fix a missing chunk. That's why I evaluate retrieval on its own, with no model calls, and keep the expensive end-to-end check as an opt-in extra.
+
+## The yardstick: a labelled question set
+
+Everything starts from one file, `services/seo-agent/tests/fixtures/rag_eval.yaml`. Each entry is a question a reader might ask, the article (or articles) that answer it, and the section anchors that count as the *right part* of that article:
+
+```yaml
+# services/seo-agent/tests/fixtures/rag_eval.yaml (excerpt)
+  - id: c04
+    question: Why did you choose Valkey instead of Redis?
+    type: concept
+    slugs: [valkey-redis-sentinel-minikube-terraform]
+    anchors: [why-valkey-instead-of-redis]
+```
+
+The anchors are the same github-slugger ids the site generates for headings, so a "section hit" means the citation link would land on the right heading.
+
+The set has two parts:
+
+- **The first 55 questions**, written from the published articles: 14 concept, 12 how-to, 11 exact-term (a command, flag, config key, error string or version), 10 troubleshooting, and **8 no-answer** questions about things the site doesn't cover.
+- **A 40-question hard set** (`x01` to `x40`), added because the first 55 saturated. They're tagged: 19 *paraphrase* (asked without the article's vocabulary), 7 *multi-hop* (the answer spans two articles), 11 *exact* (error strings and flags quoted verbatim) and 3 *near-miss* (no-answer questions right next to covered topics).
+
+The file's header sets the editing rules, and the most important one is this: *don't tune questions to a retriever*. Write them the way a reader would ask. Once you start rewording a question until your retriever gets it right, the number stops meaning anything.
+
+## What gets measured
+
+`scripts/rag_eval.py` runs every question against a retriever configuration with k = 6, the same top-k Ask the Blog uses, and reports:
+
+| Metric | What it answers |
+|---|---|
+| Recall@1 / @3 / @6 | Is an expected article in the top 1, 3 or 6 results? |
+| MRR | How high does the first right article rank (1 / rank)? |
+| Section-anchor hit rate | Is the right *section* of an expected article in the top 6? |
+| No-answer false positives | For questions the site can't answer, does anything clear the cosine floor and reach the paid grader? |
+| Calibrated floor | The highest cosine floor that loses no expected answer |
+| p50 / p95 latency | The search call itself: embed the question, fetch candidates, fuse |
+
+The last two metrics matter more than they look. Every no-answer question that slips past the floor costs a grader call, and it gives the answer model a chance to stretch something loosely related into an answer.
+
+## How I enabled it: three places it runs
+
+I didn't want one big eval job. Instead the same question set is used in three places, each with a different job, plus a way for real questions to flow back into the set.
+
+![Where retrieval gets evaluated. The eval set, rag_eval.yaml with 95 labelled questions, expected articles, section anchors, types and tags, feeds three loops. On every pull request, ci-seo-agent.yml runs pytest on the evaluation code with hashed vectors, in memory and on Postgres, and a rag_eval.py smoke run with hashed embeddings that only checks the script runs; there is deliberately no recall threshold, because hashed vectors are lexical and a gate would track tokenisation. On demand, the manual rag-eval.yml workflow uses the real bge-small ONNX model at its pinned revision and checksum, compares every configuration (chunkers, vector, hybrid, diversification) and produces reports and a decision on the ConfigMap defaults. Every Sunday at 04:47 UTC, the seo-flow-ml CronJob runs the set against the live retriever, writes a row to seo_rag_eval_runs and updates the seo_rag_eval_recall_at_3 gauge shown in Grafana. A fourth loop, once Ask the Blog is on, mines fallbacks and low-scoring questions from seo_ask_log and seo_ask_gaps with rag_mine_eval.py; a person labels them with slugs and anchors before they join the set.](/images/rag-evaluation-ask-the-blog-jithendar-com/rag-eval-four-loops.svg)
+
+### 1. Every pull request: prove it runs, not that it's good
+
+The `ci-seo-agent.yml` workflow runs the evaluation code in pytest and runs the script once as a smoke test:
+
+```yaml
+# .github/workflows/ci-seo-agent.yml (excerpt)
+- name: RAG eval smoke (hashed embeddings; only that it runs; the real run is rag-eval.yml)
+  run: uv run --frozen python scripts/rag_eval.py --embeddings hash --configs baseline-v4,token-hybrid --dsn "$SEO_AGENT_TEST_DATABASE_URL" --out "$RUNNER_TEMP/rag-eval"
+```
+
+There is deliberately **no recall threshold** in CI. CI uses hashed embeddings, which behave like a bag of words. They score exact-term questions at 100% even in vector-only mode, and paraphrases at around 50% whatever the retriever does. A gate on those numbers would test tokenisation, not retrieval, and I'd end up "fixing" a red build by tuning to the wrong signal.
+
+### 2. On demand: the real comparison in `rag-eval.yml`
+
+This is the workflow that decides settings. It only runs when I start it (`workflow_dispatch`), with two inputs: which configurations to compare, and extra arguments such as `--max-per-article 2`.
+
+![The rag-eval.yml workflow. A manual run in GitHub Actions takes two inputs: the configurations to compare and extra arguments such as max-per-article 2. On a GitHub-hosted ubuntu-latest runner with a 30-minute limit, setup checks out the repository and installs the locked dependencies, downloads the bge-small ONNX model with the revision and sha256 checksums read from the Dockerfile, reads the blog's MDX files, and starts a pg18 pgvector service as a scratch database. It builds an index per configuration (v4 character chunker or token chunker, exact cosine in numpy, Postgres full text for hybrid configurations) and loads rag_eval.yaml, 95 questions with expected articles and section anchors, 11 of them with no answer on the site. It retrieves the top 6 for every question in every configuration (baseline-v4, token-vector, token-vector-div, token-hybrid-noid, token-hybrid) and scores each one: Recall at 1, 3 and 6, MRR, the section-anchor hit rate, latency, no-answer false positives, the calibrated floor, a floor table and results by type and tag. The job summary holds one report per configuration plus a comparison table; the ones worth keeping are committed by hand to docs/seo/rag-eval; a person decides RAG_MODE, the maximum chunks per article and ASK_BLOG_MIN_SCORE, and changes the seo-agent-config ConfigMap, then restarts. Nothing touches the cluster.](/images/rag-evaluation-ask-the-blog-jithendar-com/rag-eval-workflow.svg)
+
+Two design choices make the numbers trustworthy.
+
+**It uses exactly the production model.** The workflow doesn't hard-code a model version. It reads the revision and checksums from the `seo-agent` Dockerfile, so the eval can't drift from what the image ships:
+
+```yaml
+# .github/workflows/rag-eval.yml (excerpt)
+- name: Fetch the embedding model (same revision and checksums as the Dockerfile)
+  run: |
+    set -euo pipefail
+    rev="$(sed -n 's/^ARG MODEL_REV=//p' Dockerfile)"
+    msha="$(sed -n 's/^ARG MODEL_SHA256=//p' Dockerfile)"
+    tsha="$(sed -n 's/^ARG TOKENIZER_SHA256=//p' Dockerfile)"
+    mkdir -p "$RUNNER_TEMP/bge"
+    curl -fsSL -o "$RUNNER_TEMP/bge/model.onnx" "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/$rev/onnx/model.onnx"
+    curl -fsSL -o "$RUNNER_TEMP/bge/tokenizer.json" "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/$rev/tokenizer.json"
+    echo "$msha  $RUNNER_TEMP/bge/model.onnx" | sha256sum -c -
+    echo "$tsha  $RUNNER_TEMP/bge/tokenizer.json" | sha256sum -c -
+```
+
+**It never touches the cluster.** The run builds its own index from the MDX files in the repository and throws it away. The vector side is exact cosine in numpy, which at this corpus size behaves like the HNSW index in production, and a `pgvector/pgvector:0.8.1-pg18` service container provides Postgres full-text search for the hybrid configurations. A bad experiment can't break the live site.
+
+The reports go into the job summary. The ones worth keeping I commit by hand under `services/www/docs/seo/rag-eval/`, one file per configuration plus a dated summary. Then a person, me, turns a result into a setting. Nothing in this workflow changes configuration on its own.
+
+### 3. Every Sunday: watch the live index
+
+The third place is the weekly ML CronJob, `seo-flow-ml`, which runs at 04:47 UTC on Sundays. Its last step runs the same question set against the **live** retriever, with the production index and whatever `RAG_MODE` is set:
+
+```python
+# services/seo-agent/app/seo_ml/train.py (excerpt)
+async def run_rag_eval(store: MlStore, retriever: Any) -> dict[str, Any]:
+    from ..rag_eval import evaluate, load_eval_set
+
+    if not getattr(retriever, "available", False):
+        return {"skipped": "vector index unavailable"}
+    res = await evaluate("live", lambda q, k: retriever.search(q, k), load_eval_set())
+    m = {**res.metrics, "calibrated_floor": res.calibrated_floor, "p95_ms": res.latency_ms["p95"], "mode": getattr(getattr(retriever, "config", None), "mode", "?")}
+    await store.record_rag_eval("live", m)
+    metrics.RAG_EVAL_RECALL3.set(res.metrics["recall@3"])
+    return m
+```
+
+Each run is stored in `seo_rag_eval_runs`, and Recall@3 is exported as the Prometheus gauge `seo_rag_eval_recall_at_3`, which is on the seo-agent Grafana dashboard. The manual workflow answers "which settings should I use?". This one answers "is the live index still as good as when I chose them?". Reindexing, new articles and renamed headings can all move it.
+
+### 4. Real questions flow back in
+
+Once Ask the Blog is on, the most useful new questions will come from readers. `scripts/rag_mine_eval.py` is read-only. It pulls candidates from `seo_ask_gaps` (open gaps) and `seo_ask_log` (fallbacks, plus answers whose best cosine was under `--low-score`, 0.72 in the documented example) and skips anything already in the set. It deliberately leaves `type`, `slugs` and `anchors` empty: a person labels each one from the articles before it joins the set. That's the same rule as before. The answers come from the articles, never from whatever the retriever happened to return.
+
+## What the evaluation decided
+
+The committed results are from 10 November 2026: the first 55 questions, 36 articles, the bge-small ONNX model and Postgres full text.
+
+| Configuration | Chunks | Over 512 tokens | Recall@1 | Recall@3 | MRR | Section hit | p95 ms |
+|---|---|---|---|---|---|---|---|
+| baseline-v4 (character chunker, cosine) | 1,221 | 198 | 97.9 | 100 | 0.989 | 97.9 | 12 |
+| token chunker, cosine | 1,790 | 0 | 93.6 | 100 | 0.968 | 97.9 | 0.7 |
+| + at most 3 per article (**the default**) | 1,790 | 0 | 93.6 | 100 | 0.968 | 95.7 | 0.7 |
+| + at most 2 per article | 1,790 | 0 | 93.6 | 100 | 0.968 | 87.2 | |
+| hybrid, at most 3 per article | 1,790 | 0 | 95.7 | 95.7 | 0.968 | 91.5 | 11 |
+
+Four settings came straight out of these numbers, and they're now in the `seo-agent-config` ConfigMap:
+
+```yaml
+# minikube/seo-agent-40-seo-agent.yaml (excerpt)
+  # v5 retrieval (docs/seo/RAG.md "Defaults"): decided by the eval set. Rollback for hybrid: RAG_MODE=vector.
+  RAG_MODE: vector
+  RAG_MAX_PER_ARTICLE: "3"
+  # Cosine pre-filter for bge-small, calibrated on the eval set (RAG.md "Score calibration"); was 0.15.
+  ASK_BLOG_MIN_SCORE: "0.66"
+  RAG_RERANKER_ENABLED: "false"
+```
+
+**Vector search, not hybrid.** My rule was that hybrid (vector plus full text plus an identifier boost, fused with RRF) had to beat vector on Recall@3 and MRR without a worse no-answer rate. It didn't: 95.7 against 100 on Recall@3, and section hits were lower in every setting I tried. I also tried an RRF k of 20 instead of 60, and it changed nothing. Hybrid is still one variable away for when the corpus or the question set grows.
+
+**At most 3 chunks per article, not 2.** Diversifying stops one long article from filling all six slots. But at 2 per article, the right section of the right article dropped out of the top 6 often enough to cost 10.7 points of section hits. At 3 it costs 2.2.
+
+**A cosine floor of 0.66, up from 0.15.** This is the most practical result. At 0.15 every no-answer question reached the grader (100% false positives). The floor table showed exactly where the trade-off sits:
+
+| Floor | Expected answers lost | No-answer false positives |
+|---|---|---|
+| 0.15 | 0 | 100% |
+| 0.60 | 0 | 87.5% |
+| 0.66 | 0 | 62.5% |
+| 0.70 | 1 | 25% |
+
+0.66 is the highest floor that loses no correct answer. It stops 3 of the 8 no-answer questions before they cost a grader call. 0.70 would stop more, but it loses a real answer, and the grader is the real relevance check anyway. The floor is only a cheap pre-filter.
+
+**The reranker stays off.** I have an optional cross-encoder reranker behind `RAG_RERANKER_ENABLED`. Its activation rule is +3 points of Recall@3 with p95 under 400 ms on minikube. On this set Recall@3 was already 100%, so it couldn't pass, and I didn't download the model at all.
+
+### The chunker finding
+
+The same run measured the chunker, and the result surprised me. The old v4 character-based chunker made 1,221 chunks, and **198 of them (16%) were longer than the 512-token limit** of bge-small; the longest was 1,011 tokens. The model silently truncated those, so their tails were never embedded. The v5 chunker packs paragraphs to a token budget measured with the model's own tokenizer: a target of about 350 tokens, a hard maximum of 480, and code split into overlapping windows of about 400. It made 1,790 chunks, the longest 471 tokens, and none over the limit.
+
+Notice that the table doesn't reward this. The token chunker actually lost two rank-1 hits, because smaller chunks of the same article compete with each other. The truncated tails were mostly code, and the question set doesn't ask about them. I kept the token chunker anyway, because silently dropping 16% of the embedded text is a correctness bug, whatever the eval says. There's a metric for it now, `seo_rag_chunks_truncated_total`, with an alert that fires if it ever rises above zero. As a side check, each article's top-5 related articles overlapped 0.78 (Jaccard) between the two chunkers, so related-article suggestions stayed similar.
+
+## Reading the numbers honestly
+
+The biggest limitation is visible in the table: **Recall@3 is at 100% for almost every configuration.** Most of the first 55 questions name their topic plainly, so nearly any reasonable retriever finds the right article. The set still separates configurations through Recall@1, MRR and section hits, but it can't separate them on the headline metric.
+
+That's why the 40-question hard set exists. The only hard-set numbers written down so far are from hashed embeddings (paraphrase Recall@3 of 47%, exact 100%), and that's exactly what a bag of words does, not a measurement. The real numbers need the ONNX run in `rag-eval.yml`.
+
+The other gap is generation. Retrieval metrics say the right excerpts were *available*. They don't say the answer *used* them correctly. For that there's an opt-in generation eval: `rag_eval.py --generation` runs Ask the Blog's own pipeline over the set and scores citation precision (by the labels, and by an LLM judge checking that the cited excerpt supports the sentence) and faithfulness (the share of the answer's claims the excerpts support). It makes real Claude calls, so it's capped by `--generation-max-usd` and is never part of CI.
+
+## Running it yourself
+
+From GitHub: **Actions → RAG eval (manual) → Run workflow**, keep the default configurations, and read the job summary. Run it after changing the chunker, the retrieval code, the embedding model or the question set, and do a full reindex after any of those ships.
+
+Locally, with the model directory and any Postgres for full text (pgvector isn't needed, since the vector side is exact cosine):
+
+```bash
+cd services/seo-agent
+uv run python scripts/rag_eval.py --model-dir /path/to/bge-small-en-v1.5 --dsn postgresql://…/scratch   # all configs
+```
+
+## Key takeaways
+
+1. **Measure retrieval separately from generation.** The answer model only sees what retrieval found, and retrieval evals are cheap enough to run on every change.
+2. **Label sections, not just articles.** Section-anchor hits caught a regression (the 2-per-article limit) that article-level recall didn't show at all.
+3. **Don't gate CI on numbers that measure the wrong thing.** Hashed embeddings make a fine smoke test and a misleading quality gate.
+4. **Use the eval to set thresholds, not just to compare models.** The calibrated floor of 0.66 came from a floor table, not a guess, and it stops some unanswerable questions before they cost a model call.
+5. **Expect your question set to saturate.** When everything scores 100%, the set has stopped being useful. Add harder questions, and feed real reader questions back in, labelled by a person.

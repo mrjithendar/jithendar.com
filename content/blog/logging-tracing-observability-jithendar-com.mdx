@@ -1,0 +1,377 @@
+---
+title: "How We Implemented Logging, Tracing, and Observability on jithendar.com"
+slug: logging-tracing-observability-jithendar-com
+description: "How jithendar.com ties structured logs, OpenTelemetry traces and Prometheus metrics together on Kubernetes, and the gaps a review found and fixed."
+seoTitle: "Next.js Observability on Kubernetes: OpenTelemetry, Loki, Jaeger, Prometheus"
+seoDescription: "Structured logs, OpenTelemetry traces and Prometheus metrics for a self-hosted Next.js site: the real setup, a slow-request investigation and the fixes."
+author: jithendar-dharmapuri
+category: devops-sre
+tags: [Observability, OpenTelemetry, Next.js, Loki, Grafana Alloy, Jaeger, Prometheus, Grafana, Kubernetes, SRE]
+contentType: tutorial
+status: review
+featuredImage:
+  src: /images/jithendar-com-observability/jithendar-com-telemetry-flow.png
+  alt: "Telemetry flow of jithendar.com on the mk4 cluster. A visitor reaches the Traefik ingress, which strips incoming trace headers, then two Next.js pods in namespace jithendar. The pods send spans over OTLP/HTTP to the OpenTelemetry Collector, which removes URLs, SQL and exception text before Jaeger stores the newest 5000 traces in memory. Alloy reads the pods' JSON logs through the Kubernetes API, keeps allowlisted fields and pushes logfmt lines with trace_id to Loki. Prometheus scrapes metrics from port 9464. Grafana reads Prometheus and Loki and links trace_id to Jaeger. The site sends traceparent only to the practice executor, whose audit lines carry the same trace_id."
+  width: 1240
+  height: 1408
+related:
+  - blog/github-actions-authenticate-minikube
+  - blog/learning-typescript-real-project-jithendar-com
+  - blog/mermaid-diagrams-on-jithendar-com
+  - blog/learning-terraform-real-project-tools-repository
+sources:
+  - title: "Next.js guide: OpenTelemetry"
+    url: https://nextjs.org/docs/app/guides/open-telemetry
+    publisher: Vercel
+  - title: "Next.js instrumentation.js file convention (register, onRequestError)"
+    url: https://nextjs.org/docs/app/api-reference/file-conventions/instrumentation
+    publisher: Vercel
+  - title: "@vercel/otel"
+    url: https://github.com/vercel/otel
+    publisher: GitHub
+  - title: "Trace Context (W3C Recommendation)"
+    url: https://www.w3.org/TR/trace-context/
+    publisher: W3C
+  - title: "Sampling"
+    url: https://opentelemetry.io/docs/concepts/sampling/
+    publisher: OpenTelemetry
+  - title: "Collector internal telemetry"
+    url: https://opentelemetry.io/docs/collector/internal-telemetry/
+    publisher: OpenTelemetry
+  - title: "Jaeger 2.22: memory storage"
+    url: https://www.jaegertracing.io/docs/2.22/storage/memory/
+    publisher: Jaeger
+  - title: "loki.process component reference"
+    url: https://grafana.com/docs/alloy/latest/reference/components/loki/loki.process/
+    publisher: Grafana Labs
+  - title: "Loki label best practices"
+    url: https://grafana.com/docs/loki/latest/get-started/labels/bp-labels/
+    publisher: Grafana Labs
+  - title: "Histograms and summaries"
+    url: https://prometheus.io/docs/practices/histograms/
+    publisher: Prometheus
+  - title: "Alerting rules"
+    url: https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/
+    publisher: Prometheus
+  - title: "Traefik Headers middleware"
+    url: https://doc.traefik.io/traefik/middlewares/http/headers/
+    publisher: Traefik Labs
+---
+jithendar.com is a Next.js site I run myself on **mk4**, a five-node Minikube cluster on one server. When something breaks I want three answers fast: *what failed*, *where did the time go*, and *is it still happening*. This article shows how the site answers them with structured logs in Loki, traces in Jaeger and metrics in Prometheus, all tied together by one trace id, and walks through a real slow-request investigation.
+
+It is based on the `jithendar.com` and `tools` repositories and on the live cluster on 4 November 2026. That day's review found real gaps; section 8 lists them with their fixes, which have since been deployed (checked 6 November).
+
+## 1. What the site needs from observability
+
+The parts that matter: **two Next.js 16 pods** in namespace `jithendar`, with a `proxy.ts` step before each request; **PostgreSQL and Redis**; outside services (R2, Gemini for cover images, Turnstile, email); **practice-executor**, a FastAPI service that runs Python practice jobs in sandbox pods; and **Traefik** in front. Jaeger has no ingress; its UI is reached with `kubectl port-forward`.
+
+The requirements are modest but strict:
+
+1. A visitor who sees an error gets a short reference, and that reference finds the logs and the trace.
+2. Request rate, error rate and latency per **route pattern** (`/blog/[slug]`), never per URL.
+3. No passwords, tokens, cookies, email addresses or free text in the log store or the trace store.
+4. If the monitoring stack is down, the site keeps serving pages.
+
+Logs say *what happened*, metrics *whether something is wrong now*, and traces (one request split into timed **spans**) *where the time went*. One id joins them: the 32-character hex **trace id** on every log line, span and error reference.
+
+## 2. The tools
+
+The site plugs into the cluster's existing monitoring stack, configured in the `tools` repository:
+
+| Signal | Tool | Where it runs | Why it fits |
+|---|---|---|---|
+| Traces | `@vercel/otel` in the app, OpenTelemetry Collector 0.162, Jaeger 2.22 | app pods, namespace `observability` | the OpenTelemetry setup the Next.js docs describe; Next.js already creates routing and rendering spans |
+| Logs | JSON on stdout, Grafana Alloy, Loki | namespace `monitoring` | no logging library; Alloy reads pod logs through the Kubernetes API, so no agent per node |
+| Metrics | a small Prometheus exporter in the app, Prometheus 3.15 | port 9464 in the pod, namespace `monitoring` | no extra dependency; request metrics come from the spans Next.js already creates |
+| Dashboards | Grafana | namespace `monitoring` | one place for Prometheus and Loki |
+
+![Telemetry flow of jithendar.com on the mk4 cluster. A visitor reaches the Traefik ingress, which strips incoming trace headers, then two Next.js pods in namespace jithendar. The pods send spans over OTLP/HTTP to the OpenTelemetry Collector, which removes URLs, SQL and exception text before Jaeger stores the newest 5000 traces in memory. Alloy reads the pods' JSON logs through the Kubernetes API, keeps allowlisted fields and pushes logfmt lines with trace_id to Loki. Prometheus scrapes metrics from port 9464. Grafana reads Prometheus and Loki and links trace_id to Jaeger. The site sends traceparent only to the practice executor, whose audit lines carry the same trace_id.](/images/jithendar-com-observability/jithendar-com-telemetry-flow.svg)
+
+## 3. Logs: structured, collected, stored, searched
+
+### What the app writes
+
+Every log line is one JSON object on stdout, written by `src/lib/log.ts`:
+
+```ts
+const line = JSON.stringify({
+  time: new Date().toISOString(),
+  level,
+  msg,
+  event: eventOf(msg),          // "comment submitted" → "comment_submitted"
+  service: "jithendar-com",
+  version: process.env.GIT_SHA ?? "dev",
+  ...traceFields(),             // traceId, spanId of the active span
+  ...rest,
+  ...(err !== undefined ? serializeError(err) : {}), // errorType, errorCode, short stack
+});
+```
+
+`event` is a stable name derived from the message, because the collector throws `msg` away. `traceId` comes from the active span, so every line written during a request carries its trace. In production, `jsonConsole()` routes `console.*` from Next.js and libraries through the same function, so Next's multi-line "⨯ Error" output becomes one parseable JSON line.
+
+Two kinds of line describe each request:
+
+- `http_request`, the **access line**, written by `src/proxy.ts` as the request arrives;
+- `http_request_completed`, the **completion line**, written by a span processor in `src/lib/request-log.ts` when the request span ends, with `status`, `durationMs`, the route pattern and an `outcome` (`success`, `redirect`, `client_error`, `server_error`).
+
+Unhandled errors go through Next's `onRequestError` hook in `src/instrumentation.ts` and become one `request_failed` line with the error digest.
+
+### What the collector keeps
+
+Alloy (`tools/deploy/minikube/observability/loki/config.alloy`) does not forward raw lines. It copies a short list of fields, each only if it matches a strict pattern, into a new logfmt line:
+
+```alloy
+stage.regex {
+  source     = "raw_route"
+  expression = `^(?P<route>/[A-Za-z0-9_./{}:\[\]-]{0,150})$`
+}
+stage.regex {
+  source     = "raw_outcome"
+  expression = `^(?P<outcome>success|failure|error|redirect|client_error|server_error)$`
+}
+```
+
+The kept fields are `event`, `level`, `route`, `method`, `status`, `duration_ms`, `dependency`, `operation`, `outcome`, `error_type`, `error_code`, `logger` and `trace_id`. Messages, stacks, IP addresses, user agents and request ids stay in the pod log (`kubectl logs`) until the kubelet rotates it. A completion line in Loki:
+
+```text
+event=http_request_completed level=info route=/blog/[slug] method=GET status=200 duration_ms=212 outcome=success trace_id=<32 hex>
+```
+
+### Labels: few and bounded
+
+Every new Loki label value creates a new stream, so the site's streams carry only `namespace`, `pod`, `container`, `service_name`, `level` and Alloy's `job` and `instance`. `trace_id`, routes and user data stay inside the line, and a test in `tools` fails if `trace_id` becomes a label.
+
+### Searching
+
+All of these run as-is in Grafana → Explore → Loki:
+
+```logql
+# Everything for one request (a visitor's error reference is the trace id)
+{namespace="jithendar"} |= "trace_id=<trace id>"
+
+# Errors in the last hour, by event and type
+sum by (event, error_type) (count_over_time({namespace="jithendar", container="web", level="error"} | logfmt [1h]))
+
+# Failed or slow requests
+{namespace="jithendar", container="web"} | logfmt | event="http_request_completed" | status >= 500 or duration_ms > 2000
+```
+
+The first query also finds the practice executor's audit lines for the same request (section 4).
+
+## 4. Tracing: how it starts and how context travels
+
+### Initialization
+
+Next.js calls `register()` in `src/instrumentation.ts` once per server start, before it serves requests. That is where tracing is set up:
+
+```ts
+registerOTel({
+  serviceName: process.env.OTEL_SERVICE_NAME ?? "jithendar-com",
+  attributes: { "service.version": process.env.GIT_SHA ?? "dev", "deployment.environment": process.env.APP_ENV ?? process.env.NODE_ENV ?? "development" },
+  traceSampler: requestSampler,
+  instrumentationConfig: { fetch: fetchInstrumentationConfig() },
+  spanProcessors: [outboundSpanNames, "auto", metricsSpanProcessor, requestLogSpanProcessor],
+});
+```
+
+`"auto"` is the exporter `@vercel/otel` builds from `OTEL_EXPORTER_OTLP_ENDPOINT`. Spans are batched in the background, so a slow or missing collector never holds up a response. The last two processors turn finished request spans into the completion log line and the request metrics, so all three signals describe the same requests.
+
+Next.js creates request, routing and rendering spans, `@vercel/otel` adds outgoing `fetch` and `node:http` spans, and `src/lib/trace.ts` adds one per AWS SDK call (`r2.PutObject`, `ses.SendEmail`, …), `mail.send`, `job <kind>` for queued jobs, `backup.run` and `startup.migrate`.
+
+### Which requests are traced
+
+Every request, except health probes, by `requestSampler` in `src/lib/tracing-config.ts`:
+
+```ts
+shouldSample(context, _traceId, _name, _kind, attributes) {
+  if (isHealthProbe(attributes["http.target"])) return { decision: NOT_RECORD };
+  const parent = trace.getSpanContext(context);
+  if (parent && !parent.isRemote) return { decision: parent.traceFlags & TraceFlags.SAMPLED ? RECORD_AND_SAMPLED : NOT_RECORD };
+  return { decision: RECORD_AND_SAMPLED };
+}
+```
+
+The `isRemote` check is deliberate. Next.js continues any W3C `traceparent` it receives, so without it a request carrying the "not sampled" flag (`00-…-00`) would switch off its own trace, completion line and request metric. A Traefik middleware also removes `traceparent`, `tracestate` and `baggage` from internet requests (`minikube/40-middlewares.yaml`), so visitors cannot pick the trace id that becomes their error reference.
+
+### Across the one internal service boundary
+
+`@vercel/otel` sends `traceparent` only to URLs in `propagateContextUrls`, and the site lists exactly one, the practice executor:
+
+```ts
+propagateContextUrls: executor ? [`${executor}/`] : [],
+```
+
+Third parties (Gemini, R2, Turnstile) never receive the trace context. The executor has no OpenTelemetry SDK; it writes the header's trace id on its JSON audit lines (`executor/app/main.py`):
+
+```python
+TRACEPARENT = re.compile(r"^00-([0-9a-f]{32})-[0-9a-f]{16}-[0-9a-f]{2}$")
+
+def trace_id_of(request: Request) -> str | None:
+    m = TRACEPARENT.match(request.headers.get("traceparent", ""))
+    return m.group(1) if m and m.group(1) != "0" * 32 else None
+```
+
+That is log correlation, not tracing: the executor's work appears in Loki, not as Jaeger spans.
+
+### Useful, safe span names
+
+`@vercel/otel` names outgoing calls after the full URL, R2 object keys and query strings included. A small processor renames them:
+
+```ts
+onStart(span) {
+  const m = /^(http|fetch) ([A-Z]+) (.*)$/s.exec(span.name);
+  if (m) span.updateName(`${m[1]} ${m[2]} ${outboundHost(m[3]!)}`);
+},
+```
+
+so a full R2 object URL becomes `http GET r2.cloudflarestorage.com`. The collector (`tools/…/otel-collector/collector.yaml`) then removes URL, query, client address, SQL and exception attributes and `exception` events; a failed span keeps its status and `error.type`, never the message.
+
+## 5. How logs and traces are correlated
+
+One id ties a request together:
+
+1. The proxy runs inside Next's request span, so the access line, the app's own lines, the completion line and every span share one `traceId`.
+2. When something fails unexpectedly, the visitor sees a reference. For API routes it is `{"error": "Something went wrong…", "code": "internal", "reference": "<trace id>"}`; admin and account forms end the message with `Reference: <trace id>`. Error pages show Next's digest, which is also on the `request_failed` line as `error_code`.
+3. In Grafana, the Loki data source turns `trace_id=<32 hex>` into two links: **View trace** opens it through Grafana's Jaeger data source, and **Open in Jaeger UI** needs the port-forward. Jaeger 2.x serves only its `/api/v3` query API, which Grafana reaches through the experimental `jaegerEnableGrpcEndpoint` toggle. Trace-by-id works, but Jaeger search and the dependency graph fail in Grafana, so dashboards find requests through Loki's `trace_id` instead.
+
+## 6. Metrics, dashboards and alerts
+
+The app serves Prometheus metrics on a second port, 9464, which is not in the public Service; the NetworkPolicy admits only the Prometheus pod to it. Request metrics are built from Next's own server spans:
+
+- `http_server_requests_total{method, route, status}`, with `route` the pattern and `status` a class (`2xx` … `5xx`), so a few dozen series cover the whole site;
+- `http_server_request_duration_seconds` with buckets from 25 ms to 10 s;
+- process memory, CPU, heap and event-loop delay, `jithendar_build_info{version}`, and a few site gauges read from the database every 30 s (published posts, pending comments, failed jobs).
+
+`route="other"` collects requests without a route, mostly static files and the image optimizer. The optimizer fetches `/media/[id]/[name]` in-process, so one optimized image counts as one `other` and one `/media/[id]/[name]` request, in the same trace.
+
+Three dashboards live as JSON in the site's own repository (`grafana/`), and Argo CD's `grafana` Application loads them read-only: **Jithendar.com · Observability** (metrics, a requests table built from completion lines, and the trace and log lines of the one you click), **Overview** (traffic, latency, site counters, runtime) and **Logs** (volume, top events, errors by type).
+
+Some of the queries behind them:
+
+```promql
+# Requests per second, without health probes
+sum(rate(http_server_requests_total{job="jithendar-com", route!="/api/health"}[5m]))
+
+# Slowest routes (p95)
+topk(8, histogram_quantile(0.95, sum by (le, route) (rate(http_server_request_duration_seconds_bucket{job="jithendar-com", route!~"other|/api/health"}[10m]))))
+```
+
+The alert rules (`tools/deploy/minikube/observability/prometheus/files/alerts.yml`) cover the site and the pipeline that watches it:
+
+```yaml
+- alert: JithendarComHighErrorRatio
+  expr: |
+    (
+      sum(rate(http_server_requests_total{job="jithendar-com", route!="/api/health", status="5xx"}[5m]))
+        / sum(rate(http_server_requests_total{job="jithendar-com", route!="/api/health"}[5m]))
+    ) > 0.05
+    and sum(increase(http_server_requests_total{job="jithendar-com", route!="/api/health", status="5xx"}[5m])) >= 3
+  for: 5m
+```
+
+The second condition stops one failure on a quiet night reading as "100 % errors". Next to it are `JithendarComDown`, `JithendarComSlow` (p95 over 2 s for 10 minutes), `ObservabilityTargetDown`, `LogShippingDropped`, `TraceSpansLost` and `JaegerMemoryNearLimit`. Each has a `runbook_url` pointing at a short runbook in `www/docs/OBSERVABILITY.md` or the `tools` observability README.
+
+## 7. An investigation: one slow request
+
+On 4 November 2026, the *Failed or slow requests* query in section 3 returned this line:
+
+```text
+event=http_request_completed level=info route=/api/admin/images/generate method=POST status=200 duration_ms=11861 outcome=success trace_id=e45c6cafc2606df636a9ee757f539e2d
+```
+
+Nearly 12 seconds, but status 200. Searching for the trace id returned the access line, the completion line and an `image_generated` event, so the request worked. The question was where the 12 seconds went.
+
+The trace in Jaeger had 17 spans. The ones longer than 20 ms, with start times relative to the request:
+
+| Starts at | Duration | Span |
+|---|---|---|
+| 4 ms | 11,861 ms | `POST /api/admin/images/generate` |
+| 146 ms | 11,718 ms | `executing api route (app) /api/admin/images/generate` |
+| 180 ms | 10,402 ms | `fetch POST https://generativelanguage.googleapis.com/v1beta/interactions` |
+| 10,596 ms | 1,256 ms | `r2.PutObject` |
+
+About 10.4 seconds were the Gemini call that generates the image and 1.3 seconds the R2 upload; nothing in the site's own code was slow. For an admin-only action the right response is to show the wait in the admin UI, not to tune the server. It does not trip `JithendarComSlow`, which looks at the p95 across all routes.
+
+The trace also showed a gap from section 8: the R2 upload had a child span named after the full object URL. After the fix it is `http PUT r2.cloudflarestorage.com`.
+
+## 8. Gaps the review found, and what changed
+
+Everything below was observed on mk4 on 4 November 2026.
+
+| Gap | Evidence | Fix |
+|---|---|---|
+| Health probes filled the trace store | The 40 newest site traces in Jaeger were all `/api/health` (8 spans each); about 1,080 of roughly 2,250 requests in an hour were probes | The sampler drops probe traces; no access line for probes; dashboards and alerts exclude them |
+| Jaeger ran out of memory | `OOMKilled`, 11 restarts, at 235 Mi of a 256 Mi limit; the in-memory store has no limit by default | Explicit config with `max_traces: 5000` and a 384 Mi limit, plus `JaegerMemoryNearLimit` |
+| Visitors could choose the trace id | A request sent with a made-up `traceparent` was logged and traced under that id | Traefik strips trace headers; the sampler ignores remote sampling flags |
+| URLs in span names | `http GET https://<account>.r2.cloudflarestorage.com/…/<key>?x-id=GetObject`, and a 95 kB `fetch GET data:…` name from the OG image renderer | Names reduced to method and host; `resource.name` is the host; `data:` URLs not traced |
+| Route and outcome lost in Loki | Alloy's route pattern had no `[` or `]`, so every dynamic route was dropped; only `outcome=success` passed | Both patterns widened |
+| Reset tokens could reach the logs | The access line and `request_failed` logged the raw `/api/auth/reset-password/<token>` path | `loggedPath()` writes `/api/auth/reset-password/:token` (and `/preview/:token`); none was in the last 72 hours of logs |
+| Log loss went unnoticed | Alloy dropped 541,189 lines on 2 November after Loki answered `500 Ingester is shutting down` | `LogShippingDropped` alert |
+| The collector could not be monitored | Its metrics port refused connections from other pods | Listener on `0.0.0.0:8888`, Prometheus jobs `otel-collector` and `jaeger`, `TraceSpansLost` alert |
+| Probes diluted the alerts | Half of all requests were fast, successful probes | `route!="/api/health"` in the ratio and latency rules, and at least 3 failures before the error alert |
+
+## 9. Sampling, retention, cardinality, privacy and cost
+
+**Sampling.** Every request except health probes is traced, which small traffic makes affordable. Ratio sampling would first need request metrics built some other way, since they come from the spans.
+
+**Retention.**
+
+| Store | Kept for | Setting |
+|---|---|---|
+| Loki | 7 days | `retention_period: 168h` |
+| Prometheus | 7 days or 4 GB | `retentionTime`, `retentionSize` |
+| Jaeger | newest 5000 traces, lost on restart | `max_traces` |
+| Pod stdout | until kubelet rotates it | full lines with messages and stacks |
+
+**Cardinality.** Metrics use route patterns, status classes and a fixed method list, and any route longer than 120 characters or not starting with `/` becomes `other`. Loki labels are limited to the ones listed in section 3.
+
+**Privacy.** Three layers, each assuming the one before can fail: the app removes tokens from paths and logs no secrets, Alloy keeps only allowlisted fields, and the collector strips URLs, SQL, addresses and exception text from spans. IP addresses and user agents stay in the pod log and never reach Loki.
+
+**Cost.** CPU, memory and disk inside the existing cluster: the collector is limited to 256 Mi, Jaeger to 384 Mi, Prometheus has a 5 Gi volume and Loki a 4 MB/s ingestion limit. No paid service is involved.
+
+## 10. Deploying, verifying and troubleshooting
+
+### Deploy
+
+1. Site: push so CI builds the image, then run `./deploy.sh` from the repository root. It applies `minikube/`, including the `strip-trace-headers` middleware, and restarts the Deployment.
+2. `tools`: push, then sync `loki`, `prometheus`, `grafana`, `otel-collector` and `jaeger` in Argo CD. Jaeger restarts with an empty store.
+
+**Rollback:** `kubectl rollout undo deployment/<name> -n <namespace>` for the site; for `tools`, revert the commit and sync again. Remove `strip-trace-headers` only after re-applying the old Ingress annotation.
+
+### Verify
+
+```bash
+# 1. Probes are no longer traced (empty after the new pods have run for a minute)
+kubectl -n observability port-forward svc/jaeger 16686 &
+curl -s "localhost:16686/api/v3/operations?service=jithendar-com" | grep -c '/api/health'
+
+# 2. A client traceparent is ignored: the logged trace id is not the one sent
+curl -s -o /dev/null https://jithendar.com/robots.txt -H "traceparent: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+# then in Loki: {namespace="jithendar"} |= "0af7651916cd43dd8448eb211c80319c"  → no lines
+```
+
+Then, in Grafana: completion lines for `/blog/[slug]` carry `route=`; Prometheus → Status → Targets shows `jithendar-com` (2 targets), `otel-collector` and `jaeger` up; Prometheus → Alerts shows all rules loaded.
+
+Before deploying I checked locally that the production build sent no probe spans, still traced a `-00` traceparent request, kept answering in 2 to 37 ms with the collector unreachable, and logged reset URLs only as `:token`. The site's, executor's and `tools` test suites passed, and every alert expression evaluated on the live Prometheus.
+
+### Common failures
+
+- **No traces at all.** Check `OTEL_EXPORTER_OTLP_ENDPOINT` in the pod, the `tracing_enabled` startup line, then `otelcol_receiver_accepted_spans`. The NetworkPolicy allows egress to the collector on port 4318 only.
+- **Traces disappear after a while.** Jaeger is in memory: a restart or the 5000-trace limit removes old ones. Look at `JaegerMemoryNearLimit` and the pod's restart count.
+- **A field is in `kubectl logs` but not in Loki.** Alloy drops any field that is not allowlisted or does not match its pattern. Check the pattern in `config.alloy` before changing the app.
+- **"Open in Jaeger UI" does nothing.** Start the port-forward first; the link points at `localhost:16686`. "View trace" works without it.
+- **Request counts look doubled for images.** That is the image optimizer described in section 6.
+
+## 11. Limitations and planned improvements
+
+What the setup does **not** do today:
+
+- **No database or Redis spans.** Drizzle's tracing would put SQL and parameters on spans, and postgres.js has no safe hook, so SQL time shows as a render span with no children.
+- **The executor is only correlated, not traced**; its queue and sandbox pods are invisible in Jaeger.
+- **No delivered alerts**: without Alertmanager, someone has to look at Prometheus. **No browser telemetry** either.
+- **Traces are short-lived**, and Jaeger search works only in its own port-forwarded UI.
+- **Resource attributes say Vercel**: `@vercel/otel` adds `cloud.provider: vercel` by default.
+- **The last spans before a pod stops can be lost**, because nothing flushes the exporter on shutdown.
+- **`/metrics` relies only on the NetworkPolicy.** A `METRICS_TOKEN` secret exists, but no code checks it.
+
+Next steps, none started: Alertmanager, persistent trace storage if traffic justifies it, an OpenTelemetry SDK in the executor, and a privacy-reviewed browser error reporter.

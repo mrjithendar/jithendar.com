@@ -1,0 +1,260 @@
+---
+title: "Traefik on Minikube: Architecture, Features, and Implementation Across My Applications"
+slug: traefik-minikube-architecture-implementation
+description: "How one Traefik v3.7 pod routes jithendar.com, MOKS, Grafana, Prometheus, Loki and Argo CD on a Minikube cluster, checked against Git and the running cluster."
+seoTitle: "Traefik on Minikube: Real Architecture and Setup"
+seoDescription: "How Traefik v3.7 runs on a self-hosted Minikube cluster: Helm install, NodePort and HAProxy exposure, TLS, middlewares, app onboarding and troubleshooting."
+author: jithendar-dharmapuri
+category: kubernetes
+tags: [Traefik, Kubernetes, Minikube, Ingress, cert-manager, Let's Encrypt, Helm, Argo CD, DevOps]
+contentType: tutorial
+status: review
+featuredImage:
+  src: /images/traefik-minikube/traefik-minikube-request-path.png
+  alt: "External request path on the mk4 Minikube cluster. A browser resolves jithendar.com through Cloudflare DNS in DNS-only mode, reaches an HAProxy container on the Hetzner host that forwards TCP 80 and 443 to NodePorts 30080 and 30443 with a PROXY protocol header, then the single Traefik pod, where TLS ends. Traefik matches host and path rules and forwards plain HTTP to Services in the jithendar, moks, monitoring and argocd namespaces. Pod-to-pod calls, such as the site to the practice executor, bypass Traefik."
+  width: 1800
+  height: 1440
+related:
+  - blog/logging-tracing-observability-jithendar-com
+  - blog/github-actions-authenticate-minikube
+sources:
+  - title: "Traefik v3.7: Kubernetes CRD provider"
+    url: https://doc.traefik.io/traefik/reference/install-configuration/providers/kubernetes/kubernetes-crd/
+    publisher: Traefik Labs
+  - title: "Traefik v3.7: Kubernetes Ingress routing configuration"
+    url: https://doc.traefik.io/traefik/reference/routing-configuration/kubernetes/ingress/
+    publisher: Traefik Labs
+  - title: "Traefik v3.7: EntryPoints (asDefault, proxyProtocol, forwardedHeaders)"
+    url: https://doc.traefik.io/traefik/reference/install-configuration/entrypoints/
+    publisher: Traefik Labs
+  - title: "Traefik v3.7: Kubernetes Gateway API provider"
+    url: https://doc.traefik.io/traefik/reference/install-configuration/providers/kubernetes/kubernetes-gateway/
+    publisher: Traefik Labs
+  - title: "Traefik v3.7: Logs and access logs"
+    url: https://doc.traefik.io/traefik/reference/install-configuration/observability/logs-and-accesslogs/
+    publisher: Traefik Labs
+  - title: "Traefik Helm chart"
+    url: https://github.com/traefik/traefik-helm-chart
+    publisher: Traefik Labs
+  - title: "Ingress"
+    url: https://kubernetes.io/docs/concepts/services-networking/ingress/
+    publisher: Kubernetes
+  - title: "Service (NodePort)"
+    url: https://kubernetes.io/docs/concepts/services-networking/service/#type-nodeport
+    publisher: Kubernetes
+  - title: "Proxy status (DNS-only and proxied records)"
+    url: https://developers.cloudflare.com/dns/proxy-status/
+    publisher: Cloudflare
+  - title: "The PROXY protocol, versions 1 and 2"
+    url: https://www.haproxy.org/download/3.2/doc/proxy-protocol.txt
+    publisher: HAProxy
+  - title: "cert-manager: HTTP01 challenge"
+    url: https://cert-manager.io/docs/configuration/acme/http01/
+    publisher: cert-manager
+---
+
+My `mk4` cluster is a five-node Minikube profile on one Hetzner server. It hosts this website, the MOKS SRE portal, Grafana, Prometheus, Loki and Argo CD, and one Traefik pod is the only way in from the internet. This article shows how a request reaches that pod, how Traefik is installed, how I put a new application behind it, and how to check each layer when a route breaks.
+
+Every implementation claim comes from the `tools`, `jithendar.com` and `moks` repositories, or from a read-only inspection of the running cluster on 5 November 2026 (rechecked on 6 November). Recommendations are marked as such.
+
+## How Traefik works, in six terms
+
+The applications listen on private pod addresses that the internet cannot reach. Instead of a public port, certificate and firewall rule per application, one shared ingress accepts ports 80 and 443, terminates TLS and picks the application from host and path. Redirects, authentication, allowlists and compression live there once.
+
+Traefik is that **reverse proxy**. In Kubernetes it is an **ingress controller** that turns routing objects into live proxy configuration, and it **load-balances** across every ready pod behind a route.
+
+- **EntryPoints** are the ports Traefik listens on. My install has `web` (HTTP, container port 8000) and `websecure` (HTTPS, 8443), plus internal `traefik` (8080) and `metrics` (9100) ports that are not exposed.
+- **Routers** match a request by host, path, method or header, then pick middlewares and a service.
+- **Services** are Traefik load balancers, not Kubernetes Services. Traefik reads a Service's EndpointSlices and sends traffic straight to pod addresses, which is why its RBAC role can `list` and `watch` `endpointslices`.
+- **Middlewares** change requests or responses: redirects, authentication, headers, compression, prefix stripping.
+- **Providers** watch the API server and rebuild routers when objects change.
+- **Static configuration** (entryPoints, providers, logging) is fixed at startup. **Dynamic configuration** (routers, services, middlewares, TLS) changes while Traefik runs.
+
+Traefik reads three kinds of routing object. A standard [Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/) is portable, and `traefik.ingress.kubernetes.io/*` annotations extend it. **IngressRoute** and the other `traefik.io` CRDs expose the full rule language, such as method matching and TCP routing by TLS server name. The **Gateway API** needs a separate provider and its own CRDs ([docs](https://doc.traefik.io/traefik/reference/install-configuration/providers/kubernetes/kubernetes-gateway/)).
+
+`mk4` runs the Ingress and CRD providers. Most routes are plain Ingress objects; CRDs appear only where Ingress cannot express the rule. The Gateway API provider is off and its CRDs are not installed.
+
+## The request path on mk4
+
+![External request path on the mk4 Minikube cluster. A browser resolves jithendar.com through Cloudflare DNS in DNS-only mode, reaches an HAProxy container on the Hetzner host that forwards TCP 80 and 443 to NodePorts 30080 and 30443 with a PROXY protocol header, then the single Traefik pod, where TLS ends. Traefik matches host and path rules and forwards plain HTTP to Services in the jithendar, moks, monitoring and argocd namespaces. Pod-to-pod calls, such as the site to the practice executor, bypass Traefik.](/images/traefik-minikube/traefik-minikube-request-path.svg)
+
+This is the verified path of a request to `https://jithendar.com/grafana/`:
+
+1. **DNS.** The domain uses Cloudflare name servers, but the `jithendar.com`, `www` and `db` A records are **DNS only**. They resolve to the Hetzner host, so Cloudflare does not proxy, cache or terminate TLS.
+2. **Host.** Docker-driver Minikube nodes sit on a private Docker network (`192.168.49.0/24`). `deploy/minikube/expose-ingress.sh` in `tools` runs an `haproxy:3.2-alpine` container on that network. It publishes host ports 80 and 443 and forwards raw TCP to NodePorts 30080 and 30443. HAProxy holds no certificates.
+3. **PROXY protocol.** kube-proxy source-NATs NodePort traffic, so every visitor would otherwise look like a node address. HAProxy prepends a PROXY protocol v2 header with the real address, and Traefik trusts that header only from `192.168.49.0/24`.
+4. **Traefik.** The NodePort Service hands the connection to the single Traefik pod, where **TLS terminates**. The `websecure` router matches `Host(jithendar.com)` with path prefix `/grafana` and forwards to the `grafana` Service in namespace `monitoring`.
+5. **Backend.** The upstream connection is **plain HTTP** inside the cluster. No ServersTransport or backend TLS is configured.
+
+All applications share one hostname and differ by path. Traefik ranks rules by length, so `/moks/api/terminal` beats `/moks`, and `/moks` beats the site's catch-all `/`. A path that matches nothing specific falls through to the website, which is why a broken route usually shows the site's 404 page instead of a Traefik error.
+
+Middleware references take the form `<namespace>-<name>@kubernetescrd` and stay inside their own namespace (`allowCrossNamespace` is `false`). Pod-to-pod calls, such as the site calling `practice-executor-api`, use Service DNS names and never touch Traefik.
+
+## How Traefik is installed
+
+Traefik is **not** managed by Argo CD. The `mk-platform` AppProject in `tools` says so: "Argo CD and Traefik controllers remain externally managed". It is a Helm release installed by a person:
+
+| Item | Value | Evidence |
+|---|---|---|
+| Chart | `traefik` 42.0.0 from `https://traefik.github.io/charts` | `scripts/argocd/bootstrap.py`, `helm history` |
+| Application version | Traefik v3.7.14 | live image `docker.io/traefik:v3.7.14` |
+| Namespace / release | `traefik` / `traefik` | live |
+| Values | `deploy/minikube/traefik/values.yaml` | `tools` repository |
+| Replicas | 1 | values, live |
+| Resources | requests 100m / 128Mi, limits 500m / 256Mi | values, live |
+| Persistence | none: certificates come from Kubernetes Secrets | values |
+
+Chart and application versions move independently, so `helm list` and the container image report different numbers. This is the real values file, trimmed, with my comments:
+
+```yaml
+ingressClass:
+  enabled: true
+  name: traefik
+  isDefaultClass: false        # Ingresses must ask for traefik explicitly
+providers:
+  kubernetesIngress:
+    ingressClass: traefik
+    publishedService:
+      enabled: false           # a NodePort has no load-balancer address to copy
+    ingressEndpoint:
+      hostname: jithendar.com  # written to Ingress status so Argo CD reports Healthy
+service:
+  spec:
+    type: NodePort
+ports:
+  web:
+    nodePort: 30080
+    proxyProtocol:
+      trustedIPs: ["192.168.49.0/24"]   # only the Minikube Docker network
+  websecure:
+    nodePort: 30443
+    proxyProtocol:
+      trustedIPs: ["192.168.49.0/24"]
+ingressRoute:
+  dashboard:
+    enabled: false             # no public dashboard route
+```
+
+The pod's arguments confirm it: both providers on with no namespace or label filters, `websecure.http.tls=true`, metrics on the `metrics` entryPoint and `api.dashboard=true`. The chart also installs a cluster-wide ClusterRole that can read Services, EndpointSlices, Secrets, Ingresses and every `traefik.io` kind.
+
+`./bootstrap-cluster.sh --context mk4` runs `bootstrap.py`, which installs cert-manager, then Traefik, then Argo CD and its Ingress (`kubectl apply -k deploy/minikube/argocd`). It **reuses** an existing release and never upgrades it, so a values change goes through the wrapper. You need `helm` and `kubectl` on the client, and Docker on the host for the second step:
+
+```bash
+# From the tools repository. Runs helm upgrade --install with the pinned chart and values.
+KUBE_CONTEXT=mk4 ./deploy-traefik.sh
+# On the Hetzner host only, after Traefik accepts the PROXY header:
+bash deploy/minikube/expose-ingress.sh
+```
+
+The order matters. Traefik must accept the PROXY header before HAProxy sends it, or every connection fails, so `expose-ingress.sh` checks the Deployment's arguments and refuses to run otherwise.
+
+![How routing configuration reaches Traefik on mk4. Three GitHub repositories hold the configuration. A person installs Traefik with Helm through bootstrap.py or deploy-traefik.sh, and bootstrap applies Argo CD's own Ingress with kubectl apply -k. Argo CD, synced manually with deploy.py, applies the Grafana, Prometheus, Loki and MOKS routes. GitHub Actions with the github-ci-applier ServiceAccount and the owner's deploy.sh apply the jithendar.com routes, TLSStore and certificates. Helm values become static configuration that needs a new pod; Traefik's providers watch Ingress and CRD objects and apply them live. A router with a missing middleware or Secret is logged and skipped.](/images/traefik-minikube/traefik-minikube-config-flow.svg)
+
+Routes reach Traefik through several workflows, shown above. Argo CD (manual sync) owns the Grafana, Prometheus, Loki and MOKS routes. The website's routes, TLSStore and certificates come from `./deploy.sh` and a GitHub Actions workflow whose ServiceAccount may create Ingresses and Traefik Middlewares only in namespace `jithendar`. Traefik picks all of them up without a restart.
+
+## Putting an application behind Traefik
+
+Every application on `mk4` is onboarded the same way:
+
+1. **Deploy the application and a ClusterIP Service.** Check that the selector matches the pod labels and that `targetPort` is the container port.
+2. **Confirm ready endpoints:** `kubectl --context mk4 get endpointslices -n <ns> -l kubernetes.io/service-name=<svc>`. Traefik routes only to ready endpoints.
+3. **Write the route** as an Ingress with `ingressClassName: traefik`. Use an IngressRoute only for methods, regexes or TCP.
+4. **Choose host and path.** Use a path on `jithendar.com` unless the application cannot live under a subpath.
+5. **Attach middlewares** with `router.middlewares`, in the same namespace.
+6. **TLS.** Set `router.tls: "true"` and omit `secretName`. The default TLSStore in namespace `jithendar` serves the Let's Encrypt certificate for `jithendar.com` and `www.jithendar.com`. A new hostname needs its own cert-manager Certificate.
+7. **DNS** changes only for a new hostname, as a DNS-only record.
+8. **Commit and reconcile** through the workflow that owns the namespace, then **validate** with `curl` (last section).
+
+Three real routes show the variations:
+
+- **The website** (namespace `jithendar`) has four Ingresses. `jithendar-com` serves `/` on `websecure` with `strip-trace-headers` and `compress`; `jithendar-com-http` redirects HTTP to HTTPS; two `www` Ingresses redirect to the apex. The trace-header middleware drops client-sent `traceparent`, `tracestate` and `baggage`, so a visitor cannot choose the site's trace IDs.
+- **MOKS** (namespace `moks`) uses a Helm template in its own repository. `/moks/api/terminal` goes to `moks-terminal` and the rest of `/moks` to `moks-api`; Traefik passes the WebSocket upgrade through without special settings. The template leaves out compression because it can buffer server-sent events. An IngressRoute for `/opensearch` admits only `GET`, `HEAD` and search `POST`s, behind basic auth, which a plain Ingress cannot express.
+- **Argo CD and Grafana** keep their prefix. Argo CD runs with `server.rootpath: /argocd` and `server.basehref: /argocd`; Grafana sets `root_url: https://jithendar.com/grafana/` and `serve_from_sub_path: true`. Stripping a prefix at Traefik is easy, but the application still builds links, redirects, cookies and asset URLs from its own base path. If the two disagree, the HTML loads and the CSS and JavaScript return 404.
+
+| Application | Namespace | Host/path | Routing resource | Backend Service/port | TLS/authentication | Evidence |
+|---|---|---|---|---|---|---|
+| Website | jithendar | `jithendar.com/`, `www` | 4 × Ingress | `jithendar-com:80` → 3000 | default cert; app login | Git + live; 200/301 |
+| Adminer | jithendar | `/db` | Ingress | `jithendar-db-ui:80` | `ipAllowList`, no-index headers | Git + live; 200 from allowlisted address |
+| PostgreSQL | jithendar | `db.jithendar.com:443` (SNI) | IngressRouteTCP | `jithendar-postgres:5432` | own cert, ALPN `postgresql`, TCP allowlist | Git + live object; not connected |
+| MOKS | moks | `/moks`, `/moks/api/terminal` | Ingress (Helm) | `moks-api:8080`, `moks-terminal:8080` | default cert; app login | Git + live; 308/200 |
+| OpenSearch, Dashboards | moks | `/opensearch`, `/opensearch-dashboards` | 2 × IngressRoute | `moks-opensearch`, `moks-opensearch-dashboards` | basic auth | live; 401 |
+| Grafana | monitoring | `/grafana` | Ingress (chart values) | `grafana:80` | default cert; Grafana login | Git + live; 302 to login |
+| Prometheus | monitoring | `/prometheus`, `/prometheus/api/v1/write` | 2 × Ingress | `prometheus:9090` | basic auth (separate write login) | Git + live; 401 |
+| Loki push | monitoring | `/loki/api/v1/push` | Ingress | `loki:3100` | basic auth | Git + live object |
+| Loki read | monitoring | 4 read paths | Ingress | `loki:3100` | basic auth; **Secret missing, router skipped** | Traefik log; 404 |
+| Argo CD | argocd | `/argocd` | 2 × Ingress | `argocd-server:80` | default cert; Argo CD login | Git + live; 200 |
+
+**No Traefik route:** the practice executor and dispatcher, Redis, Jaeger (port-forward only), the OpenTelemetry Collector and Velero. The `roboshop-ai` namespace now holds only the `ecr-refresh` CronJob, and `/roboshop` returns 404. JFrog and Vault have Ingress files in `tools/deploy/minikube`, but their namespaces do not exist.
+
+## What is enabled, and what is not
+
+**Configured on `mk4`:** Kubernetes discovery with no reloads; host and path routing, including `Exact` paths so that only the Loki and Prometheus write URLs are public; TLS from a default TLSStore with cert-manager HTTP-01 certificates; TCP routing by SNI for PostgreSQL on 443; the `redirectScheme`, `redirectRegex`, `compress`, `basicAuth`, `ipAllowList`, `headers` and `stripPrefix` middlewares; WebSockets; load balancing across the two website pods; and the PROXY protocol.
+
+**Available in v3.7 but off:** access logs ([docs](https://doc.traefik.io/traefik/reference/install-configuration/observability/logs-and-accesslogs/)), OpenTelemetry tracing, the `rateLimit`, `forwardAuth` and `retry` middlewares, weighted routing and mirroring, and the Gateway API provider. Metrics are exposed on port 9100 but not scraped. The dashboard API is on but has no route, so only a port-forward reaches it. The chart also installed `hub.traefik.io` CRDs, which belong to the separate commercial Traefik Hub; nothing uses them.
+
+**Trade-offs.** The useful rules are Traefik-specific annotations and CRDs, so changing controller means rewriting them. The ingress is one pod behind one HAProxy container on one server: a pod restart or host reboot takes every application offline. That is acceptable for a personal platform, but it is not high availability.
+
+## Security boundaries
+
+**In place:**
+
+- **Dashboard and API** have no route (`ingressRoute.dashboard.enabled: false`), and the `traefik` entryPoint is not part of the Service.
+- **Authentication.** Prometheus, Loki and OpenSearch have no login of their own, so Traefik `basicAuth` guards them. Each remote writer has its own Secret, so a push credential cannot read data. Grafana, Argo CD, MOKS and the website use their own logins.
+- **TLS.** cert-manager renews the Let's Encrypt certificate (valid until 25 January 2027 when checked). An unknown SNI still receives the `jithendar.com` certificate from the default store.
+- **Forwarded headers.** `forwardedHeaders.trustedIPs` is unset, so Traefik ignores client-supplied `X-Forwarded-*` headers and builds them from the PROXY-protocol address. Anything that can reach a NodePort from inside `192.168.49.0/24` could forge that header, so the IP allowlist is one layer, not the only one.
+- **Network policies.** Application namespaces such as `jithendar` and `moks` admit traffic from namespace `traefik`; `traefik` itself has no NetworkPolicy.
+
+**Recommended:**
+
+- The ClusterRole can read every Secret in every namespace (chart default). Setting `providers.*.namespaces` narrows what Traefik watches; separate Roles would narrow the RBAC itself.
+- Turn on access logs for an edge request trail, keeping the default `headers.defaultMode: drop` so `Authorization` headers are never logged. Traefik's own logs already reach Loki through Alloy.
+- Add a Prometheus job for Traefik. The pod has `prometheus.io/scrape` annotations, but the Prometheus config in `tools` uses explicit jobs and has none for it.
+
+An ingress controller is not a WAF, a service mesh or API management. It does not stop application-level attacks, encrypt pod-to-pod traffic or replace authentication inside the application.
+
+## Validating and troubleshooting
+
+These read-only checks cover each layer:
+
+```bash
+kubectl --context mk4 -n traefik get pods,svc           # pod Ready; NodePorts 30080/30443
+kubectl --context mk4 get ingressclass                  # "traefik" exists, controller traefik.io/ingress-controller
+kubectl --context mk4 get ingress -A                    # every route, its class and hosts
+kubectl --context mk4 get ingressroute,ingressroutetcp,middleware,tlsstore -A
+kubectl --context mk4 -n jithendar get endpointslices   # backends have ready endpoints
+kubectl --context mk4 -n monitoring describe ingress loki-read
+kubectl --context mk4 -n traefik logs deployment/traefik --tail=100 | grep -i err
+curl -I https://jithendar.com/grafana/login
+```
+
+The logs are the only place Traefik explains a rejected route. On `mk4` they show `secret 'monitoring/loki-read-auth' not found`, so the four Loki read routers are skipped and those requests fall through to the website's 404 page.
+
+To test a route before DNS points at the server, keep the real hostname so that SNI, the `Host` header and the certificate check behave as in production. `curl -H 'Host: …' https://<HOST_IP>/` is not equivalent, because the TLS server name would be the IP address.
+
+```bash
+curl -sv --resolve jithendar.com:443:<HOST_IP> https://jithendar.com/moks/ -o /dev/null
+```
+
+| Symptom | Likely causes | Checks | Resolution |
+|---|---|---|---|
+| Site's 404 page on an app path | no matching router; wrong host or path; router skipped | `get ingress -A`; Traefik logs | fix host or path; create the missing Secret or Middleware |
+| Traefik's plain 404 | no router for that host at all | `curl --resolve` with the exact host | add a rule for the hostname |
+| 502 | pod refuses the connection; wrong `targetPort`; scheme mismatch | `describe svc`; `kubectl port-forward` to the pod | correct the port; match HTTP or HTTPS |
+| 503 | no ready endpoints (`allowEmptyServices` is on) | `get endpointslices` | fix readiness or the Service selector |
+| Certificate warning | host not in the certificate; cert not Ready | `get certificate -A`; `openssl s_client -servername` | add the name to a Certificate |
+| Redirect loop | an external proxy terminating TLS and sending HTTP | `curl -IL` | not applicable while DNS-only; if proxying is enabled, use Full (strict) |
+| Middleware ignored | wrong `<ns>-<name>@kubernetescrd`; CRD missing | Traefik logs | correct the reference |
+| Ingress ignored | `ingressClassName` missing or different | `get ingress -A` CLASS column | set `traefik` (it is not the default class) |
+| CSS and JS 404 under a subpath | prefix stripped while the app assumes `/` | browser network tab | set the app's base path, or use a subdomain |
+| WebSocket drops | compression or buffering middleware; idle timeouts | `curl` with `Upgrade` headers | remove buffering middlewares from the route |
+
+## Gaps found during inspection
+
+1. Secret `monitoring/loki-read-auth` is missing, so the Loki read routes are disabled (still true on 6 November).
+2. Helm revision 2 (the PROXY protocol upgrade on 4 November) is marked `failed` ("context canceled"), although the Deployment runs its arguments. `bootstrap.py` refuses a release that is not `deployed`, so rerun `deploy-traefik.sh` to settle the state.
+3. The Grafana, Prometheus and Loki Ingresses set no `router.entrypoints`, so their routers also attach to the internal `metrics` entryPoint. Set `websecure` explicitly.
+4. Traefik metrics are not scraped, and access logs and tracing are off.
+5. `traefik` has no NetworkPolicy or PodDisruptionBudget, and only one replica runs.
+6. The Traefik README says "Vultr", but the server is at Hetzner, and it links `docs/operations/scripts.md`, which does not exist.
+
+In short: one Helm-managed Traefik v3.7.14 pod serves every public application on `mk4` under one domain, keeps client addresses, and puts admin APIs behind authentication. The limits are a single pod on a single host, no edge logs or scraped metrics, broad Secret access, and route ownership split across several workflows.

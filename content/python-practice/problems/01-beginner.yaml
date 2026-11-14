@@ -1,0 +1,931 @@
+# Beginner: syntax, loops, strings, lists and dictionaries. Format: see docs/PYTHON_PRACTICE.md#problem-format.
+- slug: reverse-word-order
+  title: Reverse the word order
+  difficulty: beginner
+  roles: [python-developer, software-development-engineer, full-stack-engineer]
+  topics: [strings, lists]
+  minutes: 5
+  entrypoint: reverse_words
+  description: |
+    A release-notes tool shows the newest component first. Given a sentence, return the words in reverse
+    order, separated by single spaces.
+
+    Words are separated by one or more spaces; leading and trailing spaces are ignored.
+  constraints: ["0 <= len(sentence) <= 10_000", "Only ASCII spaces separate words"]
+  io: { input: "sentence: str", output: "str — the words in reverse order joined by one space" }
+  starter: |
+    def reverse_words(sentence: str) -> str:
+        # Split the sentence into words, reverse them, join them back.
+        pass
+  hints:
+    - "str.split() with no arguments splits on any run of whitespace and drops empty strings."
+    - "Split into a list, reverse the list (slicing with [::-1] or reversed()), then join with a single space."
+    - |
+      words = sentence.split()
+      return " ".join(<words in reverse order>)
+  solution:
+    code: |
+      def reverse_words(sentence: str) -> str:
+          return " ".join(reversed(sentence.split()))
+    explanation: |
+      `split()` without a separator collapses runs of spaces and ignores leading/trailing whitespace, so the
+      result is exactly the list of words. `reversed()` walks it backwards without copying, and `" ".join`
+      rebuilds the sentence with single spaces.
+    time: O(n) in the length of the sentence
+    space: O(n) for the list of words and the result
+    alternatives: ["Slice the list: ' '.join(sentence.split()[::-1])", "Walk the string from the end and collect words manually (useful when you cannot allocate a list)"]
+    edge_cases: ["Empty string returns an empty string", "Only spaces returns an empty string", "Single word is returned unchanged"]
+    production: ["split(' ') (with an argument) keeps empty strings — a common bug with repeated spaces", "For huge inputs, stream words instead of materialising them"]
+    alternative_code:
+      - |
+        def reverse_words(sentence: str) -> str:
+            return " ".join(sentence.split()[::-1])
+  examples:
+    - { args: ["deploy api then web"], expected: "web then api deploy", explanation: "Four words, last first." }
+    - { args: ["  hello   world  "], expected: "world hello" }
+  tests:
+    - { args: [""], expected: "" }
+  hidden:
+    - { args: ["single"] }
+    - { args: ["a b c d e f g"] }
+    - { args: ["     "] }
+
+- slug: count-word-frequencies
+  title: Count word frequencies
+  difficulty: beginner
+  roles: [python-developer, data-engineer, machine-learning-engineer]
+  topics: [strings, dictionaries]
+  minutes: 8
+  entrypoint: word_counts
+  description: |
+    Count how often each word appears in a block of text. Words are compared case-insensitively and are
+    made of letters, digits and apostrophes; everything else separates words.
+
+    Return a dictionary mapping each lowercase word to its count. Key order does not matter.
+  constraints: ["0 <= len(text) <= 100_000"]
+  io: { input: "text: str", output: "dict[str, int]" }
+  starter: |
+    def word_counts(text: str) -> dict[str, int]:
+        counts = {}
+        # Your code here
+        return counts
+  hints:
+    - "Normalise first (lowercase), then decide what counts as a word."
+    - "Replace every character that is not a letter, digit or apostrophe with a space, then split. Count with a dict or collections.Counter."
+    - |
+      cleaned = "".join(ch if ch.isalnum() or ch == "'" else " " for ch in text.lower())
+      for word in cleaned.split():
+          counts[word] = counts.get(word, 0) + 1
+  solution:
+    code: |
+      from collections import Counter
+
+      def word_counts(text: str) -> dict[str, int]:
+          cleaned = "".join(ch if ch.isalnum() or ch == "'" else " " for ch in text.lower())
+          return dict(Counter(cleaned.split()))
+    explanation: |
+      Lowercasing makes "Error" and "error" the same word. Mapping every separator to a space lets `split()`
+      do the tokenising, and `Counter` counts in one pass.
+    time: O(n)
+    space: O(k) for k distinct words
+    alternatives: ["re.findall(r\"[a-z0-9']+\", text.lower()) to tokenise", "A plain dict with dict.get(word, 0) + 1"]
+    edge_cases: ["Empty text returns {}", "Punctuation-only text returns {}", "Apostrophes stay inside words (don't, it's)"]
+    production: ["For multilingual text, isalnum() accepts Unicode letters — decide whether you want that", "Counter.most_common(n) gives the top words without sorting everything"]
+  examples:
+    - { args: ["Error: disk full. ERROR: disk full!"], expected: { error: 2, disk: 2, full: 2 } }
+    - { args: ["it's fine, it's FINE"], expected: { "it's": 2, fine: 2 } }
+  tests:
+    - { args: [""], expected: {} }
+  hidden:
+    - { args: ["a a a b"] }
+    - { args: ["!!! ... ???"] }
+    - { args: ["Line one\nline two\tLINE three"] }
+
+- slug: service-status-summary
+  title: Summarise service statuses
+  difficulty: beginner
+  roles: [devops-engineer, site-reliability-engineer, platform-engineer]
+  topics: [dictionaries, loops]
+  minutes: 6
+  entrypoint: status_summary
+  description: |
+    A health endpoint returns a list of services, each a dictionary with a `name` and a `status`
+    (for example "up", "down" or "degraded").
+
+    Return a dictionary mapping each status to the **sorted** list of service names with that status.
+  constraints: ["0 <= len(services) <= 10_000", "Service names are unique"]
+  io: { input: "services: list[dict] with keys name, status", output: "dict[str, list[str]]" }
+  starter: |
+    def status_summary(services: list[dict]) -> dict[str, list[str]]:
+        pass
+  hints:
+    - "This is a grouping problem: one bucket per status."
+    - "Use dict.setdefault(status, []).append(name) or collections.defaultdict(list), then sort each list."
+    - |
+      groups = {}
+      for s in services:
+          groups.setdefault(s["status"], []).append(s["name"])
+      sort each list in groups
+  solution:
+    code: |
+      from collections import defaultdict
+
+      def status_summary(services: list[dict]) -> dict[str, list[str]]:
+          groups: dict[str, list[str]] = defaultdict(list)
+          for service in services:
+              groups[service["status"]].append(service["name"])
+          return {status: sorted(names) for status, names in groups.items()}
+    explanation: |
+      `defaultdict(list)` creates a bucket the first time a status is seen. Sorting at the end (instead of
+      inserting in order) keeps the loop simple and costs O(n log n) once.
+    time: O(n log n) because of sorting
+    space: O(n)
+    alternatives: ["itertools.groupby after sorting by status", "dict.setdefault without importing defaultdict"]
+    edge_cases: ["No services returns {}", "All services share one status"]
+    production: ["Real health checks also report unknown or missing statuses — decide how to bucket them", "Sorting makes output stable for diffs and alerts"]
+  examples:
+    - args: [[{ name: "web", status: "up" }, { name: "api", status: "down" }, { name: "auth", status: "up" }]]
+      expected: { up: ["auth", "web"], down: ["api"] }
+  tests:
+    - { args: [[]], expected: {} }
+  hidden:
+    - { args: [[{ name: "z", status: "degraded" }, { name: "a", status: "degraded" }, { name: "m", status: "degraded" }]] }
+    - { args: [[{ name: "db", status: "up" }]] }
+
+- slug: normalize-hostnames
+  title: Normalise and deduplicate hostnames
+  difficulty: beginner
+  roles: [devops-engineer, platform-engineer, cloud-engineer]
+  topics: [strings, lists, sets]
+  minutes: 8
+  entrypoint: normalize_hosts
+  description: |
+    An inventory file lists hostnames typed by different people. Normalise each one by trimming whitespace,
+    lowercasing it and removing a single trailing dot (the DNS root). Drop entries that are empty after
+    normalising, and drop duplicates while keeping the **first** occurrence's position.
+  constraints: ["0 <= len(hosts) <= 50_000"]
+  io: { input: "hosts: list[str]", output: "list[str] in first-seen order" }
+  starter: |
+    def normalize_hosts(hosts: list[str]) -> list[str]:
+        return hosts
+  hints:
+    - "Normalise first, then deduplicate — duplicates only become visible after normalising."
+    - "Keep a set of names already seen and append to the result only when a name is new."
+    - |
+      seen, out = set(), []
+      for h in hosts:
+          name = h.strip().lower(); remove one trailing "."
+          if name and name not in seen: add to both
+  solution:
+    code: |
+      def normalize_hosts(hosts: list[str]) -> list[str]:
+          seen: set[str] = set()
+          out: list[str] = []
+          for raw in hosts:
+              name = raw.strip().lower()
+              if name.endswith("."):
+                  name = name[:-1]
+              if name and name not in seen:
+                  seen.add(name)
+                  out.append(name)
+          return out
+    explanation: |
+      A set gives O(1) membership checks while the list preserves order. Removing only one trailing dot
+      matches DNS semantics ("example.com." is the fully qualified form of "example.com").
+    time: O(n)
+    space: O(n)
+    alternatives: ["list(dict.fromkeys(normalised)) — dicts keep insertion order", "removesuffix('.') on Python 3.9+"]
+    edge_cases: ["Whitespace-only entries are dropped", "A lone '.' normalises to empty and is dropped", "Case-only duplicates collapse"]
+    production: ["Internationalised names need IDNA encoding before comparison", "Validate labels (<= 63 characters, no underscores) if the list feeds DNS"]
+    alternative_code:
+      - |
+        def normalize_hosts(hosts: list[str]) -> list[str]:
+            names = (h.strip().lower().removesuffix(".") for h in hosts)
+            return list(dict.fromkeys(n for n in names if n))
+  examples:
+    - { args: [[" Web01.example.com. ", "web01.EXAMPLE.com", "db01.example.com"]], expected: ["web01.example.com", "db01.example.com"] }
+  tests:
+    - { args: [["", "   ", "."]], expected: [] }
+  hidden:
+    - { args: [["A", "a", "B.", "b", "a."]] }
+    - { args: [["x.y.z", "X.Y.Z.", " x.y.z "]] }
+
+- slug: classify-latency
+  title: Classify request latencies
+  difficulty: beginner
+  roles: [site-reliability-engineer, backend-engineer, devops-engineer]
+  topics: [loops, lists]
+  minutes: 5
+  entrypoint: classify
+  description: |
+    Label each latency (in milliseconds) as "ok", "warn" or "crit" using two thresholds: a value is "crit"
+    when it is greater than or equal to `crit_ms`, "warn" when it is greater than or equal to `warn_ms`, and
+    "ok" otherwise. Return the labels in the same order as the input.
+  constraints: ["0 <= len(latencies) <= 100_000", "0 < warn_ms <= crit_ms"]
+  io: { input: "latencies: list[float], warn_ms: float, crit_ms: float", output: "list[str]" }
+  starter: |
+    def classify(latencies: list[float], warn_ms: float, crit_ms: float) -> list[str]:
+        labels = []
+        return labels
+  hints:
+    - "Check the most severe condition first."
+    - "One if/elif/else per value, appended to a list (or a list comprehension calling a helper)."
+    - |
+      for ms in latencies:
+          if ms >= crit_ms: "crit"
+          elif ms >= warn_ms: "warn"
+          else: "ok"
+  solution:
+    code: |
+      def classify(latencies: list[float], warn_ms: float, crit_ms: float) -> list[str]:
+          def label(ms: float) -> str:
+              if ms >= crit_ms:
+                  return "crit"
+              if ms >= warn_ms:
+                  return "warn"
+              return "ok"
+          return [label(ms) for ms in latencies]
+    explanation: Ordering the checks from most to least severe means each value matches exactly one branch.
+    time: O(n)
+    space: O(n) for the output
+    alternatives: ["bisect.bisect_right([warn_ms, crit_ms], ms) to index into ['ok', 'warn', 'crit']"]
+    edge_cases: ["Values exactly on a threshold take the higher label", "warn_ms == crit_ms means nothing is 'warn'"]
+    production: ["Alerting on single samples is noisy — real alerts use percentiles over windows", "Keep thresholds in configuration, not code"]
+  examples:
+    - { args: [[120, 250, 900, 499.9], 250, 500], expected: ["ok", "warn", "crit", "warn"] }
+  tests:
+    - { args: [[], 1, 2], expected: [] }
+  hidden:
+    - { args: [[100, 100, 99.99], 100, 100] }
+    - { args: [[0, 1000000], 5, 10] }
+
+- slug: parse-env-file
+  title: Parse a .env file
+  difficulty: beginner
+  roles: [devops-engineer, infrastructure-automation-engineer, python-developer]
+  topics: [file-handling, strings, dictionaries]
+  minutes: 10
+  entrypoint: parse_env
+  description: |
+    Parse the text of a `.env` file into a dictionary.
+
+    - Each meaningful line is `KEY=VALUE`. Split on the **first** `=` only (values may contain `=`).
+    - Trim whitespace around keys and values.
+    - If a value is wrapped in matching single or double quotes, remove them.
+    - Ignore blank lines and lines whose first non-space character is `#`.
+    - Ignore lines without `=`.
+    - When a key repeats, the last value wins.
+  constraints: ["0 <= len(text) <= 100_000"]
+  io: { input: "text: str", output: "dict[str, str]" }
+  starter: |
+    def parse_env(text: str) -> dict[str, str]:
+        result = {}
+        for line in text.splitlines():
+            pass
+        return result
+  hints:
+    - "Handle each line independently; skip early for comments and blanks."
+    - "str.partition('=') splits on the first '=' and tells you whether it was found."
+    - |
+      key, sep, value = line.partition("=")
+      if not sep: continue
+      value = value.strip(); if value[0] == value[-1] and value[0] in "'\"" and len(value) >= 2: value = value[1:-1]
+  solution:
+    code: |
+      def parse_env(text: str) -> dict[str, str]:
+          result: dict[str, str] = {}
+          for line in text.splitlines():
+              stripped = line.strip()
+              if not stripped or stripped.startswith("#"):
+                  continue
+              key, sep, value = stripped.partition("=")
+              if not sep:
+                  continue
+              key, value = key.strip(), value.strip()
+              if not key:
+                  continue
+              if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+                  value = value[1:-1]
+              result[key] = value
+          return result
+    explanation: |
+      `partition` never raises and splits only once, which handles values such as `URL=a=b`. Quote stripping
+      requires matching quotes at both ends, so a value like `"abc` is kept as-is.
+    time: O(n)
+    space: O(n)
+    alternatives: ["line.split('=', 1) with a length check", "python-dotenv in real projects"]
+    edge_cases: ["Empty values (KEY=) map to ''", "Lines with an empty key are ignored", "A single quote character is not stripped"]
+    production: ["Never log the parsed values — .env files usually hold secrets", "Real dotenv parsers also handle export prefixes and escapes"]
+  examples:
+    - args: ["# db\nDB_HOST = localhost\nDB_URL=\"postgres://u:p@h/db?sslmode=require\"\n\nDEBUG=false\nDEBUG=true"]
+      expected: { DB_HOST: localhost, DB_URL: "postgres://u:p@h/db?sslmode=require", DEBUG: "true" }
+  tests:
+    - { args: ["no equals sign here\n   # comment"], expected: {} }
+  hidden:
+    - { args: ["A='x=y'\nB=\nC=\"unterminated\n=novalue"] }
+    - { args: ["  K  =  v  \nK2='"] }
+
+- slug: valid-env-var-name
+  title: Validate environment variable names
+  difficulty: beginner
+  roles: [devops-engineer, security-engineer, automation-engineer]
+  topics: [strings, validation]
+  minutes: 6
+  entrypoint: is_valid_name
+  description: |
+    CI pipelines reject environment variable names that some shells cannot export. A name is valid when it
+    is non-empty, contains only uppercase ASCII letters, digits and underscores, and does not start with a
+    digit. Return True or False.
+  constraints: ["0 <= len(name) <= 256"]
+  io: { input: "name: str", output: "bool" }
+  starter: |
+    def is_valid_name(name: str) -> bool:
+        return True
+  hints:
+    - "Check the special first-character rule separately from the rule for every character."
+    - "Build the allowed set once (string.ascii_uppercase + string.digits + '_') and test every character."
+    - |
+      if not name or name[0].isdigit(): return False
+      return all(ch in ALLOWED for ch in name)
+  solution:
+    code: |
+      import string
+
+      ALLOWED = set(string.ascii_uppercase + string.digits + "_")
+
+      def is_valid_name(name: str) -> bool:
+          if not name or name[0] in string.digits:
+              return False
+          return all(ch in ALLOWED for ch in name)
+    explanation: |
+      `str.isupper()` and `str.isdigit()` accept non-ASCII characters (for example "²" is a digit), so an
+      explicit ASCII set is safer for validation.
+    time: O(n)
+    space: O(1)
+    alternatives: ["re.fullmatch(r'[A-Z_][A-Z0-9_]*', name) is not None"]
+    edge_cases: ["Empty string is invalid", "'_' alone is valid", "Lowercase letters are invalid", "Unicode digits are invalid"]
+    production: ["Validate at the boundary (API, form) and report which character is wrong", "POSIX allows lowercase too — this policy is stricter on purpose"]
+    alternative_code:
+      - |
+        import re
+
+        def is_valid_name(name: str) -> bool:
+            return re.fullmatch(r"[A-Z_][A-Z0-9_]*", name) is not None
+  examples:
+    - { args: ["DATABASE_URL"], expected: true }
+    - { args: ["9LIVES"], expected: false }
+    - { args: ["api_key"], expected: false }
+  tests:
+    - { args: [""], expected: false }
+  hidden:
+    - { args: ["_"] }
+    - { args: ["A²"] }
+    - { args: ["A-B"] }
+    - { args: ["X9_Y"] }
+
+- slug: merge-resource-tags
+  title: Merge resource tags
+  difficulty: beginner
+  roles: [cloud-engineer, aws-engineer, infrastructure-automation-engineer]
+  topics: [dictionaries]
+  minutes: 6
+  entrypoint: merge_tags
+  description: |
+    Cloud resources get default tags from the platform and extra tags from the team. Merge `defaults` and
+    `overrides` (team values win). Then remove every tag whose value is an empty string, because the cloud
+    API rejects them. Tag keys are case-sensitive.
+  constraints: ["Up to 50 tags each"]
+  io: { input: "defaults: dict[str, str], overrides: dict[str, str]", output: "dict[str, str]" }
+  starter: |
+    def merge_tags(defaults: dict[str, str], overrides: dict[str, str]) -> dict[str, str]:
+        pass
+  hints:
+    - "Merging dictionaries where later values win is built into Python."
+    - "Use {**defaults, **overrides} or defaults | overrides, then filter with a dict comprehension."
+    - "merged = defaults | overrides; return {k: v for k, v in merged.items() if v != ''}"
+  solution:
+    code: |
+      def merge_tags(defaults: dict[str, str], overrides: dict[str, str]) -> dict[str, str]:
+          merged = {**defaults, **overrides}
+          return {key: value for key, value in merged.items() if value != ""}
+    explanation: Unpacking the second dictionary last makes its values win; the comprehension drops empty values without mutating the inputs.
+    time: O(n + m)
+    space: O(n + m)
+    alternatives: ["defaults | overrides (Python 3.9+)", "copy() then update()"]
+    edge_cases: ["An override with '' removes a default tag", "Both empty returns {}"]
+    production: ["Do not mutate the caller's dictionaries", "AWS limits tags to 50 per resource and reserves the aws: prefix"]
+  examples:
+    - { args: [{ owner: "platform", env: "prod" }, { owner: "payments", cost-center: "42" }], expected: { owner: "payments", env: "prod", cost-center: "42" } }
+    - { args: [{ env: "prod", temp: "yes" }, { temp: "" }], expected: { env: "prod" } }
+  hidden:
+    - { args: [{}, {}] }
+    - { args: [{ Env: "a" }, { env: "b" }] }
+
+- slug: top-n-scores
+  title: Leaderboard top N
+  difficulty: beginner
+  roles: [python-developer, data-engineer, software-development-engineer]
+  topics: [sorting, lists]
+  minutes: 7
+  entrypoint: top_n
+  description: |
+    Given a dictionary of player names to scores, return the top `n` players as `[name, score]` pairs,
+    highest score first. Break ties alphabetically by name. If there are fewer than `n` players, return all.
+  constraints: ["0 <= n <= 10_000"]
+  io: { input: "scores: dict[str, int], n: int", output: "list[[str, int]]" }
+  starter: |
+    def top_n(scores: dict[str, int], n: int) -> list[list]:
+        return []
+  hints:
+    - "Sorting by two keys at once handles ties."
+    - "sorted(..., key=lambda item: (-score, name)) sorts by score descending, then name ascending."
+    - "ranked = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0])); return [[k, v] for k, v in ranked[:n]]"
+  solution:
+    code: |
+      def top_n(scores: dict[str, int], n: int) -> list[list]:
+          ranked = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))
+          return [[name, score] for name, score in ranked[:n]]
+    explanation: Negating the score turns "descending" into "ascending", so one key tuple expresses both orders.
+    time: O(k log k) for k players
+    space: O(k)
+    alternatives: ["heapq.nsmallest(n, items, key=...) is O(k log n) when n is much smaller than k"]
+    edge_cases: ["n = 0 returns []", "n larger than the number of players returns everyone"]
+    production: ["For live leaderboards keep a sorted structure (Redis ZSET) instead of sorting on every request"]
+    alternative_code:
+      - |
+        import heapq
+
+        def top_n(scores: dict[str, int], n: int) -> list[list]:
+            best = heapq.nsmallest(n, scores.items(), key=lambda kv: (-kv[1], kv[0]))
+            return [[k, v] for k, v in best]
+  examples:
+    - { args: [{ ana: 90, bo: 95, cy: 90 }, 2], expected: [["bo", 95], ["ana", 90]] }
+  tests:
+    - { args: [{}, 3], expected: [] }
+  hidden:
+    - { args: [{ a: 1, b: 1, c: 1 }, 5] }
+    - { args: [{ x: -5, y: 0 }, 0] }
+
+- slug: chunk-list
+  title: Split work into batches
+  difficulty: beginner
+  roles: [python-developer, data-engineer, genai-engineer]
+  topics: [lists, loops]
+  minutes: 5
+  entrypoint: chunk
+  description: |
+    APIs accept a limited number of items per request. Split `items` into consecutive batches of at most
+    `size` items, keeping the original order. The last batch may be smaller.
+  constraints: ["1 <= size <= 10_000"]
+  io: { input: "items: list, size: int", output: "list[list]" }
+  starter: |
+    def chunk(items: list, size: int) -> list[list]:
+        pass
+  hints:
+    - "Batch k starts at index k * size."
+    - "range(0, len(items), size) gives every batch start; slice from there."
+    - "return [items[i:i + size] for i in range(0, len(items), size)]"
+  solution:
+    code: |
+      def chunk(items: list, size: int) -> list[list]:
+          return [items[i : i + size] for i in range(0, len(items), size)]
+    explanation: Slicing past the end of a list is safe in Python, so the last short batch needs no special case.
+    time: O(n)
+    space: O(n)
+    alternatives: ["itertools.batched(items, size) on Python 3.12+ (yields tuples)", "A generator that yields slices lazily"]
+    edge_cases: ["Empty list returns []", "size larger than the list returns one batch"]
+    production: ["Prefer a generator for large inputs so batches are produced on demand"]
+  examples:
+    - { args: [[1, 2, 3, 4, 5], 2], expected: [[1, 2], [3, 4], [5]] }
+  tests:
+    - { args: [[], 3], expected: [] }
+  hidden:
+    - { args: [["a", "b"], 10] }
+    - { args: [[1, 2, 3], 1] }
+
+- slug: flatten-batches
+  title: Flatten nested batches
+  difficulty: beginner
+  roles: [data-engineer, python-developer, forward-deployed-engineer]
+  topics: [lists, loops]
+  minutes: 5
+  entrypoint: flatten
+  description: |
+    A paginated export returned a list of pages, each a list of records. Flatten it into a single list in
+    order. Pages can be empty. Only one level of nesting needs to be removed.
+  io: { input: "pages: list[list]", output: "list" }
+  starter: |
+    def flatten(pages: list[list]) -> list:
+        pass
+  hints:
+    - "You need every item of every page, in order."
+    - "A nested comprehension reads left to right like nested for loops."
+    - "return [item for page in pages for item in page]"
+  solution:
+    code: |
+      def flatten(pages: list[list]) -> list:
+          return [record for page in pages for record in page]
+    explanation: The comprehension's loops nest in the order written, so records keep their page order.
+    time: O(total records)
+    space: O(total records)
+    alternatives: ["list(itertools.chain.from_iterable(pages))", "Extend a result list in a loop"]
+    edge_cases: ["No pages", "Empty pages in the middle", "Records that are themselves lists stay nested"]
+    production: ["chain.from_iterable stays lazy if you don't call list()"]
+    alternative_code:
+      - |
+        from itertools import chain
+
+        def flatten(pages: list[list]) -> list:
+            return list(chain.from_iterable(pages))
+  examples:
+    - { args: [[[1, 2], [], [3]]], expected: [1, 2, 3] }
+  hidden:
+    - { args: [[]] }
+    - { args: [[[[1]], [[2, 3]]]] }
+
+- slug: slugify-title
+  title: Generate URL slugs
+  difficulty: beginner
+  roles: [full-stack-engineer, backend-engineer, python-developer]
+  topics: [strings]
+  minutes: 8
+  entrypoint: slugify
+  description: |
+    Turn an article title into a URL slug: lowercase it, replace every run of characters that are not ASCII
+    letters or digits with a single hyphen, and remove hyphens at the start and end.
+  constraints: ["0 <= len(title) <= 500"]
+  io: { input: "title: str", output: "str" }
+  starter: |
+    def slugify(title: str) -> str:
+        return title
+  hints:
+    - "Think of the title as alternating runs of 'good' and 'bad' characters."
+    - "Walk the characters, append letters/digits, and append a single '-' when a bad run starts. Or use re.sub."
+    - "re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')"
+  solution:
+    code: |
+      import re
+
+      def slugify(title: str) -> str:
+          return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    explanation: The character class matches whole runs of disallowed characters, so each run becomes one hyphen.
+    time: O(n)
+    space: O(n)
+    alternatives: ["A manual loop that tracks whether the previous character was a separator"]
+    edge_cases: ["Accented letters are separators here (é becomes '-')", "A title of only symbols becomes ''"]
+    production: ["Transliterate with unicodedata.normalize('NFKD') first if you want 'café' → 'cafe'", "Ensure uniqueness against existing slugs"]
+  examples:
+    - { args: ["Kubernetes 1.37: What's New?"], expected: "kubernetes-1-37-what-s-new" }
+  tests:
+    - { args: ["  --Hello__World--  "], expected: "hello-world" }
+  hidden:
+    - { args: ["!!!"] }
+    - { args: ["Café au lait"] }
+    - { args: ["already-a-slug"] }
+
+- slug: disk-usage-by-directory
+  title: Disk usage by top-level directory
+  difficulty: beginner
+  roles: [devops-engineer, automation-engineer, site-reliability-engineer]
+  topics: [dictionaries, strings, file-handling]
+  minutes: 8
+  entrypoint: usage_by_top_dir
+  description: |
+    You have a list of `[path, size_bytes]` pairs for files, with absolute POSIX paths such as
+    `/var/log/syslog`. Sum the sizes per top-level directory (`/var`, `/home`, ...). Files directly in `/`
+    count under `/`.
+  io: { input: "files: list[[str, int]]", output: "dict[str, int]" }
+  starter: |
+    def usage_by_top_dir(files: list[list]) -> dict[str, int]:
+        pass
+  hints:
+    - "The top-level directory is the first path component."
+    - "Split the path on '/'. For '/var/log/x' the parts are ['', 'var', 'log', 'x']."
+    - |
+      parts = path.split("/")
+      top = "/" + parts[1] if len(parts) > 2 else "/"
+      totals[top] = totals.get(top, 0) + size
+  solution:
+    code: |
+      def usage_by_top_dir(files: list[list]) -> dict[str, int]:
+          totals: dict[str, int] = {}
+          for path, size in files:
+              parts = path.split("/")
+              top = "/" + parts[1] if len(parts) > 2 else "/"
+              totals[top] = totals.get(top, 0) + size
+          return totals
+    explanation: A file directly under the root splits into two parts ('', 'name'); anything deeper has at least three.
+    time: O(total path length)
+    space: O(d) for d top-level directories
+    alternatives: ["pathlib.PurePosixPath(path).parts", "collections.Counter for the sums"]
+    edge_cases: ["Files at the root", "Zero-byte files still create a key"]
+    production: ["Real disk usage counts blocks, not bytes, and follows hard links once"]
+  examples:
+    - { args: [[["/var/log/syslog", 300], ["/var/lib/x", 200], ["/home/a/.bashrc", 50], ["/vmlinuz", 10]]], expected: { "/var": 500, "/home": 50, "/": 10 } }
+  hidden:
+    - { args: [[]] }
+    - { args: [[["/a/b", 0], ["/a/c/d/e", 7]]] }
+
+- slug: count-unique-ips
+  title: Count unique client IPs
+  difficulty: beginner
+  roles: [site-reliability-engineer, security-engineer, devops-engineer]
+  topics: [sets, log-analysis, strings]
+  minutes: 6
+  entrypoint: unique_ips
+  description: |
+    Each access-log line starts with the client IP followed by a space. Return how many **distinct** IPs
+    appear. Ignore blank lines.
+  io: { input: "lines: list[str]", output: "int" }
+  starter: |
+    def unique_ips(lines: list[str]) -> int:
+        return 0
+  hints:
+    - "Sets keep only distinct values."
+    - "The IP is the first whitespace-separated token: line.split()[0]."
+    - "return len({line.split()[0] for line in lines if line.strip()})"
+  solution:
+    code: |
+      def unique_ips(lines: list[str]) -> int:
+          return len({line.split(maxsplit=1)[0] for line in lines if line.strip()})
+    explanation: A set comprehension collects each IP once; maxsplit avoids splitting the rest of the line.
+    time: O(total characters)
+    space: O(u) for u distinct IPs
+    alternatives: ["A loop adding to a set", "HyperLogLog for approximate counts at very large scale"]
+    edge_cases: ["Blank lines", "The same IP many times"]
+    production: ["Behind a proxy the first field is the proxy — use X-Forwarded-For carefully", "IPv6 addresses can be written several ways; normalise with ipaddress"]
+  examples:
+    - { args: [["10.0.0.1 GET /", "10.0.0.2 GET /a", "10.0.0.1 POST /b", ""]], expected: 2 }
+  hidden:
+    - { args: [[]] }
+    - { args: [["::1 GET /", "::1 GET /", "   "]] }
+
+- slug: transpose-matrix
+  title: Transpose a metrics table
+  difficulty: beginner
+  roles: [data-engineer, machine-learning-engineer, python-developer]
+  topics: [lists]
+  minutes: 5
+  entrypoint: transpose
+  description: |
+    A table of metrics is stored row by row (one row per host, one column per metric). Return it column by
+    column. All rows have the same length. An empty table transposes to an empty list.
+  io: { input: "rows: list[list]", output: "list[list]" }
+  starter: |
+    def transpose(rows: list[list]) -> list[list]:
+        pass
+  hints:
+    - "Column j is made of element j from every row."
+    - "zip(*rows) groups the j-th elements of all rows."
+    - "return [list(col) for col in zip(*rows)]"
+  solution:
+    code: |
+      def transpose(rows: list[list]) -> list[list]:
+          return [list(column) for column in zip(*rows)]
+    explanation: Unpacking rows into zip pairs up elements by position; zip stops at the shortest row, which is fine because all rows match.
+    time: O(r × c)
+    space: O(r × c)
+    alternatives: ["Nested comprehension: [[row[j] for row in rows] for j in range(len(rows[0]))]", "numpy.array(rows).T"]
+    edge_cases: ["Empty table", "A single row becomes single-element columns", "Rows of length zero transpose to []"]
+    production: ["For large numeric tables use NumPy — transposing is then a view, not a copy"]
+  examples:
+    - { args: [[[1, 2, 3], [4, 5, 6]]], expected: [[1, 4], [2, 5], [3, 6]] }
+  hidden:
+    - { args: [[]] }
+    - { args: [[["a", "b"]]] }
+    - { args: [[[], []]] }
+
+- slug: running-average
+  title: Running average
+  difficulty: beginner
+  roles: [data-engineer, machine-learning-engineer, site-reliability-engineer]
+  topics: [loops, statistics]
+  minutes: 6
+  entrypoint: running_average
+  comparator: float
+  description: |
+    For a list of numbers, return a list where element i is the mean of the first i + 1 numbers, rounded to
+    two decimal places.
+  io: { input: "values: list[float]", output: "list[float]" }
+  starter: |
+    def running_average(values: list[float]) -> list[float]:
+        pass
+  hints:
+    - "You don't need to re-add everything for each position."
+    - "Keep a running total; the average at position i is total / (i + 1)."
+    - |
+      total = 0
+      for i, v in enumerate(values):
+          total += v
+          append round(total / (i + 1), 2)
+  solution:
+    code: |
+      def running_average(values: list[float]) -> list[float]:
+          out, total = [], 0.0
+          for i, value in enumerate(values, start=1):
+              total += value
+              out.append(round(total / i, 2))
+          return out
+    explanation: A running sum makes each step O(1) instead of re-summing the prefix.
+    time: O(n)
+    space: O(n)
+    alternatives: ["itertools.accumulate(values) then divide by position"]
+    edge_cases: ["Empty input", "Negative numbers"]
+    production: ["Floating-point sums drift over millions of values — math.fsum or Welford's algorithm are more accurate"]
+  examples:
+    - { args: [[10, 20, 30]], expected: [10.0, 15.0, 20.0] }
+  hidden:
+    - { args: [[]] }
+    - { args: [[1, 2]] }
+    - { args: [[-3, 3, 1.5]] }
+
+- slug: junit-summary
+  title: Summarise test results
+  difficulty: beginner
+  roles: [automation-engineer, devops-engineer, python-developer]
+  topics: [testing, dictionaries]
+  minutes: 7
+  entrypoint: summarize
+  description: |
+    A CI job produced a list of test results, each `{"name": ..., "outcome": "passed" | "failed" |
+    "skipped"}`. Return a summary dictionary with the counts `passed`, `failed`, `skipped`, `total`, and
+    `pass_rate`: passed divided by (passed + failed) as a percentage rounded to one decimal, or `null` (None)
+    when nothing passed or failed.
+  io: { input: "results: list[dict]", output: "dict" }
+  starter: |
+    def summarize(results: list[dict]) -> dict:
+        return {"passed": 0, "failed": 0, "skipped": 0, "total": 0, "pass_rate": None}
+  hints:
+    - "Skipped tests count towards the total but not towards the pass rate."
+    - "Count each outcome, then compute the rate with a guard against dividing by zero."
+    - |
+      counts = Counter(r["outcome"] for r in results)
+      ran = counts["passed"] + counts["failed"]
+      rate = round(100 * counts["passed"] / ran, 1) if ran else None
+  solution:
+    code: |
+      from collections import Counter
+
+      def summarize(results: list[dict]) -> dict:
+          counts = Counter(r["outcome"] for r in results)
+          ran = counts["passed"] + counts["failed"]
+          return {
+              "passed": counts["passed"],
+              "failed": counts["failed"],
+              "skipped": counts["skipped"],
+              "total": len(results),
+              "pass_rate": round(100 * counts["passed"] / ran, 1) if ran else None,
+          }
+    explanation: Counter returns 0 for outcomes that never appear, so every key is present without special cases.
+    time: O(n)
+    space: O(1)
+    alternatives: ["Three sum(...) generator expressions"]
+    edge_cases: ["Only skipped tests gives pass_rate None", "No results at all"]
+    production: ["Report errors (setup failures) separately from assertion failures", "Track pass rate per test over time to find flaky tests"]
+  examples:
+    - { args: [[{ name: "a", outcome: "passed" }, { name: "b", outcome: "failed" }, { name: "c", outcome: "skipped" }, { name: "d", outcome: "passed" }]], expected: { passed: 2, failed: 1, skipped: 1, total: 4, pass_rate: 66.7 } }
+  hidden:
+    - { args: [[]] }
+    - { args: [[{ name: "x", outcome: "skipped" }]] }
+    - { args: [[{ name: "x", outcome: "passed" }]] }
+
+- slug: http-status-classes
+  title: Count HTTP status classes
+  difficulty: beginner
+  roles: [site-reliability-engineer, backend-engineer, full-stack-engineer]
+  topics: [dictionaries, monitoring]
+  minutes: 5
+  entrypoint: status_classes
+  description: |
+    Given a list of HTTP status codes, count how many fall in each class: "1xx", "2xx", "3xx", "4xx" and
+    "5xx". Always return all five keys. Ignore codes outside 100–599.
+  io: { input: "codes: list[int]", output: "dict[str, int]" }
+  starter: |
+    def status_classes(codes: list[int]) -> dict[str, int]:
+        return {}
+  hints:
+    - "The class is the hundreds digit."
+    - "Integer division by 100 gives the hundreds digit; start from a dict with all five keys at zero."
+    - |
+      counts = {f"{d}xx": 0 for d in range(1, 6)}
+      for c in codes: if 100 <= c <= 599: counts[f"{c // 100}xx"] += 1
+  solution:
+    code: |
+      def status_classes(codes: list[int]) -> dict[str, int]:
+          counts = {f"{d}xx": 0 for d in range(1, 6)}
+          for code in codes:
+              if 100 <= code <= 599:
+                  counts[f"{code // 100}xx"] += 1
+          return counts
+    explanation: Pre-filling the keys guarantees a stable shape for dashboards, even for classes with no traffic.
+    time: O(n)
+    space: O(1)
+    alternatives: ["Counter then fill missing keys"]
+    edge_cases: ["Invalid codes like 0 or 600", "Empty input returns all zeros"]
+    production: ["Error-rate SLOs usually count only 5xx — 4xx are client errors"]
+  examples:
+    - { args: [[200, 201, 404, 503, 302, 200]], expected: { 1xx: 0, 2xx: 3, 3xx: 1, 4xx: 1, 5xx: 1 } }
+  hidden:
+    - { args: [[]] }
+    - { args: [[99, 600, 100, 599]] }
+
+- slug: count-ready-pods
+  title: Count ready pods
+  difficulty: beginner
+  roles: [kubernetes-engineer, platform-engineer, site-reliability-engineer]
+  topics: [kubernetes, strings]
+  minutes: 6
+  entrypoint: ready_pods
+  description: |
+    `kubectl get pods` shows a READY column like "2/3" (ready containers / total containers). Given a list of
+    READY strings, return how many pods are fully ready: the numbers are equal and greater than zero.
+    Ignore malformed values.
+  io: { input: "ready: list[str]", output: "int" }
+  starter: |
+    def ready_pods(ready: list[str]) -> int:
+        return 0
+  hints:
+    - "Parse each value into two integers; anything that does not parse is skipped."
+    - "partition('/') then int() inside try/except ValueError."
+    - |
+      left, sep, right = value.partition("/")
+      try: a, b = int(left), int(right) except ValueError: continue
+      if sep and b > 0 and a == b: count += 1
+  solution:
+    code: |
+      def ready_pods(ready: list[str]) -> int:
+          count = 0
+          for value in ready:
+              left, sep, right = value.strip().partition("/")
+              if not sep:
+                  continue
+              try:
+                  have, want = int(left), int(right)
+              except ValueError:
+                  continue
+              if want > 0 and have == want:
+                  count += 1
+          return count
+    explanation: Catching ValueError around int() is the idiomatic way to skip malformed values ("EAFP").
+    time: O(n)
+    space: O(1)
+    alternatives: ["A regex ^(\\d+)/(\\d+)$"]
+    edge_cases: ["0/0 is not ready", "Malformed strings like 'x/1' or '1'", "Whitespace around the value"]
+    production: ["Use the Kubernetes API's pod conditions (type Ready) instead of parsing CLI output"]
+  examples:
+    - { args: [["1/1", "2/3", "0/1", "3/3"]], expected: 2 }
+  hidden:
+    - { args: [["0/0", "x/1", "1", " 2/2 ", ""]] }
+    - { args: [[]] }
+
+- slug: human-readable-bytes
+  title: Format bytes for humans
+  difficulty: beginner
+  roles: [devops-engineer, automation-engineer, python-developer]
+  topics: [formatting, functions]
+  minutes: 8
+  entrypoint: human_bytes
+  description: |
+    Format a byte count using binary units: B, KiB, MiB, GiB, TiB, PiB (factor 1024). Use the largest unit in
+    which the value is at least 1, with one decimal place, except bytes, which are shown as an integer.
+
+    Examples: 512 → "512 B", 1536 → "1.5 KiB", 1048576 → "1.0 MiB".
+  constraints: ["0 <= n < 1024**6"]
+  io: { input: "n: int", output: "str" }
+  starter: |
+    def human_bytes(n: int) -> str:
+        return f"{n} B"
+  hints:
+    - "Divide by 1024 until the value is below 1024 or you run out of units."
+    - "Keep the value as a float after the first division; format with :.1f."
+    - |
+      units = ["KiB", "MiB", "GiB", "TiB", "PiB"]
+      if n < 1024: return f"{n} B"
+      value = n / 1024; i = 0
+      while value >= 1024 and i < len(units) - 1: value /= 1024; i += 1
+  solution:
+    code: |
+      def human_bytes(n: int) -> str:
+          if n < 1024:
+              return f"{n} B"
+          value = n / 1024
+          for unit in ("KiB", "MiB", "GiB", "TiB"):
+              if value < 1024:
+                  return f"{value:.1f} {unit}"
+              value /= 1024
+          return f"{value:.1f} PiB"
+    explanation: Each loop step moves to the next unit only when the value would still be 1024 or more.
+    time: O(1) — at most five divisions
+    space: O(1)
+    alternatives: ["Use math.log(n, 1024) to pick the unit directly (watch out for floating-point edge cases)"]
+    edge_cases: ["0 → '0 B'", "1023 → '1023 B'", "Rounding: 1023.96 KiB prints as '1024.0 KiB' — acceptable here"]
+    production: ["Decide between SI (kB = 1000) and IEC (KiB = 1024) units and label them correctly"]
+  examples:
+    - { args: [512], expected: "512 B" }
+    - { args: [1536], expected: "1.5 KiB" }
+    - { args: [1048576], expected: "1.0 MiB" }
+  hidden:
+    - { args: [0] }
+    - { args: [1023] }
+    - { args: [1099511627776] }
+    - { args: [5000000000000000] }

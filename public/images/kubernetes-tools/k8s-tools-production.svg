@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 780" width="900" height="780" role="img" aria-labelledby="k8s-tools-production-title k8s-tools-production-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="k8s-tools-production-title">How the 15 tools fit one production platform: change path, request path and telemetry</title>
+<desc id="k8s-tools-production-desc">Three flows run through the platform. Change path, in amber: a commit in Git is rendered by Argo CD or Flux with Helm or Kustomize and applied to the Kubernetes API, where Kyverno admission policies accept, mutate or reject it. Request path, in grey: users reach a cloud load balancer, then an Ingress or Gateway API gateway whose TLS certificate cert-manager obtains from an ACME issuer, then pods. Inside the cluster Cilium provides the pod network, NetworkPolicy and Hubble flow logs, and an optional mesh, Istio or Linkerd, adds mutual TLS, retries and traffic splitting. KEDA feeds event metrics to an HPA; when new pods cannot be scheduled, Karpenter launches nodes from NodePools. Telemetry, dashed: Prometheus scrapes nodes, pods and mesh proxies and sends alerts to Alertmanager. Velero copies API objects and volume data to object storage. K9s and Lens are operator tools outside the request path.</desc>
+<rect width="900" height="780" fill="#ffffff"/>
+<defs>
+<marker id="k8s-tools-production-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+<marker id="k8s-tools-production-write" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b45309"/></marker>
+<marker id="k8s-tools-production-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#be123c"/></marker>
+<marker id="k8s-tools-production-reject" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b91c1c"/></marker>
+<marker id="k8s-tools-production-dashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+<marker id="k8s-tools-production-life" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#cbd5e1"/></marker>
+</defs>
+<rect x="15" y="12" width="870" height="104" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="28" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Change path</text>
+<rect x="15" y="132" width="870" height="104" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="148" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Request path</text>
+<rect x="15" y="252" width="870" height="254" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="268" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Cluster data plane</text>
+<rect x="15" y="522" width="870" height="114" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="538" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Platform services</text>
+<rect x="15" y="652" width="870" height="116" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="668" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Outside the cluster</text>
+<polyline points="280,71.0 325,71.0" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#k8s-tools-production-write)"/>
+<polyline points="575,71.0 620,71.0" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#k8s-tools-production-write)"/>
+<polyline points="280,191.0 325,191.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#k8s-tools-production-sync)"/>
+<polyline points="575,191.0 620,191.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#k8s-tools-production-sync)"/>
+<polyline points="695.0,226 695,250 320,250 320.0,276" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#k8s-tools-production-sync)"/>
+<polyline points="290,443.0 320,443.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#k8s-tools-production-sync)"/>
+<polyline points="580,443.0 610,443.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#k8s-tools-production-sync)"/>
+<polyline points="440,586.0 460,586.0" fill="none" stroke="#be123c" stroke-width="2.2" marker-end="url(#k8s-tools-production-async)"/>
+<polyline points="200.0,626 200.0,676" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#k8s-tools-production-dashed)"/>
+<polyline points="772.5,626 772.5,646 520,646 520.0,676" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#k8s-tools-production-write)"/>
+<rect x="30" y="36" width="250" height="70" rx="7" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+<text x="155.0" y="62.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Git repository</text>
+<text x="155.0" y="78.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">apps, charts, overlays</text>
+<text x="155.0" y="94.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">policies and NodePools too</text>
+<rect x="325" y="36" width="250" height="70" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="450.0" y="62.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">Argo CD or Flux</text>
+<text x="450.0" y="78.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">renders Helm or Kustomize</text>
+<text x="450.0" y="94.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">applies and reverts drift</text>
+<rect x="620" y="36" width="250" height="70" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="745.0" y="62.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">kube-apiserver</text>
+<text x="745.0" y="78.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">admission: Kyverno accepts,</text>
+<text x="745.0" y="94.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">mutates or rejects each write</text>
+<rect x="30" y="156" width="250" height="70" rx="7" fill="#f8fafc" stroke="#334155" stroke-width="1.4"/>
+<text x="155.0" y="190.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Users</text>
+<text x="155.0" y="206.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">HTTPS</text>
+<rect x="325" y="156" width="250" height="70" rx="7" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+<text x="450.0" y="182.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e1b4b">Cloud load balancer</text>
+<text x="450.0" y="198.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">NLB on EKS, NodePort + proxy</text>
+<text x="450.0" y="214.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">on a self-managed host</text>
+<rect x="620" y="156" width="250" height="70" rx="7" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+<text x="745.0" y="182.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e1b4b">Ingress or Gateway API</text>
+<text x="745.0" y="198.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Istio, Traefik, Envoy Gateway</text>
+<text x="745.0" y="214.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">TLS Secret from cert-manager</text>
+<rect x="30" y="276" width="395" height="98" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="227.5" y="308.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">Workload pods</text>
+<text x="227.5" y="324.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">mesh proxy per pod (sidecar) or per node</text>
+<text x="227.5" y="340.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">(ambient ztunnel, Linkerd has sidecars only)</text>
+<text x="227.5" y="356.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">mTLS, retries, canary weights</text>
+<rect x="475" y="276" width="395" height="98" rx="7" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.4"/>
+<text x="672.5" y="308.0" text-anchor="middle" font-size="14" font-weight="600" fill="#134e4a">Cilium on every node</text>
+<text x="672.5" y="324.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">eBPF pod network and Service load balancing</text>
+<text x="672.5" y="340.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">NetworkPolicy and CiliumNetworkPolicy</text>
+<text x="672.5" y="356.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Hubble: who talked to whom</text>
+<rect x="30" y="394" width="260" height="98" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="160.0" y="426.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">KEDA</text>
+<text x="160.0" y="442.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">reads queue depth, lag,</text>
+<text x="160.0" y="458.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">PromQL or cron</text>
+<text x="160.0" y="474.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">feeds an HPA</text>
+<rect x="320" y="394" width="260" height="98" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="450.0" y="426.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">HorizontalPodAutoscaler</text>
+<text x="450.0" y="442.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">sets replicas</text>
+<text x="450.0" y="458.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">new pods may be Pending</text>
+<text x="450.0" y="474.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">when nodes are full</text>
+<rect x="610" y="394" width="260" height="98" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="740.0" y="426.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">Karpenter</text>
+<text x="740.0" y="442.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Pending pods → NodeClaim</text>
+<text x="740.0" y="458.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">→ EC2 instance</text>
+<text x="740.0" y="474.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">consolidates idle nodes</text>
+<rect x="30" y="546" width="195" height="80" rx="7" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+<text x="127.5" y="577.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e1b4b">cert-manager</text>
+<text x="127.5" y="593.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">ACME HTTP-01 / DNS-01</text>
+<text x="127.5" y="609.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">renews before expiry</text>
+<rect x="245" y="546" width="195" height="80" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="342.5" y="577.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">Prometheus</text>
+<text x="342.5" y="593.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">scrapes nodes, pods,</text>
+<text x="342.5" y="609.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">mesh, KEDA, Karpenter</text>
+<rect x="460" y="546" width="195" height="80" rx="7" fill="#fff1f2" stroke="#be123c" stroke-width="1.4"/>
+<text x="557.5" y="577.0" text-anchor="middle" font-size="14" font-weight="600" fill="#4c0519">Alertmanager</text>
+<text x="557.5" y="593.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">routes alerts</text>
+<text x="557.5" y="609.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">to on-call</text>
+<rect x="675" y="546" width="195" height="80" rx="7" fill="#fff1f2" stroke="#be123c" stroke-width="1.4"/>
+<text x="772.5" y="577.0" text-anchor="middle" font-size="14" font-weight="600" fill="#4c0519">Velero</text>
+<text x="772.5" y="593.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">objects + volumes</text>
+<text x="772.5" y="609.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">→ object storage</text>
+<rect x="30" y="676" width="260" height="80" rx="7" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+<text x="160.0" y="707.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">ACME CA</text>
+<text x="160.0" y="723.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Let&#x27;s Encrypt</text>
+<text x="160.0" y="739.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">issues certificates</text>
+<rect x="320" y="676" width="260" height="80" rx="7" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+<text x="450.0" y="707.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Object storage</text>
+<text x="450.0" y="723.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">S3, R2, GCS</text>
+<text x="450.0" y="739.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">backups land here</text>
+<rect x="610" y="676" width="260" height="80" rx="7" fill="#f8fafc" stroke="#334155" stroke-width="1.4"/>
+<text x="740.0" y="707.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Operators</text>
+<text x="740.0" y="723.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">kubectl, K9s, Lens</text>
+<text x="740.0" y="739.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">read through RBAC</text>
+<rect x="577.9" y="50.5" width="39.2" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="597.5" y="62.5" text-anchor="middle" font-size="12" fill="#0f172a">apply</text>
+<rect x="569.2" y="422.5" width="51.7" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="595.0" y="434.5" text-anchor="middle" font-size="12" fill="#0f172a">Pending</text>
+</svg>

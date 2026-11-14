@@ -1,0 +1,583 @@
+---
+title: "Istio Service Mesh on Minikube: Features, Setup and Troubleshooting"
+slug: istio-service-mesh-minikube-features-setup-troubleshooting
+description: "Istio on Minikube: architecture, a Bookinfo lab, an Istio gateway as the only edge, STRICT mTLS for the whole mesh, dry-run authorization and real fixes."
+seoTitle: "Istio on Minikube: Gateway, STRICT mTLS, Troubleshooting"
+seoDescription: "Istio on Minikube: sidecars, the ingress gateway as the only edge, mesh-wide STRICT mTLS, dry-run AuthorizationPolicy, istioctl and Envoy response flags."
+author: jithendar-dharmapuri
+category: kubernetes
+tags: [Istio, Service Mesh, Kubernetes, Minikube, Envoy, mTLS, Kiali, Terraform, DevOps, SRE]
+contentType: tutorial
+status: review
+related:
+  - blog/15-essential-kubernetes-tools-devops-engineers-2026-part-2
+  - blog/traefik-minikube-architecture-implementation
+  - blog/logging-tracing-observability-jithendar-com
+sources:
+  - title: "Istio: What is Istio?"
+    url: https://istio.io/latest/docs/overview/what-is-istio/
+    publisher: Istio
+  - title: "Istio: Architecture"
+    url: https://istio.io/latest/docs/ops/deployment/architecture/
+    publisher: Istio
+  - title: "Istio: Sidecar or ambient?"
+    url: https://istio.io/latest/docs/overview/dataplane-modes/
+    publisher: Istio
+  - title: "Istio: Minikube platform setup"
+    url: https://istio.io/latest/docs/setup/platform-setup/minikube/
+    publisher: Istio
+  - title: "Istio: Install with Helm"
+    url: https://istio.io/latest/docs/setup/install/helm/
+    publisher: Istio
+  - title: "Istio: Install the Istio CNI node agent"
+    url: https://istio.io/latest/docs/setup/additional-setup/cni/
+    publisher: Istio
+  - title: "Istio: Bookinfo application"
+    url: https://istio.io/latest/docs/examples/bookinfo/
+    publisher: Istio
+  - title: "Istio: Ingress gateways"
+    url: https://istio.io/latest/docs/tasks/traffic-management/ingress/ingress-control/
+    publisher: Istio
+  - title: "Istio: VirtualService reference (delegation)"
+    url: https://istio.io/latest/docs/reference/config/networking/virtual-service/
+    publisher: Istio
+  - title: "Istio: Configuring gateway network topology"
+    url: https://istio.io/latest/docs/ops/configuration/traffic-management/network-topologies/
+    publisher: Istio
+  - title: "Istio: EnvoyFilter reference"
+    url: https://istio.io/latest/docs/reference/config/networking/envoy-filter/
+    publisher: Istio
+  - title: "Istio: PeerAuthentication reference"
+    url: https://istio.io/latest/docs/reference/config/security/peer_authentication/
+    publisher: Istio
+  - title: "Istio: Mutual TLS migration"
+    url: https://istio.io/latest/docs/tasks/security/authentication/mtls-migration/
+    publisher: Istio
+  - title: "Istio: Dry run AuthorizationPolicy"
+    url: https://istio.io/latest/docs/tasks/security/authorization/authz-dry-run/
+    publisher: Istio
+  - title: "Istio: Envoy access logs"
+    url: https://istio.io/latest/docs/tasks/observability/logs/access-log/
+    publisher: Istio
+  - title: "Istio: Diagnostic tools"
+    url: https://istio.io/latest/docs/ops/diagnostic-tools/
+    publisher: Istio
+  - title: "Istio: Traffic management problems"
+    url: https://istio.io/latest/docs/ops/common-problems/network-issues/
+    publisher: Istio
+  - title: "Istio: Protocol selection"
+    url: https://istio.io/latest/docs/ops/configuration/traffic-management/protocol-selection/
+    publisher: Istio
+  - title: "Istio: Canary upgrades"
+    url: https://istio.io/latest/docs/setup/upgrade/canary/
+    publisher: Istio
+  - title: "Istio: Supported releases"
+    url: https://istio.io/latest/docs/releases/supported-releases/
+    publisher: Istio
+  - title: "Envoy: Access log format (response flags)"
+    url: https://www.envoyproxy.io/docs/envoy/latest/configuration/observability/access_log/usage
+    publisher: Envoy
+---
+
+A service mesh moves the network plumbing (encryption, identity, retries, timeouts, traffic splitting, telemetry) out of your application code and into a proxy next to every workload. Istio is the most widely used open-source mesh, and Minikube is a cheap, safe place to learn it.
+
+This guide is for DevOps and SRE engineers who know Kubernetes basics and are new to service mesh. It has two tracks:
+
+- **The lab track.** A single-node Minikube cluster on a laptop. Every command is copy-pasteable, and you delete the cluster when you are done.
+- **The "on my cluster" notes.** How Istio runs on `mk4`, the 8-node Minikube cluster that hosts this website, the MOKS SRE portal, RoboShop AI, Harbor and my tooling. On `mk4` the Istio ingress gateway is now the **only** way in, and every meshed namespace runs STRICT mutual TLS. The notes come from my `miniKube` repository and from read-only `kubectl` and `istioctl` checks on 9 November 2026.
+
+Versions quoted here (Istio 1.30.7, Kiali 2.34.0, Kubernetes v1.37.0) are what `mk4` runs, not recommendations. Istio's [supported releases page](https://istio.io/latest/docs/releases/supported-releases/) lists Kubernetes 1.32 to 1.36 for Istio 1.30, so `mk4` is one Kubernetes minor ahead of its mesh; Istio 1.31 adds 1.37. Check that table before you pick versions.
+
+## 1. What a service mesh is, and why Istio
+
+Most traffic in a microservice system is **east–west**: one service calling another inside the cluster. Kubernetes gives that traffic discovery and load balancing, and stops there. It does not encrypt pod-to-pod traffic, prove which workload is calling, retry or time out calls, split traffic between versions, or tell you who called whom and how fast.
+
+A **service mesh** adds a proxy that intercepts every request in and out of a workload and applies policy you declare in one place. Your code makes a plain HTTP call; the mesh does the rest.
+
+| Problem | Without a mesh | With Istio |
+| --- | --- | --- |
+| Encryption in transit | TLS certificates managed per service | Automatic mutual TLS (mTLS) with rotating certificates |
+| Who may call whom | NetworkPolicy (IP and port only) | AuthorizationPolicy on workload identity, path and method |
+| Canary releases | Two Deployments and replica-count maths | Weighted routing: 90/10, 50/50, header-based |
+| Flaky dependencies | Retry and timeout code in every client | Declarative timeouts, retries, circuit breakers |
+| Visibility | Instrument every service | Request metrics, spans, access logs and a service graph from the proxy |
+
+Linkerd, Cilium and Consul are good alternatives. Istio stands out for breadth (traffic, security and observability in one project), for using Envoy (the same proxy as many API gateways), for offering both sidecar and sidecar-less **ambient** modes, and for its ecosystem (Kiali, Prometheus, Grafana, Jaeger). The cost is complexity and memory. This guide covers both sides.
+
+## 2. Architecture
+
+![Istio in sidecar mode. A client sends HTTPS to the ingress gateway, a standalone Envoy for north-south traffic configured with Gateway and VirtualService resources. Inside the Kubernetes cluster, istiod in namespace istio-system watches Services and Istio CRDs, pushes Envoy configuration over xDS, acts as the certificate authority and runs the injection webhook; dashed lines carry its configuration and certificates to the gateway and the pods. In an app namespace labelled istio-injection=enabled, the productpage pod and the reviews pod each run the app container plus an istio-proxy Envoy, and talk to each other over mTLS. An istio-cni DaemonSet sets up traffic redirection per pod without a NET_ADMIN init container. An optional egress gateway is the single exit to an external API outside the mesh.](/images/istio-minikube/istio-architecture.svg)
+
+**istiod** is the control plane: one Deployment that watches Kubernetes for Services and Istio CRDs, translates them into Envoy configuration, pushes it to every proxy over xDS, issues each workload a short-lived certificate for its service account (a SPIFFE ID such as `spiffe://cluster.local/ns/shop/sa/reviews`), and runs the sidecar injection webhook. If istiod is down, proxies keep their last configuration, but no pod can start in an injected namespace, because the webhook fails closed.
+
+**The data plane.** In sidecar mode every meshed pod gets an `istio-proxy` container (Envoy plus `pilot-agent`). Traffic redirection sends all of the pod's traffic through Envoy. Either an `istio-init` init container sets it up, which needs `NET_ADMIN`, or the `istio-cni` node agent does, which needs nothing extra in the pod.
+
+**Gateways** are standalone Envoys at the mesh edge: an **ingress gateway** for north–south traffic in (configured with `Gateway` and `VirtualService`, or the Kubernetes Gateway API), and an optional **egress gateway** for traffic out. This guide uses the classic Istio APIs because most docs and examples still do.
+
+**Ambient mode** removes the sidecar: a per-node **ztunnel** gives every pod L4 mTLS and identity, and optional **waypoint** proxies add L7 features where you need them. Pods join without a restart, and memory grows with nodes rather than pods. Learn with sidecars first, since the request path is easier to see; evaluate ambient when sidecar memory starts to hurt. `mk4` runs sidecar mode.
+
+## 3. Key features
+
+Istio's features map to CRDs. Knowing which CRD owns which behaviour is half of troubleshooting.
+
+| Group | Feature | CRD |
+| --- | --- | --- |
+| Traffic | Routing by host, path, header; delegation to other teams | `VirtualService` |
+| | Canary and mirroring | `VirtualService` + `DestinationRule` subsets |
+| | Mesh edge | `Gateway` (or Gateway API `Gateway` + `HTTPRoute`) |
+| | External hosts, proxy scope | `ServiceEntry`, `Sidecar` |
+| Security | Automatic mTLS, STRICT or PERMISSIVE | `PeerAuthentication` |
+| | Allow or deny by identity, namespace, path, method | `AuthorizationPolicy` |
+| | End-user JWTs | `RequestAuthentication` |
+| Observability | Metrics, tracing, access logs | Built in; tuned with `Telemetry` |
+| Resilience | Timeouts, retries, fault injection | `VirtualService` |
+| | Circuit breaking, outlier detection | `DestinationRule` |
+| Escape hatch | Patch the generated Envoy config directly | `EnvoyFilter` |
+
+### Example: a 90/10 canary with timeout and retries
+
+```yaml
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: reviews
+  namespace: bookinfo
+spec:
+  host: reviews                      # the Kubernetes Service name
+  trafficPolicy:
+    connectionPool:
+      http:
+        http1MaxPendingRequests: 50
+    outlierDetection:                # eject a pod after 5 consecutive 5xx
+      consecutive5xxErrors: 5
+      interval: 10s
+      baseEjectionTime: 30s
+  subsets:
+    - name: v1
+      labels:
+        version: v1                  # must match the pod labels exactly
+    - name: v2
+      labels:
+        version: v2
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: reviews
+  namespace: bookinfo
+spec:
+  hosts:
+    - reviews
+  http:
+    - route:
+        - destination: {host: reviews, subset: v1}
+          weight: 90
+        - destination: {host: reviews, subset: v2}
+          weight: 10
+      timeout: 3s                    # total budget, including retries
+      retries:
+        attempts: 2
+        perTryTimeout: 1s
+        retryOn: connect-failure,refused-stream,gateway-error
+```
+
+Keep `attempts × perTryTimeout` inside `timeout`, and retry only failures that are safe to repeat. `mk4` sets `meshConfig.defaultHttpRetryPolicy.attempts: 0`, because a silent mesh retry could replay a RoboShop checkout or payment; retries are added per route where they are safe.
+
+## 4. Lab: Istio on a laptop Minikube
+
+### 4.1 Start Minikube and get istioctl
+
+```bash
+minikube start --profile istio-lab --driver=docker --cpus=4 --memory=12g --disk-size=40g
+kubectl config use-context istio-lab
+
+# Download a release (pin it with ISTIO_VERSION=<version>) and use its istioctl
+curl -L https://istio.io/downloadIstio | sh -
+cd istio-*/ && export PATH="$PWD/bin:$PATH"
+istioctl x precheck      # "No issues found when checking the cluster"
+```
+
+Keep `istioctl` on the same minor version as the control plane. My Mac had a Homebrew `istioctl` 1.20.2 against a 1.30.7 mesh: `istioctl analyze` could not parse the newer Envoy filters I use, and `proxy-config` output from a client ten minors behind can mislead. I now use the binary from the matching release.
+
+### 4.2 Install Istio with Helm
+
+`istioctl install --set profile=demo -y` is the fastest start. For anything you keep, install the Helm charts, because Terraform or Argo CD can then reconcile them and an upgrade becomes a reviewed change to a pinned version:
+
+```bash
+helm repo add istio https://istio-release.storage.googleapis.com/charts && helm repo update
+helm install istio-base istio/base   -n istio-system --create-namespace --wait
+helm install istio-cni  istio/cni    -n istio-system --wait
+helm install istiod     istio/istiod -n istio-system --wait \
+  --set pilot.cni.enabled=true \
+  --set meshConfig.defaultConfig.holdApplicationUntilProxyStarts=true
+helm install istio-ingressgateway istio/gateway -n istio-ingress --create-namespace --wait
+```
+
+The release name `istio-ingressgateway` gives the gateway pods the label `istio: ingressgateway`, which the Bookinfo sample's `Gateway` selects. The CNI chart's defaults worked for sidecars on `mk4`; ambient mode on Minikube needs extra settings, listed on Istio's platform prerequisites pages.
+
+> **On my cluster.** `mk4` installs the same charts through Terraform `helm_release` resources (`minikube-infrastructure/istio.tf` in my `miniKube` repository), all pinned to 1.30.7, plus two local charts: `istio-edge` (the public routing, section 5) and `istio-mesh` (mesh-wide policies, section 6). Settings worth copying:
+>
+> - **The CNI agent.** Without it, injected pods need `istio-init` with `NET_ADMIN` and `NET_RAW`, and Pod Security `baseline` on the `moks` namespace rejected every injected pod. A server-side dry run (`kubectl apply --dry-run=server`) showed it before any rollout broke.
+> - **`ENABLE_NATIVE_SIDECARS: "true"` and `holdApplicationUntilProxyStarts`.** The proxy starts before the app and stops after it, which fixes startup races and Jobs that never finish.
+> - **Two istiod replicas and two gateway replicas, each with a PodDisruptionBudget, spread across nodes.** The gateway is the only way in, and the injection webhook fails closed, so neither may drop to zero during a node drain. The istiod chart renders its PodDisruptionBudget only when `replicaCount` is above 1; the gateway chart needs `podDisruptionBudget: {minAvailable: 1}`.
+>
+> One Terraform trap cost me a broken route. The Helm provider plans chart versions and values, not rendered templates. I added a VirtualService template to a local chart without bumping `Chart.yaml`, and `terraform plan` said "No changes" while `/prometheus` and `/loki` returned 404. `experiments = { manifest = true }` in the `helm` provider block makes the plan diff the rendered manifests.
+
+### 4.3 Inject sidecars and deploy Bookinfo
+
+Injection happens when a pod is **created**. Labelling a namespace does nothing to pods that already run.
+
+```bash
+kubectl create namespace bookinfo
+kubectl label namespace bookinfo istio-injection=enabled
+kubectl apply -n bookinfo -f samples/bookinfo/platform/kube/bookinfo.yaml
+kubectl get pods -n bookinfo            # every pod 2/2: app + istio-proxy
+
+# For an existing namespace: label it, then restart its workloads
+kubectl label namespace my-app istio-injection=enabled --overwrite
+kubectl rollout restart deployment -n my-app
+```
+
+To keep one workload out, label its pod template `sidecar.istio.io/inject: "false"`. To mesh one pod in a namespace that is not labelled, set `sidecar.istio.io/inject: "true"`; that is how Kiali is meshed on `mk4` without injecting all of `istio-system`.
+
+On a multi-node Minikube with the default `standard` storage class, a restarted StatefulSet pod can land on another node, and its `hostPath` volume does not follow it. Check where database pods will land before a restart.
+
+### 4.4 Expose Bookinfo through the gateway, with delegation
+
+The ingress gateway Service on Minikube has no cloud load balancer; port-forward to it (or run `minikube tunnel`):
+
+```bash
+kubectl apply -n bookinfo -f samples/bookinfo/networking/bookinfo-gateway.yaml
+kubectl port-forward -n istio-ingress svc/istio-ingressgateway 8080:80
+curl -sS http://localhost:8080/productpage | grep -o "<title>.*</title>"
+```
+
+That sample binds one VirtualService to the Gateway. When several teams share a host, use **delegation** instead: one root VirtualService owns the host and the path table, and each team owns a delegate VirtualService in its own namespace with no `hosts` and no `gateways`. To try it, replace the sample's VirtualService with a root in the gateway's namespace and a delegate in `bookinfo`:
+
+```yaml
+# kubectl delete virtualservice bookinfo -n bookinfo   (the sample's own route for the same host)
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: lab-root
+  namespace: istio-ingress
+spec:
+  hosts: ["*"]
+  gateways: ["bookinfo/bookinfo-gateway"]
+  http:
+    - name: bookinfo                  # longer or more specific matches first, a catch-all last
+      match:
+        - uri: {prefix: /productpage}
+        - uri: {prefix: /static}
+        - uri: {prefix: /api/v1/products}
+        - uri: {exact: /login}
+        - uri: {exact: /logout}
+      delegate: {name: bookinfo-routes, namespace: bookinfo}
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: bookinfo-routes
+  namespace: bookinfo
+spec:
+  http:                               # no hosts, no gateways: reachable only through the root
+    - route:
+        - destination: {host: productpage.bookinfo.svc.cluster.local, port: {number: 9080}}
+```
+
+Why bother: if several VirtualServices bind the same host, Istio merges them in creation order, so a catch-all `/` created first shadows every prefix added later. A root makes the order explicit. The catch is that **a missing delegate drops its route silently**, and the request falls through to the next match; section 8 has the outage that taught me this.
+
+## 5. On my cluster: the Istio gateway is the only edge
+
+Until 8 November 2026, Traefik was `mk4`'s edge and Istio only handled east–west traffic. Traefik sent requests to pod IPs with the public `Host: jithendar.com`, so its sidecar could not match a mesh service and passed them through as plain TCP. That kept three namespaces on PERMISSIVE mTLS and showed every caller in Kiali as `unknown`. Now Traefik is uninstalled, and the Istio ingress gateway terminates all public traffic.
+
+![The mk4 request path on 9 November 2026. A visitor (browser, docker or psql) looks up the name in Cloudflare DNS, which does no proxying, and connects on port 80 or 443 to HAProxy on the Hetzner host. HAProxy forwards TCP with a PROXY protocol v2 header to NodePort 31080 or 31443 of the istio-ingressgateway Service. In namespace istio-ingress, two gateway replicas with a PodDisruptionBudget require the PROXY header, terminate TLS with the wildcard certificate, apply basic auth by path prefix, enforce DENY rules for read-only paths and IP allowlists, set X-Forwarded-For to the real address, compress responses and write an access log. Hosts with their own names are matched by SNI: registry.jithendar.com goes to Harbor, and db.jithendar.com has TLS terminated at the gateway and continues as TCP to the jithendar-postgres database with ALPN postgresql. jithendar.com goes through the root VirtualService on Gateway public, which has one delegate per path prefix: jithendar (the site, the default route, and /db), moks (/moks and /opensearch), roboshop-ai (/roboshop), monitoring (/grafana, /prometheus, /loki), argocd (/argocd) and istio-system (/kiali). Every hop below the gateway is mTLS between Envoy sidecars.](/images/istio-minikube/mk4-istio-edge.svg)
+
+The design, all in the `istio-edge` chart:
+
+- **One `Gateway` named `public`** with one HTTPS server for every hostname (`jithendar.com`, `www`, `registry.`, `jfrog.`), written as `namespace/host` so only the owning namespace can bind it, plus a TLS server for `db.jithendar.com` and a port 80 server that only redirects. One wildcard certificate from cert-manager (DNS-01 through Cloudflare) covers all of them.
+- **A root VirtualService** with the path table: `www` → apex (308), a few redirects, one delegate per prefix (longer prefixes first: `/opensearch-dashboards` before `/opensearch`), and the site last.
+- **The visitor's address.** HAProxy on the host forwards plain TCP with a PROXY protocol v2 header, and an `EnvoyFilter` inserts Envoy's `proxy_protocol` listener filter first on ports 80 and 443. Connections without the header are refused. A second filter overwrites `X-Forwarded-For` and `X-Real-IP` with that address, so a client cannot choose its own. The IP allowlists for `/db` and the database are DENY `AuthorizationPolicy` rules on `remoteIpBlocks`.
+- **Logins at the edge.** Prometheus, Loki and OpenSearch have no authentication of their own. Envoy's `basic_auth` filter, wrapped in a path matcher, protects their prefixes on the HTTPS listener only and fails closed if a login is missing.
+- **PostgreSQL on port 443.** `db.jithendar.com` is a TLS server: the gateway terminates TLS, selects ALPN `postgresql` (libpq 17's `sslnegotiation=direct` requires it; Istio sets no ALPN for TLS servers, so an `EnvoyFilter` merges it in), and a `tcp` route forwards to the database over the mesh.
+
+The PROXY protocol filter, for example:
+
+```yaml
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: proxy-protocol
+  namespace: istio-ingress
+spec:
+  workloadSelector:
+    labels: {istio: ingressgateway}
+  configPatches:
+    - applyTo: LISTENER_FILTER
+      match: {context: GATEWAY, listener: {portNumber: 443}}
+      patch:
+        operation: INSERT_FIRST        # before the TLS inspector reads the ClientHello
+        value:
+          name: envoy.filters.listener.proxy_protocol
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.listener.proxy_protocol.v3.ProxyProtocol
+            allow_requests_without_proxy_protocol: false
+```
+
+`EnvoyFilter` patches generated Envoy configuration, and `istioctl analyze` warns (IST0133) that it can break on upgrade. Keep each filter small, give them explicit `priority` values, and re-test them on every Istio minor.
+
+**The cut-over** took one hostname at a time. Traefik first handed everything it no longer routed to the gateway at the lowest priority. Each application then got its delegate, Traefik's routes were deleted one by one, and the host's HAProxy was pointed at the gateway's NodePorts last. Only then could the gateway require the PROXY header and the namespaces go STRICT.
+
+## 6. mTLS and authorization
+
+![Who may call whom inside the mk4 mesh on 9 November 2026. A PeerAuthentication named default in istio-system makes STRICT mTLS the default for every namespace; the plain-text exceptions left are Harbor's registry port 5000 and moks-opensearch port 9200. On the left are callers, identified by their mTLS identity: istio-ingress (the public gateway), monitoring (Prometheus and Grafana), istio-system (Kiali, meshed by pod label), moks (connectors that read metrics and logs) and jithendar and roboshop-ai (OTLP traces). On the right are allow-known-callers ALLOW policies in dry-run mode: jithendar, moks and roboshop-ai accept their own pods, istio-ingress and monitoring; argocd and harbor the same; cert-manager its own pods and monitoring; monitoring its own pods, istio-ingress, istio-system and moks; observability its own pods, monitoring, jithendar, moks and roboshop-ai. Outside the mesh on purpose are the moks sandboxes (terminals, diagnostics, lab), the cert-manager webhook called by the API server, and istiod, istio-cni and kube-system. In dry run, Envoy counts what each policy would refuse and lets it through; NetworkPolicies still apply underneath.](/images/istio-minikube/mk4-mesh-security.svg)
+
+### 6.1 PERMISSIVE to STRICT, without guessing
+
+Istio starts PERMISSIVE: sidecars accept mTLS and plain text. STRICT refuses plain text immediately and has no dry run, so find every plain-text caller **before** you switch. Istio's own metrics tell you; this query must come back empty:
+
+```promql
+sum by (destination_workload_namespace, destination_workload) (
+  increase(istio_requests_total{reporter="destination", connection_security_policy="none"}[1h])
+)
+```
+
+On `mk4` it returned one row: about 57,000 requests an hour to Prometheus. The peer addresses in the Prometheus pod's socket table pointed at Kiali, the one unmeshed client left. Meshing Kiali with the pod label brought the count to zero. Then one object made STRICT the default for the whole mesh:
+
+```yaml
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: istio-system   # the root namespace, no selector: every namespace without its own policy
+spec:
+  mtls:
+    mode: STRICT
+```
+
+A namespace-level `PeerAuthentication` overrides the root one, so the `jithendar` namespace's own PERMISSIVE default had to change too, and two port-level exceptions left over from Traefik were deleted.
+
+**Prometheus does not need plain text.** A common pattern keeps metrics ports PERMISSIVE because Prometheus scrapes pod IPs from outside the mesh. On `mk4`, Prometheus has a sidecar and its scrapes go out through it, so Envoy sends mTLS to every meshed target: all 86 scrape targets stayed up after the exceptions were removed. My Git repository had an annotation, `traffic.sidecar.istio.io/includeOutboundIPRanges: ""`, that would have sent every scrape around the sidecar in plain text. It had never been applied, and applying it would have broken scraping under STRICT, so I deleted it.
+
+Two exceptions remain, each one port on one workload:
+
+- **Harbor's registry, `:5000`.** `harbor-core` proxies every image pull to `http://harbor-registry:5000` but keeps the client's `Host: registry.jithendar.com`. Its sidecar has no route for that host on that port, sends the request through `PassthroughCluster` as plain TCP, and the STRICT registry reset it: every pull failed with `503 ... upstream connect error ... connection termination` minutes after the mesh-wide policy went live. The registry port accepts plain text again; the registry still checks Harbor's token on every request.
+- **MOKS OpenSearch, `:9200`.** A leftover from Traefik that goes away when the MOKS Argo CD application syncs its new values.
+
+**Pods that stay outside the mesh on purpose:** MOKS's terminal, diagnostics and lab sandboxes, cert-manager's webhook (the API server calls it directly) and istiod itself. Under STRICT they cannot call a meshed Service, which is the point.
+
+### 6.2 AuthorizationPolicy, dry run first
+
+mTLS proves who is calling; `AuthorizationPolicy` decides who may. On `mk4` every application and platform namespace has one ALLOW policy listing the namespaces whose identities may call in (the gateway's namespace has only its DENY rules, and `istio-system` none). Once any ALLOW policy exists, everything it does not match is denied, so a missing caller is an outage. Istio's dry-run annotation removes that risk: Envoy evaluates the policy, lets the request through, and counts what it would have refused.
+
+```yaml
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-known-callers
+  namespace: jithendar
+  annotations:
+    istio.io/dry-run: "true"        # count, do not enforce
+spec:
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            namespaces: [jithendar, istio-ingress, monitoring]
+```
+
+The counters live in each sidecar, for HTTP and TCP ports alike:
+
+```bash
+kubectl exec -n jithendar deploy/jithendar-com -c istio-proxy -- \
+  pilot-agent request GET stats | grep istio_dry_run
+# http.inbound_0.0.0.0_3000;.rbac.istio_dry_run_allow_.shadow_allowed: 42
+# http.inbound_0.0.0.0_3000;.rbac.istio_dry_run_allow_.shadow_denied: 0
+```
+
+A script in my `miniKube` repository (`scripts/istio/authz-dry-run-report.py`) reads `shadow_denied` from every meshed pod in every namespace that has a dry-run policy. Once it reports zero after a day of normal traffic, the annotation comes off and the policies enforce. Never put such a policy in `istio-system` without a selector: in the root namespace it applies to the entire mesh.
+
+NetworkPolicies stay underneath. They work on addresses and ports and still block what Istio never sees, such as a pod without a sidecar.
+
+## 7. Observability
+
+For the lab, the release ships demo add-ons:
+
+```bash
+for a in prometheus grafana jaeger kiali; do kubectl apply -f samples/addons/$a.yaml; done
+for i in $(seq 1 200); do curl -s -o /dev/null http://localhost:8080/productpage; done
+istioctl dashboard kiali      # Graph > namespace bookinfo
+```
+
+Tracing only links spans into one trace if your application **forwards the trace headers** (`traceparent`, or the `x-b3-*` set) from incoming requests to its outgoing calls. Envoy cannot see inside your code.
+
+**Access logs, scoped and safe.** The `Telemetry` API turns on access logs per workload. On `mk4` only the gateway logs, with a JSON format that contains exactly the fields the cluster's log collector (Alloy) keeps, and no client address, path, query or header:
+
+```yaml
+# istiod values: meshConfig.extensionProviders
+- name: edge-access-log
+  envoyFileAccessLog:
+    path: /dev/stdout
+    logFormat:
+      labels:
+        event: edge_request
+        level: info
+        method: "%REQ(:METHOD)%"
+        status: "%RESPONSE_CODE%"
+        durationMs: "%DURATION%"
+        operation: "%ROUTE_NAME%"      # the route in the table (site, moks, ...), never the path
+        errorCode: "%RESPONSE_FLAGS%"
+---
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: edge-access-log
+  namespace: istio-ingress
+spec:
+  selector:
+    matchLabels: {istio: ingressgateway}
+  accessLogging:
+    - providers: [{name: edge-access-log}]
+```
+
+A live line looks like `{"durationMs":20,"errorCode":"-","event":"edge_request","level":"info","method":"GET","operation":"site-site","status":200}`. The `errorCode` field carries Envoy's response flags, which tell you which side failed (table in section 8).
+
+> **On my cluster.** Prometheus, Grafana, Loki, Jaeger and Kiali are Terraform-managed releases with persistent storage, not the demo add-ons. Prometheus has scrape jobs for istiod and for every sidecar's Envoy stats port (15090). Kiali runs view-only behind token authentication at `/kiali`. The gateway also removes `x-envoy-upstream-service-time` from responses (an `EnvoyFilter` on the route configuration), because every Envoy on the way adds it, and it tells visitors how long each backend took.
+
+### Resource usage on mk4
+
+One `kubectl top` reading on 9 November 2026 with light traffic, so treat it as rough:
+
+| Component | Count | Measured | Requests / limits set |
+| --- | --- | --- | --- |
+| istiod | 2 | ~100 MiB each, 2–5m CPU | 100m, 256 MiB / 1 GiB |
+| istio-cni node agent | 8 | 26–37 MiB each, 1m CPU | chart defaults |
+| Envoy proxies (sidecars and gateways) | 56 | 46 MiB average, 69 MiB largest, 2.5 GiB total | sidecars 20m, 64 MiB / 256 MiB |
+| Ingress gateway | 2 | 39 and 45 MiB | 50m, 128 MiB / 512 MiB |
+| Kiali | 1 | 88 MiB | chart defaults |
+
+Sidecars are the real cost, about 40–70 MiB per meshed pod here, growing with the configuration each proxy holds (scope it with `Sidecar`, section 9).
+
+## 8. Troubleshooting
+
+Work **outside-in**: control plane, then configuration, then the proxy's view of it, then the live request.
+
+```bash
+kubectl get pods -n istio-system                      # 1. istiod Running and ready
+istioctl analyze -A                                   # 2. configuration valid?
+istioctl proxy-status                                 # 3. every proxy SYNCED?
+istioctl proxy-config routes   "$POD" -n my-app       # 4. what does this proxy have?
+istioctl proxy-config clusters "$POD" -n my-app --fqdn web.my-app.svc.cluster.local
+istioctl x describe pod "$POD" -n my-app              # 5. which policies apply here?
+kubectl logs "$POD" -n my-app -c istio-proxy --tail=100
+istioctl proxy-config log "$POD" -n my-app --level rbac:debug   # 6. why was it denied? (set back to warning)
+kubectl logs -n istio-system deploy/istiod --since=10m | grep -iE 'ack error|nack|rejected'
+```
+
+`analyze` catches subsets that match no pods, VirtualServices pointing at missing gateways, and badly named ports. On `mk4` on 9 November it reported one error, a leftover from the cut-over (since deleted):
+
+```text
+Error [IST0101] (VirtualService jithendar/jithendar-com) Referenced gateway not found: "istio-ingress/jithendar-com"
+```
+
+The last command matters after every edge change: istiod logs `ACK ERROR` when a proxy refuses configuration. During the cut-over the gateway rejected its port 443 listener with `multiple filter chains with overlapping matching rules are defined` and kept serving its previous configuration. The usual cause is two Gateway servers on the same port claiming the same host. Nothing fails loudly; you only see it there.
+
+To check that the gateway really sends mTLS to an app, look at its cluster for that Service: auto-mTLS shows as a `tlsMode-istio` transport socket match.
+
+```bash
+kubectl -n istio-ingress exec deploy/istio-ingressgateway -- \
+  pilot-agent request GET 'config_dump?resource=dynamic_active_clusters' | grep -c tlsMode-istio
+```
+
+### Envoy response flags
+
+| Flag | Meaning | Usual cause |
+| --- | --- | --- |
+| `NR` | No route | No route matches host or path; Gateway host mismatch; VirtualService not bound to the gateway |
+| `UH` | No healthy upstream | Subset labels match no pods, pods not ready, or all ejected |
+| `UF` | Upstream connection failure | mTLS mismatch (plain text to STRICT), app not listening, NetworkPolicy |
+| `URX` | Retry limit exceeded | Every retry failed; look at the first failure |
+| `UO` | Upstream overflow | Circuit breaker limits reached |
+| `UT` | Upstream timeout | Route `timeout` or `perTryTimeout` hit |
+| `DC` | Downstream terminated | Client closed first, often a shorter client timeout |
+
+### Common issues and fixes
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| Pod `1/1`, no `istio-proxy` | Namespace not labelled, pod older than the label, or `inject: "false"` | Label, `rollout restart`, check pod template labels |
+| Injected pods rejected (`violates PodSecurity`) | `istio-init` needs `NET_ADMIN`/`NET_RAW` | Install `istio-cni`, set `pilot.cni.enabled: true` |
+| `503` with `UF` or "connection termination" after STRICT | A client sends plain text: no sidecar, or a sidecar passing the call through because the `Host` header names no mesh service | Mesh the client; send to the Service name; or a port-level PERMISSIVE exception for that one port |
+| A prefix answers the site's `404` | Its delegate VirtualService does not exist, so the root drops the route | `kubectl get vs -A`; check that whatever deploys the delegate succeeded |
+| `403 RBAC: access denied` | An ALLOW policy exists and none of its rules match the caller | Add the caller's namespace; dry-run new policies first |
+| Edge change has no effect | Proxy refused the config (`ACK ERROR` in istiod logs) or `STALE` | istiod logs; `proxy-status`; remove the overlapping Gateway server |
+| Client IPs all look like a node | No PROXY protocol, or `X-Forwarded-For` trusted from clients | PROXY listener filter first; overwrite `X-Forwarded-For` at the gateway |
+| Job never completes | Sidecar keeps running after the main container | Native sidecars (`ENABLE_NATIVE_SIDECARS`) |
+| HTTP features ignored, odd resets | Port named `p4107` or unnamed, so protocol detection guessed | Name ports `http-…`, `grpc-…`, `tcp-…` or set `appProtocol` |
+| Pods `Pending` or `OOMKilled` | Not enough memory for istiod, gateways and sidecars | More Minikube memory; set `global.proxy.resources`; scope with `Sidecar` |
+
+### Four outages from mk4, and what each taught me
+
+**The sidecar that could not find istiod (8 November).** After enabling sidecars in `jithendar`, the site returned 503. Postgres and Redis had NetworkPolicies without DNS egress, the new sidecar policy allowed `istiod:15012` but not DNS, so their sidecars never became ready, and with `holdApplicationUntilProxyStarts` Postgres never started. Lesson: on a cluster that enforces NetworkPolicy, every meshed pod needs DNS and `istiod:15012` egress.
+
+**STRICT before the edge was in the mesh (8 November, 12:40 UTC).** I applied the namespace's new manifests too early: a NetworkPolicy that admitted only the Istio gateway, and STRICT policies, while Traefik still served the site and sent plain text through `PassthroughCluster`. `/` and `/db` answered 502 until the NetworkPolicies admitted Traefik again and the policies went back to PERMISSIVE. Lesson: run the `connection_security_policy="none"` query first. Its answer is the list of things STRICT will break.
+
+**`/moks` answered the site's 404 (9 November).** After the cut-over, `/moks` fell through to the site. The delegate `moks/moks` did not exist, because Argo CD's project for MOKS did not yet permit the `VirtualService` kind, so its sync failed quietly. Lesson: a missing delegate is not an error anywhere in Istio; it is a route that silently disappears.
+
+**Image pulls failed after the mesh-wide STRICT policy (9 November).** The Harbor `Host` header story in section 6.1. Lesson: a sidecar can only send mTLS to traffic it recognises as a mesh service. Proxies that keep the public `Host` header and dial pod IPs (edge proxies, registry front ends) look like unknown TCP to it.
+
+## 9. Best practices
+
+- **Find plain text before STRICT.** Query `connection_security_policy="none"`; it costs nothing and lists the outages STRICT would cause.
+- **Dry-run every ALLOW policy.** `istio.io/dry-run: "true"`, read `shadow_denied`, then enforce.
+- **One edge, in the mesh.** A gateway in the mesh sends mTLS by itself. An edge proxy outside it, or one that targets pod IPs with the public `Host`, forces PERMISSIVE.
+- **Delegate routes, and monitor delegates.** A root VirtualService makes ordering explicit; check that every delegate in its table exists.
+- **Give the edge and the control plane two replicas and a PodDisruptionBudget**, spread across nodes.
+- **Keep everything in Git and lint it.** `istioctl analyze --use-kube=false -R ./deploy/` in CI. Keep high-blast-radius objects (STRICT policies, edge allowlists) behind a human apply step; on `mk4` CI deliberately skips them.
+- **Make Terraform see chart templates.** For local Helm charts, use the provider's manifest diff or bump the chart version on every template change.
+- **Name ports by protocol and label workloads `app` and `version`.** Kiali, metrics and subsets rely on both.
+- **Scope configuration with `Sidecar`** to cut proxy memory and push time:
+
+```yaml
+apiVersion: networking.istio.io/v1
+kind: Sidecar
+metadata:
+  name: default
+  namespace: bookinfo
+spec:
+  egress:
+    - hosts: ["./*", "istio-system/*"]
+```
+
+- **Upgrade with revisions.** Install the new istiod with `--set revision=1-31-0`, move one namespace at a time (`istio.io/rev=1-31-0`, restart), then remove the old one. `mk4` needs this next: Istio 1.31 is the first release that lists Kubernetes 1.37.
+- **Back up Istio objects and the root CA.** A Velero backup of the Istio CRDs and the `istio-ca-secret` in `istio-system` gives a point-in-time restore; losing the root CA means every workload must restart for new certificates. On `mk4` the `velero` namespace exists but the Velero server is not installed, so this is still a plan.
+
+## Conclusion
+
+Istio gives you mTLS, workload identity, fine-grained authorization, traffic shifting and a live service graph without changing application code. The price is more pods, more memory and a layer that fails in quiet ways: a dropped route, a rejected listener, a request passed through as plain TCP.
+
+On `mk4` the YAML from the docs was never the hard part. The edges were: an ingress proxy outside the mesh, `Host` headers that hide the destination, NetworkPolicies without DNS, Argo CD projects that refuse a kind, and Terraform that did not look inside charts. Measure plain text before STRICT, dry-run authorization before enforcing it, and read istiod's logs after every edge change. Minikube is the right place to practise all three.
+
+## Sources
+
+- [What is Istio?](https://istio.io/latest/docs/overview/what-is-istio/)
+- [Architecture](https://istio.io/latest/docs/ops/deployment/architecture/)
+- [Sidecar or ambient?](https://istio.io/latest/docs/overview/dataplane-modes/)
+- [Minikube platform setup](https://istio.io/latest/docs/setup/platform-setup/minikube/)
+- [Install with Helm](https://istio.io/latest/docs/setup/install/helm/)
+- [Install the Istio CNI node agent](https://istio.io/latest/docs/setup/additional-setup/cni/)
+- [Bookinfo application](https://istio.io/latest/docs/examples/bookinfo/)
+- [Ingress gateways](https://istio.io/latest/docs/tasks/traffic-management/ingress/ingress-control/)
+- [VirtualService reference (delegation)](https://istio.io/latest/docs/reference/config/networking/virtual-service/)
+- [Configuring gateway network topology](https://istio.io/latest/docs/ops/configuration/traffic-management/network-topologies/)
+- [EnvoyFilter reference](https://istio.io/latest/docs/reference/config/networking/envoy-filter/)
+- [PeerAuthentication reference](https://istio.io/latest/docs/reference/config/security/peer_authentication/)
+- [Mutual TLS migration](https://istio.io/latest/docs/tasks/security/authentication/mtls-migration/)
+- [Dry run AuthorizationPolicy](https://istio.io/latest/docs/tasks/security/authorization/authz-dry-run/)
+- [Envoy access logs](https://istio.io/latest/docs/tasks/observability/logs/access-log/)
+- [Diagnostic tools](https://istio.io/latest/docs/ops/diagnostic-tools/)
+- [Traffic management problems](https://istio.io/latest/docs/ops/common-problems/network-issues/)
+- [Protocol selection](https://istio.io/latest/docs/ops/configuration/traffic-management/protocol-selection/)
+- [Canary upgrades](https://istio.io/latest/docs/setup/upgrade/canary/)
+- [Supported releases](https://istio.io/latest/docs/releases/supported-releases/)
+- [Envoy access log format and response flags](https://www.envoyproxy.io/docs/envoy/latest/configuration/observability/access_log/usage)

@@ -1,0 +1,16 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: shop-web
+  namespace: shop
+spec:
+  scaleTargetRef:
+    name: shop-web
+  minReplicaCount: 2
+  maxReplicaCount: 10
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus-operated.monitoring.svc:9090
+        query: sum(rate(http_server_requests_total{job="shop-web"}[2m]))
+        threshold: "50"

@@ -1,0 +1,18 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: order-consumer
+  namespace: shop
+spec:
+  scaleTargetRef:
+    name: order-consumer
+  minReplicaCount: 0
+  maxReplicaCount: 12
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka-bootstrap.kafka.svc:9092
+        consumerGroup: order-consumer
+        topic: orders
+        lagThreshold: "50"
+        activationLagThreshold: "5"

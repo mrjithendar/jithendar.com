@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bad
+  namespace: shop
+spec:
+  initContainers:
+    - name: setup
+      image: registry.jithendar.com/shop/setup:1.0
+      securityContext:
+        privileged: true
+  containers:
+    - name: app
+      image: docker.io/library/nginx:1.29

@@ -1,0 +1,296 @@
+---
+title: "Let's Encrypt on k3s: How cert-manager Renews My Wildcard Certificate Automatically"
+slug: lets-encrypt-k3s-cert-manager-automatic-renewal
+description: "How my k3s cluster gets a Let's Encrypt wildcard certificate with cert-manager and Cloudflare DNS-01, and how it renews with no manual step."
+seoTitle: "Let's Encrypt on k3s with cert-manager: Auto Renewal"
+seoDescription: "A real k3s setup: cert-manager, a Cloudflare DNS-01 ClusterIssuer, a wildcard certificate on an Istio gateway, and how renewal runs with no manual step."
+author: jithendar-dharmapuri
+category: kubernetes
+tags: [Let's Encrypt, cert-manager, k3s, Kubernetes, TLS, Istio, Cloudflare, Terraform, Helm, DevOps]
+contentType: tutorial
+status: draft
+featuredImage:
+  src: /images/lets-encrypt/lets-encrypt-k3s-architecture.png
+  alt: "TLS on the mk4 k3s cluster. A Hetzner load balancer forwards ports 80 and 443 to the Istio ingress gateway, which terminates TLS with the Secret jithendar-com-gateway-tls. cert-manager uses the ClusterIssuer letsencrypt-dns and a Cloudflare API token to write a TXT record, Let's Encrypt looks it up and signs, and cert-manager writes the certificate into the Secret. A second Certificate in namespace jithendar holds the same names."
+  width: 1800
+  height: 1400
+related:
+  - blog/lets-encrypt-ssl-explained-acme-challenges-renewal
+  - blog/15-essential-kubernetes-tools-devops-engineers-2026-part-2
+  - blog/istio-service-mesh-minikube-features-setup-troubleshooting
+sources:
+  - title: "cert-manager: Installing with Helm"
+    url: https://cert-manager.io/docs/installation/helm/
+    publisher: cert-manager
+  - title: "cert-manager: DNS01 with Cloudflare"
+    url: https://cert-manager.io/docs/configuration/acme/dns01/cloudflare/
+    publisher: cert-manager
+  - title: "cert-manager: Certificate resource"
+    url: https://cert-manager.io/docs/usage/certificate/
+    publisher: cert-manager
+  - title: "cert-manager 1.21 release notes"
+    url: https://cert-manager.io/docs/releases/release-notes/release-notes-1.21/
+    publisher: cert-manager
+  - title: "Decreasing Certificate Lifetimes to 45 Days"
+    url: https://isrg.org/post/from-90-to-45/
+    publisher: Let's Encrypt
+  - title: "Rate Limits"
+    url: https://letsencrypt.org/docs/rate-limits/
+    publisher: Let's Encrypt
+---
+<Todo>Draft written on 2026-11-14 from Git only: mrjithendar/minikube at 13be756 (deploy/minikube/cert-manager, deploy/minikube/istio, minikube-infrastructure). The cluster was NOT inspected, so nothing here is verified live. Before publishing: (1) run the commands in "Checking that renewal works" on mk4 and add the real notAfter and renewalTime; (2) confirm the edge is the Hetzner load balancer mk4-edge (ingressgateway.yaml says so, but a comment in istio/edge/values.yaml still mentions the old host HAProxy); (3) confirm how k3s's bundled Traefik was turned off, and add it if you want; (4) the cert-manager source links (Helm install, Cloudflare DNS01, Certificate) were written from memory, and the 1.21 notes were read at acme.cert-manager.io: open each once; (5) the repository on GitHub is still named minikube: say so or rename. Evidence table: sites/jithendar.com/docs/knowledge-sharing/lets-encrypt/README.md.</Todo>
+
+On my k3s cluster one wildcard certificate covers `jithendar.com` and every subdomain, and nobody renews it by hand. cert-manager requests it from Let's Encrypt, proves domain control through Cloudflare DNS, stores it in a Kubernetes Secret and replaces it before it expires. This article shows the exact setup and then follows one renewal from start to finish.
+
+[Part 1](/blog/lets-encrypt-ssl-explained-acme-challenges-renewal) explains Let's Encrypt and the ACME protocol on their own. Here I assume you know what a challenge is.
+
+Every implementation detail below is what my infrastructure repository declares in Git and Terraform applies. Recommendations are marked as such.
+
+## The cluster and the goal
+
+`mk4` is a k3s cluster on Hetzner Cloud, created with hetzner-k3s. It has one control-plane node that runs no workloads and two ARM workers with 4 vCPU and 8 GB each. Until 10 November 2026 `mk4` was a Minikube profile on a single server, which is why many folder names in the repository still say `minikube`.
+
+The cluster hosts this website and several tools, on more than one hostname:
+
+- `jithendar.com` and `www.jithendar.com` over HTTPS
+- `registry.jithendar.com` (Harbor) and `jfrog.jithendar.com` over HTTPS
+- `postgres.jithendar.com` and `redis.jithendar.com` as TLS-wrapped TCP on port 443
+
+I wanted three things: one certificate for all of them, no renewal work, and no dependency on an HTTP route staying open.
+
+## Architecture
+
+One wildcard certificate, issued over DNS-01, served by the Istio ingress gateway.
+
+![TLS on mk4: a visitor reaches a Hetzner load balancer, then the Istio ingress gateway, which reads a TLS Secret. cert-manager, a ClusterIssuer and a Cloudflare API token create a DNS TXT record, Let's Encrypt validates it and signs, and cert-manager writes the certificate into the Secret.](/images/lets-encrypt/lets-encrypt-k3s-architecture.svg)
+
+| Piece | What it is on mk4 | Role |
+| --- | --- | --- |
+| Edge | Hetzner load balancer `mk4-edge`, ports 80 and 443, PROXY protocol | Sends traffic to the gateway pods |
+| Gateway | Istio ingress gateway, 2 replicas, Gateway `public` in namespace `istio-ingress` | Terminates TLS for every hostname |
+| cert-manager | Chart v1.20.4 in namespace `cert-manager` | Requests, stores and renews certificates |
+| Issuers | ClusterIssuers `letsencrypt-dns` and `letsencrypt-dns-staging` | Hold the ACME account and the DNS-01 solver |
+| DNS | Cloudflare zone `jithendar.com` | Where the challenge TXT record is written |
+| Certificates | `istio-ingress/jithendar-com` and `jithendar/jithendar-com-wildcard` | Both list `jithendar.com` and `*.jithendar.com` |
+
+### Why DNS-01 and not HTTP-01
+
+The cluster first used HTTP-01 through Traefik. I moved to DNS-01 for two reasons.
+
+**Wildcards.** Let's Encrypt issues `*.jithendar.com` only over DNS-01. With a wildcard, a new subdomain needs no new certificate.
+
+**Renewal does not touch the web path.** With HTTP-01, every renewal needs port 80, the ingress controller and a temporary route to work. With DNS-01, cert-manager talks to the Cloudflare API and Let's Encrypt asks DNS. The gateway is not involved, so a routing change cannot break a renewal.
+
+The price is a Cloudflare API token inside the cluster. I limit it to the one zone.
+
+## Step 1: install cert-manager
+
+Terraform installs the official chart as a Helm release (shortened):
+
+```hcl
+resource "helm_release" "cert_manager" {
+  name             = "cert-manager"
+  namespace        = "cert-manager"
+  create_namespace = true
+  repository       = "oci://quay.io/jetstack/charts"
+  chart            = "cert-manager"
+  version          = "v1.20.4"
+  values           = [file("${local.minikube}/cert-manager/values.yaml")]
+  wait             = true
+}
+```
+
+The values file is short, and two parts of it matter:
+
+```yaml
+crds:
+  enabled: true
+webhook:
+  podLabels:
+    sidecar.istio.io/inject: "false"
+dns01RecursiveNameservers: "https://1.1.1.1/dns-query,https://8.8.8.8/dns-query"
+dns01RecursiveNameserversOnly: true
+```
+
+- **No sidecar on the webhook.** The API server calls the webhook directly on every cert-manager resource change. A mesh proxy that is not ready yet would fail those calls.
+- **DNS over HTTPS for the self-check.** Without it the wildcard certificate never issued. The story is under [What went wrong](#what-went-wrong).
+
+Without Terraform, the same install is one command:
+
+```bash
+helm install cert-manager oci://quay.io/jetstack/charts/cert-manager \
+  --version v1.20.4 --namespace cert-manager --create-namespace \
+  --set crds.enabled=true
+```
+
+## Step 2: the Cloudflare token
+
+The issuer needs a Cloudflare API token with **Zone, DNS, Edit** and **Zone, Zone, Read** on the `jithendar.com` zone only. It lives in a Secret that I create by hand, so the token never reaches Git:
+
+```bash
+kubectl -n cert-manager create secret generic cloudflare-api-token \
+  --from-literal=api-token=REPLACE_ME
+```
+
+The Secret must exist before issuance. Without it the ClusterIssuers still register their ACME accounts, but the Certificate stays `False` until the Secret appears.
+
+## Step 3: staging and production ClusterIssuers
+
+A ClusterIssuer holds the ACME account and says how to solve challenges. A small local Helm chart renders two of them, identical except for name and server URL. This is the production one:
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-dns
+spec:
+  acme:
+    email: you@example.com
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-dns-account-key
+    solvers:
+      - selector:
+          dnsZones: [jithendar.com]
+        dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-api-token
+              key: api-token
+```
+
+`letsencrypt-dns-staging` points at `https://acme-staging-v02.api.letsencrypt.org/directory` and keeps its own account key. It is there for testing, because production allows only five certificates per week for the same set of names.
+
+`privateKeySecretRef` is the ACME **account** key, not the certificate key. cert-manager generates it on first use and keeps it in that Secret.
+
+## Step 4: request the certificate
+
+A Certificate resource is a standing order: these names, from this issuer, into this Secret.
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: jithendar-com
+  namespace: istio-ingress
+spec:
+  secretName: jithendar-com-gateway-tls
+  dnsNames:
+    - jithendar.com
+    - "*.jithendar.com"
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: letsencrypt-dns
+```
+
+It sits in `istio-ingress` because an Istio Gateway can only read a `credentialName` Secret from the namespace of the gateway pods. The Gateway then points every HTTPS and TLS server at it (shortened, the two TCP servers are left out):
+
+```yaml
+servers:
+  - port: {number: 443, name: https, protocol: HTTPS}
+    hosts:
+      - istio-ingress/jithendar.com
+      - istio-ingress/www.jithendar.com
+      - harbor/registry.jithendar.com
+      - jfrog/jfrog.jithendar.com
+    tls:
+      mode: SIMPLE
+      credentialName: jithendar-com-gateway-tls
+      minProtocolVersion: TLSV1_2
+  - port: {number: 80, name: http, protocol: HTTP}
+    hosts: [] # the same four hosts
+    tls:
+      httpsRedirect: true
+```
+
+A second Certificate, `jithendar-com-wildcard` in namespace `jithendar`, requests the same two names into the Secret `jithendar-com-wildcard-tls`. Two Certificates with an identical name set count against the same weekly limit of five, so I do not delete and re-create them casually.
+
+Notice what the Certificate does **not** set: `duration`, `renewBefore` and `privateKey`. Leaving them out is what makes renewal adapt by itself, as the next section shows.
+
+## How renewal works with no manual step
+
+cert-manager is a controller: it compares what the Certificate asks for with what the Secret holds, all the time. There is no cron job and no renew command to schedule.
+
+![The renewal loop in eight steps: the Certificate is Ready with a renewal time at two thirds of its lifetime, the time passes, cert-manager creates a new key and CertificateRequest, an Order and DNS-01 Challenge, a TXT record through Cloudflare, Let's Encrypt validates and signs, the Secret is updated in place, and the Istio gateway reloads it without a restart. Failures retry with a backoff.](/images/lets-encrypt/lets-encrypt-k3s-renewal.svg)
+
+1. **A renewal time is recorded.** After each issuance cert-manager reads the real `notBefore` and `notAfter` from the certificate and writes `status.renewalTime`. With no `renewBefore` set, that is two thirds of the way through the lifetime: day 60 of a 90-day certificate.
+2. **The time passes.** The controller sets the condition `Issuing=True` on the Certificate.
+3. **A new key and a CertificateRequest.** Since cert-manager v1.18 the default `rotationPolicy` is `Always`, so every renewal gets a fresh private key. The key is kept in a temporary Secret until the new certificate is signed.
+4. **An Order and Challenges.** The CertificateRequest becomes an ACME Order, with one DNS-01 Challenge per name that needs validating.
+5. **The TXT record.** cert-manager calls the Cloudflare API to create `_acme-challenge.jithendar.com`, then checks that the record is visible before it tells Let's Encrypt to look.
+6. **Validation and signing.** Let's Encrypt looks up the record, marks the authorization valid and signs the CSR. cert-manager deletes the TXT record.
+7. **The Secret is updated in place.** `tls.crt` and `tls.key` in `jithendar-com-gateway-tls` are replaced. The Secret keeps its name, so nothing that refers to it changes.
+8. **The gateway picks it up.** Istio delivers `credentialName` Secrets to Envoy over SDS and watches them, so the gateway serves the new certificate without a pod restart.
+
+If a step fails, the old certificate keeps working: it still has about 30 days left. cert-manager retries the request with an increasing delay, from 1 hour up to 32 hours by default.
+
+Because the renewal time comes from the certificate's actual lifetime, nothing in this setup assumes 90 days. When Let's Encrypt's default drops to 64 days in February 2027 and 45 days in February 2028, the same Certificate renews at day 43 and day 30 with no change from me.
+
+## Checking that renewal works
+
+These commands show the state of every piece. A forced renewal is the only real proof.
+
+<Todo>Run these on mk4 and paste the real output (notAfter, renewalTime, revision) before publishing.</Todo>
+
+```bash
+# Issuers and certificates
+kubectl get clusterissuer
+kubectl get certificate -A
+
+# When will it renew, and which revision is it on?
+kubectl -n istio-ingress get certificate jithendar-com \
+  -o jsonpath='{.status.notAfter}{"\n"}{.status.renewalTime}{"\n"}{.status.revision}{"\n"}'
+
+# What the gateway actually serves
+echo | openssl s_client -connect jithendar.com:443 -servername jithendar.com 2>/dev/null \
+  | openssl x509 -noout -issuer -dates
+
+# Force a renewal now (cmctl is cert-manager's CLI)
+cmctl renew jithendar-com -n istio-ingress
+kubectl -n istio-ingress get certificaterequest,order,challenge
+```
+
+After a forced renewal, `status.revision` goes up by one and `openssl` shows a new `notBefore`, with no restart of the gateway.
+
+## What went wrong
+
+**The DNS-01 self-check timed out.** Before asking Let's Encrypt to validate, cert-manager queries the zone's authoritative nameservers itself. Pods on mk4 cannot reach port 53 on the internet, so that check failed with `dial tcp 172.64.33.73:53: i/o timeout` and the wildcard Certificate never issued. The fix is the two Helm values from Step 1: do the check through recursive resolvers over HTTPS, and use only those.
+
+**The Certificate waited for a Secret.** On 8 November the Cloudflare token Secret was not on the cluster yet. The ClusterIssuers still registered their ACME accounts, so they looked healthy, but the Certificate stayed `False` until the Secret was created.
+
+**Old issuer names.** The HTTP-01 issuers `letsencrypt-prod` and `letsencrypt-staging` went away with Traefik. The DNS-01 issuers have different names on purpose, so an old manifest that still refers to `letsencrypt-prod` fails loudly instead of quietly using a different solver.
+
+When a certificate is stuck, I walk the chain in order. Each object's events say why the next one has not appeared:
+
+```bash
+kubectl -n istio-ingress describe certificate jithendar-com
+kubectl -n istio-ingress describe certificaterequest
+kubectl -n istio-ingress describe order
+kubectl -n istio-ingress describe challenge
+kubectl -n cert-manager logs deployment/cert-manager --tail=100
+```
+
+## What I would add next
+
+These are recommendations, not things running on mk4 today.
+
+- **Expiry alerts.** My values file has `prometheus.enabled: false`, so cert-manager's metrics are not scraped. Let's Encrypt no longer sends expiry emails, so the cluster should alert by itself. With metrics on, this rule fires when any certificate has under 14 days left:
+
+```yaml
+- alert: CertificateExpiresSoon
+  expr: certmanager_certificate_expiration_timestamp_seconds - time() < 14 * 86400
+  for: 1h
+```
+
+- **ARI.** cert-manager 1.21 adds experimental ACME Renewal Information behind the feature gate `ACMEUseARI`. With it, Let's Encrypt can ask for an early renewal during a mass revocation. mk4 runs v1.20.4, so this needs an upgrade first.
+- **One Certificate instead of two.** Two Certificates for the same names double the renewals and share one rate limit. Copying one Secret to the second namespace would halve that.
+- **A renewal test after every upgrade.** `cmctl renew` against the staging issuer takes a few minutes and proves the whole path.
+
+## Summary
+
+- cert-manager turns a certificate into a Kubernetes resource: declare the names once and a controller keeps the Secret valid.
+- DNS-01 through Cloudflare gives a wildcard and keeps renewal independent of the ingress path.
+- Renewal happens at two thirds of the real lifetime, with a new key, into the same Secret, and the gateway reloads it by itself.
+- Leaving `duration` and `renewBefore` unset means the setup is already ready for 45-day certificates.
+- The remaining gap on my cluster is alerting, and that is the next change.

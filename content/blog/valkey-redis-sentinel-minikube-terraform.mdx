@@ -1,0 +1,677 @@
+---
+title: "One Redis for Every App: A Highly Available Valkey Cluster on Minikube with Terraform"
+slug: valkey-redis-sentinel-minikube-terraform
+description: "How we replaced four Redis pods with one shared, highly available Valkey on Minikube: Sentinel, HAProxy, per-app ACLs, Istio mTLS, Terraform and an FAQ."
+seoTitle: "Highly Available Redis (Valkey) on Minikube with Terraform"
+seoDescription: "A shared Valkey 9 on Minikube: three pods, Sentinel failover, an HAProxy master proxy, per-app ACL users and databases, Istio STRICT mTLS, troubleshooting."
+author: jithendar-dharmapuri
+category: kubernetes
+tags: [Redis, Valkey, Redis Sentinel, Kubernetes, Minikube, Terraform, Helm, HAProxy, Istio, DevOps, SRE]
+contentType: tutorial
+status: review
+related:
+  - blog/cloudnativepg-postgres-cluster-minikube-terraform
+  - blog/istio-service-mesh-minikube-features-setup-troubleshooting
+  - blog/kiali-minikube-service-mesh-observability
+sources:
+  - title: "Valkey documentation: High availability with Sentinel"
+    url: https://valkey.io/topics/sentinel/
+    publisher: Valkey
+  - title: "Valkey documentation: ACL"
+    url: https://valkey.io/topics/acl/
+    publisher: Valkey
+  - title: "Valkey documentation: Persistence"
+    url: https://valkey.io/topics/persistence/
+    publisher: Valkey
+  - title: "Valkey documentation: Key eviction"
+    url: https://valkey.io/topics/lru-cache/
+    publisher: Valkey
+  - title: "Valkey documentation: Cluster tutorial"
+    url: https://valkey.io/topics/cluster-tutorial/
+    publisher: Valkey
+  - title: "Linux Foundation launches open source Valkey community"
+    url: https://www.linuxfoundation.org/press/linux-foundation-launches-open-source-valkey-community
+    publisher: Linux Foundation
+  - title: "CloudPirates Helm charts (valkey)"
+    url: https://github.com/CloudPirates-io/helm-charts
+    publisher: GitHub
+  - title: "Helm: Post rendering"
+    url: https://helm.sh/docs/topics/advanced/#post-rendering
+    publisher: Helm
+  - title: "Istio: PeerAuthentication reference"
+    url: https://istio.io/latest/docs/reference/config/security/peer_authentication/
+    publisher: Istio
+  - title: "Istio: AuthorizationPolicy reference"
+    url: https://istio.io/latest/docs/reference/config/security/authorization-policy/
+    publisher: Istio
+  - title: "Terraform Helm provider"
+    url: https://registry.terraform.io/providers/hashicorp/helm/latest/docs
+    publisher: HashiCorp
+---
+
+Until this week, four applications on `mk4` (the 8-node Minikube cluster that runs this website, Harbor and RoboShop AI) each ran their own Redis: one single pod each, no replica, no failover, four passwords typed into four Secrets. This article explains how we replaced them with **one shared, highly available Valkey** (the open source, Redis-compatible fork): three pods on three nodes, Sentinel failover, a proxy that hides the failover from applications, and one ACL user and database range per application. Everything is installed from Terraform as Helm releases, next to the [shared PostgreSQL cluster](/blog/cloudnativepg-postgres-cluster-minikube-terraform) we built the same week.
+
+It is written for DevOps and SRE engineers who know Kubernetes basics (Pods, Services, StatefulSets, PersistentVolumeClaims) and have used Redis as a cache or a queue, but have not run it highly available.
+
+Everything below was read from the repositories and from `kubectl` on 9 November 2026. Versions are what `mk4` runs, not recommendations: Valkey 9.1.0 (Redis protocol 7.2.4), chart `cloudpirates/valkey` 0.25.16, HAProxy 3.4, `redis_exporter` 1.95.0, RedisInsight 3.8.0, Kubernetes v1.37.0, Istio 1.30.7.
+
+## 1. Why one shared Redis
+
+### What we had
+
+| Application | Old Redis | What it stores |
+|---|---|---|
+| jithendar.com | `jithendar-redis` | page cache, sessions, rate limits |
+| Python practice executor | `practice-redis` | the queue of code runs waiting for a sandbox |
+| Harbor | `harbor-redis` (databases 0, 1, 2, 5) | core cache, jobservice queue, registry cache, Trivy |
+| RoboShop AI | `roboshop-ai/redis` | cart and shipping cache |
+
+Four pods, four volumes on Minikube's default `standard` StorageClass, and four places to upgrade and monitor. Losing any node took one of them down, and because `standard` volumes have no node affinity, a rescheduled Redis pod could come up on **another node's empty folder**. For a cache that only logs users out. For Harbor's jobservice queue and the practice executor queue it loses jobs.
+
+### What we wanted
+
+- **Survive a node failure** with no human involved, and survive a rolling update without dropping writes.
+- **One address per application** that keeps working across a failover, without teaching every client library about Sentinel.
+- **Isolation between applications**: each one sees only its own data and cannot run admin commands.
+- **Queues must never be evicted**, even when caches fill memory.
+- **Everything as code**: server, users, passwords and the Secrets applications read come from Terraform.
+- **Reachable from outside for the owner only**: a web console and `redis-cli` from a laptop, both behind an IP allowlist.
+
+Argo CD keeps its own `argocd-redis`. The GitOps controller must not depend on something it deploys.
+
+## 2. "Redis cluster", but not Redis Cluster
+
+The word *cluster* means two different things here, and the choice between them is the first decision to make.
+
+| | Replication + Sentinel (what we built) | Redis Cluster mode |
+|---|---|---|
+| Data | every pod holds **all** keys | keys are **sharded** over primaries (16,384 hash slots) |
+| Pods for HA | 3 (1 primary, 2 replicas) | 6 (3 primaries, each with a replica) |
+| Clients | any Redis client, one address | must be cluster-aware (follow `MOVED`/`ASK` redirects) |
+| Multi-key commands | work on any keys | keys must hash to the same slot |
+| Solves | availability | availability **and** data size / write throughput beyond one node |
+
+Our whole dataset is **7.6 MB** against a 512 MB limit. Sharding would solve a problem we do not have, double the pods and force every application (Harbor, RoboShop, the practice executor) onto cluster-aware clients. So "the Redis cluster" in this article is three Valkey pods in a replication group, supervised by Sentinel. If one application ever outgrows a single node, it gets its own sharded cluster; the shared one stays simple.
+
+### Why Valkey instead of Redis
+
+In 2024 Redis moved away from its BSD licence, and the Linux Foundation started [Valkey](https://www.linuxfoundation.org/press/linux-foundation-launches-open-source-valkey-community) from the last BSD-licensed Redis. It speaks the same protocol (our server reports `redis_version:7.2.4`), so `redis-cli`, `redis_exporter`, RedisInsight and every client library work unchanged. Valkey 9 also added the ACL feature this whole design leans on: **`db=`**, which limits a user to specific database numbers.
+
+### Why the cloudpirates chart
+
+We needed one chart that runs Valkey, Sentinel **and** a master proxy in the same pod, uses the official `valkey/valkey` image (multi-arch; `mk4` is arm64) and supports `existingSecret` for the admin password. `cloudpirates/valkey` does all three and is published as an OCI chart on Docker Hub.
+
+## 3. Architecture
+
+![The shared Valkey on mk4 on 9 November 2026. On the left, three meshed application namespaces each read redis-<name>-credentials in their own namespace and connect to Service valkey-master on port 6379: the practice executor (namespace jithendar, database 1), Harbor (namespace harbor, databases 2 to 5) and RoboShop cart and shipping (namespace roboshop-ai, database 6). In namespace redis, which has STRICT mTLS and an enforced ALLOW policy, valkey-master selects all three pods, and the HAProxy in each pod forwards to the current primary. The pods run on three nodes: valkey-0 on mk4-m06 (replica), valkey-1 on mk4-m03 (primary) and valkey-2 on mk4-m07 (replica); each has HAProxy, Sentinel with quorum 2, an exporter on port 9121 and a 2Gi local-path volume, and the primary replicates to both replicas. Prometheus scrapes the exporters, and RedisInsight runs as the console user without admin commands. The owner's laptop reaches the Istio ingress gateway, which denies every address outside the IP allowlist, serves /redis behind a login to RedisInsight, and terminates TLS for redis.jithendar.com on port 443 before forwarding TCP to valkey-master.](/images/valkey-minikube/valkey-architecture.svg)
+
+Every Valkey pod runs five containers:
+
+| Container | Job |
+|---|---|
+| `valkey` | the data, primary or replica |
+| `sentinel` | watches the primary; three Sentinels vote (quorum 2) to promote a replica |
+| `haproxy` | the "master proxy": asks which pod is primary right now and forwards to it |
+| `metrics` | `redis_exporter` on port 9121 for Prometheus |
+| `istio-proxy` | Envoy sidecar (a native sidecar, started before the init container) |
+
+The trick is the HAProxy in every pod. The Service `valkey-master` selects **all three pods** on HAProxy's port, and each HAProxy health-checks the three Valkeys for `role:master`. Whichever pod a connection lands on, it reaches the primary. After a failover, applications reconnect to the same address and get the new primary. No application needed Sentinel support.
+
+| Piece | Where it is defined |
+|---|---|
+| Namespace, passwords, ACL users, app Secrets, both releases | `minikube-infrastructure/redis.tf`, variables `redis_tenants`, `redis_allowed_ips` |
+| Valkey, Sentinel, HAProxy, exporter (release `valkey`) | `deploy/minikube/redis/values.yaml` + `postrender-haproxy.sh` |
+| mTLS, AuthorizationPolicies, NetworkPolicies, RedisInsight, TCP route, allowlists (release `redis-access`) | local chart `deploy/minikube/redis/access` |
+| `/redis` route, gateway login, TLS server for `redis.jithendar.com` | `deploy/minikube/istio/edge/values.yaml` |
+| Alerts and dashboard | `deploy/minikube/observability/` |
+
+All of it lives in the private `miniKube` repository, in the same Terraform root as every other add-on.
+
+## 4. Implementation
+
+### 4.1 The namespace
+
+```hcl
+resource "kubernetes_namespace_v1" "redis" {
+  metadata {
+    name = "redis"
+    labels = {
+      "app.kubernetes.io/part-of"          = "redis"
+      "istio-injection"                    = "enabled"
+      "pod-security.kubernetes.io/enforce" = "baseline"
+      "pod-security.kubernetes.io/warn"    = "restricted"
+    }
+  }
+}
+```
+
+Unlike `postgres-db`, this namespace **is** in the mesh. Redis has no TLS of its own here, so Istio's mTLS is what encrypts replication, Sentinel gossip and every client connection. It also gives us workload identities to write authorization rules against (section 4.6).
+
+### 4.2 Topology, persistence and failover
+
+The heart of `deploy/minikube/redis/values.yaml`:
+
+```yaml
+fullnameOverride: valkey
+architecture: replication
+replicaCount: 3
+
+auth:
+  enabled: true
+  existingSecret: valkey-users          # written by redis.tf
+  existingSecretPasswordKey: default    # the admin user
+
+sentinel:
+  enabled: true
+  config:
+    announceHostnames: true             # stable DNS names; keeps Istio on mTLS
+  masterName: mk4
+  quorum: 2
+  downAfterMilliseconds: 5000           # chart default 1500
+  failoverTimeout: 30000
+  parallelSyncs: 1
+  valkeyShutdownWaitFailover: true      # primary hands over before it stops
+  preStop:
+    enabled: true
+  masterProxy:
+    enabled: true                       # the HAProxy sidecar
+
+persistence:
+  enabled: true
+  storageClass: local-path              # node-pinned volumes
+  size: 2Gi
+
+persistentVolumeClaimRetentionPolicy:
+  enabled: true
+  whenDeleted: Retain
+  whenScaled: Retain
+
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - topologyKey: kubernetes.io/hostname   # Minikube nodes have no zone label
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: valkey
+            app.kubernetes.io/instance: valkey
+
+pdb:
+  enabled: true
+  minAvailable: 2                       # a drain never breaks Sentinel's quorum
+
+terminationGracePeriodSeconds: 60
+
+podAnnotations:
+  proxy.istio.io/config: |
+    holdApplicationUntilProxyStarts: true
+    terminationDrainDuration: 45s
+```
+
+The choices worth explaining:
+
+- **`downAfterMilliseconds: 5000`.** The chart's 1.5 s is fine on dedicated hardware. On Minikube, a sidecar restart or a briefly overloaded node would start needless failovers. Five seconds of silence is a real outage.
+- **`valkeyShutdownWaitFailover` and `preStop`.** When the primary pod is told to stop (rolling update, `kubectl delete pod`, node drain), its preStop hook asks Sentinel to fail over **first** and waits until a replica has taken over. That needs more than the default 30 s grace period, hence 60.
+- **The Istio annotations.** The init container asks Sentinel who the primary is, and that request must go through Envoy (STRICT mTLS), so Envoy must start first. On shutdown, Envoy must outlive the preStop failover, or the hand-over loses its network halfway.
+- **`local-path` and `Retain`.** Same lesson as the PostgreSQL cluster: volumes pinned to the node that holds them, and data kept when the StatefulSet or a PVC is deleted.
+- **Required anti-affinity by hostname, PDB `minAvailable: 2`.** One node failure or one drain costs at most one copy, and two Sentinels are always left to vote.
+
+![How the Valkey primary moves. A planned stop (rolling update, pod delete or node drain) sends SIGTERM and runs the preStop hook, which hands over first with SENTINEL FAILOVER mk4 and waits for a new primary. An unplanned loss (crash, OOM or a lost node) makes the primary go silent; after 5 seconds without an answer, 2 of 3 Sentinels mark it down. Both paths end with a replica promoted by the leader Sentinel (REPLICAOF NO ONE). HAProxy then follows by health-checking role:master, so valkey-master keeps the same address, and the old pod comes back on the same node with the same volume and resyncs as a replica. Clients see a few failed writes: 2 in about 4 seconds in the 9 November test. Four settings make the hand-over safe: a PodDisruptionBudget with minAvailable 2 so a drain never breaks quorum, a 60-second grace period for the preStop failover, Envoy starting first and draining for 45 seconds, and a 5000 ms down-after so a blip does not start a failover.](/images/valkey-minikube/valkey-failover.svg)
+
+### 4.3 Memory, durability and a shared server
+
+```yaml
+config:
+  maxMemory: 512mb
+  maxMemoryPolicy: volatile-lru
+  save: "3600 1 300 100 60 10000"
+  extraConfig:
+    - databases 32
+    - appendonly yes
+    - appendfsync everysec
+    - aof-use-rdb-preamble yes
+    - repl-diskless-sync yes
+    - repl-diskless-sync-delay 2
+    - repl-backlog-size 64mb
+    - lazyfree-lazy-eviction yes
+    - lazyfree-lazy-expire yes
+    - lazyfree-lazy-server-del yes
+    - lazyfree-lazy-user-del yes
+    - replica-lazy-flush yes
+    - tcp-keepalive 60
+    - maxclients 2000
+    - slowlog-log-slower-than 10000
+    - enable-debug-command no
+    - enable-module-command no
+```
+
+**`volatile-lru` is the most important line.** Caches and queues now share one server. With `allkeys-lru`, a burst of cache writes could evict a Harbor job or a queued code run. `volatile-lru` evicts only keys that carry a TTL (caches, sessions, rate limits). Queue entries have no TTL and are never evicted. The trade-off: if memory fills with keys that have no TTL, Valkey refuses writes with `OOM` instead of silently losing data. An alert fires at 85 % long before that (section 4.8).
+
+The rest:
+
+- **AOF every second plus RDB snapshots.** At most one second of writes lost if all three pods die at once; RDB makes restarts fast.
+- **`databases 32`.** Each application gets its own database numbers; 32 leaves room to grow.
+- **`lazyfree-*`.** Deleting or expiring a large key happens in a background thread, so one application's big key cannot stall everyone else's requests.
+- **`enable-debug-command no`, `enable-module-command no`.** Off for every user, the admin included. Nobody needs them on a shared server.
+
+Requests are small (`50m` CPU, `128Mi`), and the memory limit is `1Gi`: 512 MB of data, plus replication and client buffers, plus the fork during an AOF rewrite.
+
+### 4.4 The HAProxy post-renderer
+
+Reading the rendered chart turned up a trap. The chart's HAProxy config has `timeout client 30s` and `timeout server 30s`, and no `timeout tunnel`. A connection that is idle for 30 s gets closed, which is exactly what a `BRPOP` worker waiting for a job (the practice executor's dispatcher), or a Pub/Sub subscriber, looks like. They would be cut and reconnect over and over.
+
+The chart has no value for it, so a Helm [post-renderer](https://helm.sh/docs/topics/advanced/#post-rendering) adds the line after rendering:
+
+```sh
+#!/bin/sh
+# deploy/minikube/redis/postrender-haproxy.sh
+set -eu
+awk '
+  { print }
+  /^[[:space:]]*timeout server 30s[[:space:]]*$/ {
+    match($0, /^[[:space:]]*/)
+    printf "%stimeout tunnel 1h\n", substr($0, 1, RLENGTH)
+    n++
+  }
+  END { if (n == 0) { print "postrender-haproxy.sh: \"timeout server 30s\" not found in the rendered chart" > "/dev/stderr"; exit 1 } }
+'
+```
+
+`timeout tunnel` applies to an established TCP connection in both directions; one hour matches Envoy's own TCP idle timeout. The `exit 1` matters: if a chart upgrade changes the HAProxy config, the apply **fails** instead of silently bringing the 30-second cut back.
+
+### 4.5 One ACL user and database range per application
+
+![One tenant end to end. On the left, Terraform in the miniKube repository reads redis_tenants from vars/mk4.tfvars (practice in namespace jithendar with database 1, harbor in namespace harbor with databases 2 to 5, roboshop in namespace roboshop-ai with database 6). For each tenant redis.tf creates a random password in encrypted state, checks names, database numbers 0 to 31 and that no database is shared, and produces four things: an ACL user line in valkey.conf holding only a SHA-256 hash, the Secret jithendar/redis-practice-credentials with host, port, username, password, db and uri, the namespace added to the AuthorizationPolicy and NetworkPolicy, and a checksum/acl annotation that rolls the StatefulSet. On the right, one connection from the practice dispatcher, which reads EXECUTOR_REDIS_URL from that Secret, passes six layers in order: an egress NetworkPolicy to the Valkey pods on ports 6379 and 6380, Istio STRICT mTLS with the namespace jithendar identity, the valkey AuthorizationPolicy that resets unlisted namespaces, an ingress NetworkPolicy, the HAProxy behind valkey-master that forwards to the primary, and the Valkey ACL for user practice (db=1, no admin commands, no FLUSHALL or SWAPDB), reaching database 1, the practice queue whose keys have no TTL and are never evicted. Layers 2 to 4 refuse a connection before any Redis byte reaches Valkey.](/images/valkey-minikube/valkey-tenancy-security.svg)
+
+Applications are a Terraform map in `vars/mk4.tfvars`:
+
+```hcl
+redis_tenants = {
+  practice = { namespace = "jithendar",   databases = [1] }          # practice executor queue
+  harbor   = { namespace = "harbor",      databases = [2, 3, 4, 5] } # core, jobservice, registry, trivy
+  roboshop = { namespace = "roboshop-ai", databases = [6] }          # cart and shipping cache
+}
+```
+
+Variable validations refuse names that are not DNS-like, the reserved names `default` (admin) and `console` (RedisInsight), database numbers outside 0–31, and any database number given to two applications.
+
+For each entry, `redis.tf` builds one ACL rule:
+
+```hcl
+redis_tenant_acl = { for name, t in var.redis_tenants : name =>
+  "~* &* +@all -@admin -flushall -swapdb db=${join(",", t.databases)}"
+}
+```
+
+Read it left to right: all keys (`~*`) and channels (`&*`), all commands (`+@all`) except the admin category (`CONFIG`, `SHUTDOWN`, `REPLICAOF`, `ACL`, `MONITOR`, `SAVE`, ...), `FLUSHALL` and `SWAPDB`, and **only these database numbers** (`db=`). `FLUSHDB` stays allowed, because it only reaches the application's own database. Key patterns stay `~*` because isolation comes from the database, not from key prefixes, so no application had to rename its keys.
+
+Each rule becomes a `user` line with the password's SHA-256, appended to the chart's `extraConfig`:
+
+```hcl
+redis_acl_lines = concat(
+  ["user console on #${sha256(random_password.redis_console.result)} ${local.redis_console_acl}"],
+  [for name, acl in local.redis_tenant_acl :
+    "user ${name} on #${sha256(random_password.redis[name].result)} ${acl}"],
+)
+
+redis_overrides = {
+  config         = { extraConfig = concat(local.redis_values.config.extraConfig, local.redis_acl_lines) }
+  podAnnotations = { "checksum/acl" = sha1(join("\n", local.redis_acl_lines)) }
+}
+```
+
+Two details:
+
+- **A Helm list replaces, it does not merge.** Passing only the user lines would wipe `appendonly yes` and the rest, so Terraform reads the file's `extraConfig` and concatenates.
+- **The checksum annotation.** The chart does not restart pods when its ConfigMap changes. The annotation changes whenever a user is added, removed or re-keyed, which rolls the StatefulSet. Thanks to the preStop failover, the primary hands over first and writes pause for about a second.
+
+The server only ever sees hashes. The plain passwords live in the encrypted Terraform state and reach each application as a Secret **in its own namespace**:
+
+```hcl
+resource "kubernetes_secret_v1" "redis_app" {
+  for_each = var.redis_tenants
+  metadata {
+    name      = "redis-${each.key}-credentials"
+    namespace = each.value.namespace
+  }
+  data = {
+    host      = "valkey-master.redis.svc.cluster.local"
+    port      = "6379"
+    username  = each.key
+    password  = random_password.redis[each.key].result
+    db        = tostring(each.value.databases[0])
+    databases = join(",", each.value.databases)
+    uri       = "redis://${each.key}:${random_password.redis[each.key].result}@valkey-master.redis.svc.cluster.local:6379/${each.value.databases[0]}"
+  }
+}
+```
+
+The practice executor uses `uri` directly:
+
+```yaml
+env:
+  - name: EXECUTOR_REDIS_URL
+    valueFrom: { secretKeyRef: { name: redis-practice-credentials, key: uri } }
+```
+
+Harbor and RoboShop read `host`, `port`, `username`, `password` and `db` separately, because their charts want them that way.
+
+Here is what the server holds for one tenant, and what it refuses, checked with `ACL DRYRUN` (which evaluates a command without running it):
+
+```text
+$ valkey-cli acl getuser practice
+flags: on sanitize-payload
+commands: +@all -@admin -flushall -swapdb
+keys: ~*   channels: &*   databases: db=1
+
+$ valkey-cli acl dryrun practice config get maxmemory
+User practice has no permissions to run the 'config|get' command
+$ valkey-cli acl dryrun practice replicaof no one
+User practice has no permissions to run the 'replicaof' command
+$ valkey-cli acl dryrun practice swapdb 1 2
+User practice has no permissions to access database 2
+```
+
+One thing ACLs do **not** isolate: Pub/Sub channels are not per database, so every user shares one channel namespace (`&*`). Keys are isolated; channel names are not. Do not put anything secret in a channel name or message.
+
+### 4.6 Mesh security: three layers
+
+A password alone is one layer. The `redis-access` chart adds two more, both enforced before a single Redis byte arrives.
+
+**STRICT mTLS** for the namespace, explicitly rather than only through the mesh-wide default:
+
+```yaml
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: redis
+spec:
+  mtls:
+    mode: STRICT
+```
+
+**An enforced ALLOW policy.** The mesh-wide "known callers" policy still runs in dry-run mode. This one does not: anything that matches no rule is refused by the sidecar. Because identities come from mTLS certificates, a pod cannot pretend to be in another namespace.
+
+```yaml
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: valkey
+  namespace: redis
+spec:
+  selector:
+    matchLabels: { app.kubernetes.io/name: valkey, app.kubernetes.io/instance: valkey }
+  action: ALLOW
+  rules:
+    - from: [{ source: { namespaces: [redis, istio-ingress, harbor, jithendar, roboshop-ai] } }]
+      to:   [{ operation: { ports: ["6379", "6380"] } }]   # Valkey, HAProxy
+    - from: [{ source: { namespaces: [redis, harbor, jithendar, roboshop-ai] } }]
+      to:   [{ operation: { ports: ["26379"] } }]          # Sentinel
+    - from: [{ source: { namespaces: [monitoring] } }]
+      to:   [{ operation: { ports: ["9121"] } }]           # exporter
+```
+
+The client namespaces are not typed in: Terraform passes the distinct namespaces from `redis_tenants`, so adding an application opens exactly its namespace and nothing else.
+
+**NetworkPolicies** repeat the same rules on the pod network, so the protection holds even if a sidecar is missing or misconfigured.
+
+The client side needs matching **egress** rules. `jithendar` restricts egress, so the practice executor's NetworkPolicy got a rule for the Valkey pods, and it needs **both** ports:
+
+```yaml
+egress:
+  # valkey-master:6379 is the master proxy on pod port 6380.
+  - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: redis } },
+           podSelector: { matchLabels: { app.kubernetes.io/name: valkey } } }]
+    ports: [{ port: 6379, protocol: TCP }, { port: 6380, protocol: TCP }]
+```
+
+NetworkPolicies see the **pod** port after Service translation. The Service `valkey-master` listens on 6379 but targets HAProxy on 6380, so a rule for 6379 alone blocks every connection.
+
+### 4.7 Reaching it from outside
+
+The Redis protocol is not HTTP, so a URL path cannot carry `redis-cli` traffic. There are two ways in, both through the Istio ingress gateway that already serves `jithendar.com`, and both refused unless the client address is in `redis_allowed_ips`:
+
+| Way in | How it works |
+|---|---|
+| `https://jithendar.com/redis/` | RedisInsight, a web console, signed in as the `console` user (every database, no admin commands, no flush). It has no login of its own, so the gateway adds one (`redis`, from Secret `redis/redis-ui-auth`). |
+| `redis.jithendar.com:443` | A TLS server on the gateway for that hostname. The gateway terminates TLS with the wildcard certificate, matches the host by SNI, then forwards plain TCP (as mTLS) to `valkey-master:6379`. |
+
+```bash
+redis-cli --tls --sni redis.jithendar.com -h redis.jithendar.com -p 443 --user harbor --askpass
+```
+
+`redis.jithendar.com` is an ordinary DNS record pointing at the same host as `jithendar.com`. No new certificate was needed: the gateway presents its existing Let's Encrypt wildcard (`*.jithendar.com`), so `redis-cli` verifies it against the system trust store with no extra flags.
+
+The allowlist for the TCP host is a `DENY` policy on the gateway, decided on the TLS server name:
+
+```yaml
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: redis-tcp-allowlist
+  namespace: istio-ingress
+spec:
+  selector:
+    matchLabels: { istio: ingressgateway }
+  action: DENY
+  rules:
+    - from:
+        - source:
+            notRemoteIpBlocks: ["<allowed address>/32"]
+      when:
+        - key: connection.sni
+          values: ["redis.jithendar.com"]
+```
+
+As with PostgreSQL, the chart refuses to render with an empty list and the Terraform release has a `precondition` with the same check. An empty `notRemoteIpBlocks` would match everyone, and a missing policy would let everyone in. Neither should happen silently.
+
+### 4.8 Monitoring
+
+`mk4`'s Prometheus has no Prometheus Operator, so the access chart adds a headless Service `valkey-metrics-pods` for DNS discovery of the three exporters (job `redis`). A Grafana dashboard (`platform-redis.json`) shows the replication group, memory, clients and commands per database. Four alerts:
+
+| Alert | Fires when |
+|---|---|
+| `ValkeyDown` | a pod or its exporter is down for 2 minutes |
+| `ValkeyReplicaMissing` | the primary has fewer than 2 replicas for 10 minutes |
+| `ValkeyMemoryHigh` | memory above 85 % of `maxmemory` for 10 minutes (writes fail at 100 %) |
+| `ValkeyEvictingKeys` | any TTL keys evicted in 15 minutes (info) |
+
+## 5. Deployment
+
+### 5.1 Checks before anything touches the cluster
+
+Every pull request runs, with no access to `mk4`: `terraform validate` and `terraform test`, `helm template` of the access chart with placeholder IPs, and `pytest` tests that pin the design down. A few of them:
+
+```python
+def test_sentinel_fails_over_and_the_master_proxy_hides_it():
+    assert VALUES['architecture'] == 'replication' and VALUES['replicaCount'] == 3
+    s = VALUES['sentinel']
+    assert s['enabled'] and s['quorum'] == 2 and s['masterProxy']['enabled']
+    assert s['valkeyShutdownWaitFailover'] and s['preStop']['enabled']
+    assert VALUES['pdb'] == {'enabled': True, 'minAvailable': 2}
+
+def test_queues_are_never_evicted_and_writes_are_durable():
+    assert VALUES['config']['maxMemoryPolicy'] == 'volatile-lru'
+    extra = VALUES['config']['extraConfig']
+    assert 'appendonly yes' in extra and 'appendfsync everysec' in extra and 'databases 32' in extra
+
+def test_tenants_are_terraform_variables_not_chart_values():
+    # redis.tf appends the users to extraConfig; a user line here would be duplicated or overwritten.
+    assert not any(line.startswith('user ') for line in VALUES['config']['extraConfig'])
+```
+
+Each one guards a decision that is easy to undo by accident in a later "small" change.
+
+### 5.2 The first install has to be staged
+
+The edge chart refuses to plan until the gateway has a login line for `/redis`, and that line is built from Secret `redis-ui-auth`, which this same apply creates. So the first install goes in three steps:
+
+```bash
+cd miniKube
+# Only if ~/.docker/config.json names a credsStore that is not installed (the chart is an OCI pull).
+export DOCKER_CONFIG=$(mktemp -d)
+
+terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars \
+  -target=helm_release.redis \
+  -target=kubernetes_secret_v1.redis_ui_auth \
+  -target=kubernetes_secret_v1.redis_app
+python3 scripts/istio/gateway-basic-auth.py --context mk4
+terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars
+```
+
+The first apply installs Valkey and writes every Secret. The script turns the UI login into the gateway's htpasswd line. The second full apply adds the edge route, the TLS server, the access chart and the Prometheus job. After that, every change is one normal `apply`.
+
+### 5.3 What healthy looks like
+
+Three pods with five containers each, on three different nodes, plus the console:
+
+```text
+$ kubectl --context mk4 -n redis get pods -o wide
+NAME                        READY   STATUS    NODE
+redis-ui-77996456b5-md686   2/2     Running   mk4-m08
+valkey-0                    5/5     Running   mk4-m06
+valkey-1                    5/5     Running   mk4-m03
+valkey-2                    5/5     Running   mk4-m07
+
+$ kubectl --context mk4 -n redis get pvc,pdb
+NAME                                  STATUS   CAPACITY   STORAGECLASS
+persistentvolumeclaim/data-valkey-0   Bound    2Gi        local-path
+persistentvolumeclaim/data-valkey-1   Bound    2Gi        local-path
+persistentvolumeclaim/data-valkey-2   Bound    2Gi        local-path
+
+NAME                                MIN AVAILABLE   ALLOWED DISRUPTIONS
+poddisruptionbudget.policy/valkey   2               1
+```
+
+Then ask Sentinel and the primary:
+
+```bash
+kubectl --context mk4 -n redis exec valkey-0 -c valkey -- sh -c '
+  export REDISCLI_AUTH=$VALKEY_PASSWORD
+  valkey-cli -p 26379 sentinel get-master-addr-by-name mk4
+  valkey-cli -p 26379 sentinel ckquorum mk4
+  H=$(valkey-cli -p 26379 sentinel get-master-addr-by-name mk4 | head -1)
+  valkey-cli -h $H info replication | head -5
+  valkey-cli -h $H info keyspace'
+```
+
+```text
+valkey-1.valkey-headless.redis.svc.cluster.local
+6379
+OK 3 usable Sentinels. Quorum and failover authorization can be reached
+# Replication
+role:master
+connected_slaves:2
+slave0:ip=valkey-2.valkey-headless.redis.svc.cluster.local,port=6379,state=online,offset=5639378,lag=1
+slave1:ip=valkey-0.valkey-headless.redis.svc.cluster.local,port=6379,state=online,offset=5639378,lag=1
+# Keyspace
+db1:keys=1,expires=0
+db2:keys=878,expires=878
+db3:keys=24,expires=0
+db4:keys=78,expires=6
+db6:keys=1,expires=1
+```
+
+The keyspace shows the tenancy working: database 1 is the practice queue, 2–4 are Harbor (the jobservice queue in 3 has no TTLs, exactly what `volatile-lru` protects), and 6 is RoboShop. `client list` shows each application connecting as its own user (12 `harbor`, 7 `practice`, 2 `roboshop` connections).
+
+### 5.4 The failover test
+
+With a client writing in a loop through `valkey-master`, we deleted the primary pod. Measured on 9 November 2026: **2 failed writes over about 4 seconds**, then writes resumed on the new primary through the same address, with no change on the client side. Because the volumes are pinned, the deleted pod is recreated on its own node with its own data, and rejoins as a replica.
+
+## 6. Moving the applications
+
+One application at a time, in this order:
+
+1. **Allow the traffic.** If the namespace restricts egress, add the rule from section 4.6 (6379 **and** 6380). If it has an Istio `Sidecar` resource with an egress list, add `redis/*`. The namespace must be in the mesh: `redis` refuses plain text.
+2. **Copy what cannot be lost.** Caches and sessions need no copy; a cutover only logs users out. Queues do:
+   - **The practice executor:** drain the queue (no queued runs), then switch.
+   - **Harbor jobservice** keeps queued and scheduled jobs in Redis. Scale jobservice to 0, then copy its old database 1 into new database 3 from inside the old pod with `MIGRATE valkey-master.redis.svc.cluster.local 6379 "" 3 5000 COPY AUTH2 harbor <password> KEYS ...` (keys from `SCAN`). Harbor's databases move 0→2, 1→3, 2→4, 5→5 in `harbor/values.yaml`.
+3. **Switch and check.** Point the application at `redis-<name>-credentials`, start it, and confirm it connects as its own user: `valkey-cli client list | grep user=<name>`. Only then delete the old StatefulSet or Deployment, Service, NetworkPolicy and Secret.
+
+All three moves were done on 9 November 2026, and no application on `mk4` runs its own Redis any more.
+
+The fourth tenant, the website itself, moved **out** of Redis the same day: sessions and rate limits now live in PostgreSQL, and its page caches are per process, so the site has no `REDIS_URL` at all. Its entry was removed from `redis_tenants`; the next apply deletes its ACL user and Secret. Its keys in database 0 stay until someone flushes them by hand, deliberately: a typo in a map key should never delete data.
+
+Adding a **new** application is one line in `redis_tenants` with an unused database number, then an apply. Its namespace must exist first, because Terraform writes the Secret into it.
+
+## 7. FAQ and troubleshooting
+
+### An application cannot connect: `Connection refused` or a timeout
+
+Work through it in this order:
+
+1. **Egress NetworkPolicy:** it must allow **6380** as well as 6379 (section 4.6). This is the most common one.
+2. **Mesh:** the client pod needs an Istio sidecar. Without one, STRICT mTLS refuses the connection. Check `kubectl get pod <pod> -o jsonpath='{.spec.initContainers[*].name}'` for `istio-proxy`.
+3. **Istio `Sidecar` egress list**, if the namespace has one: it must include `redis/*`.
+4. **AuthorizationPolicy:** the namespace must be in `redis_tenants`. For an unknown namespace the Valkey pod's sidecar closes the connection before Valkey sees it, so the client gets a reset, not a Redis error. The denial shows up in that sidecar's log (`kubectl -n redis logs valkey-0 -c istio-proxy`).
+
+### `WRONGPASS invalid username-password pair`
+
+The application is reading a stale Secret or the wrong one. It must read `redis-<name>-credentials` **in its own namespace** and use the `username` too: an `AUTH <password>` without a username authenticates as `default` and fails. If the user was just added, check that the StatefulSet has rolled (`kubectl -n redis rollout status statefulset valkey`): the server loads new users only on restart.
+
+### `NOPERM ... has no permissions to access database`
+
+The application selected a database it does not own. Check its `db` key and its client's database setting. Many clients default to database 0, which no current tenant owns. `databases` in the Secret lists the ones it may use.
+
+### Queue workers or subscribers disconnect every 30 seconds
+
+That is HAProxy's `timeout client/server 30s` without `timeout tunnel`. The post-renderer (section 4.4) fixes it. If it comes back after a chart upgrade, the apply should have failed with `"timeout server 30s" not found`. If someone removed the post-renderer instead, put it back.
+
+### `OOM command not allowed when used memory > 'maxmemory'`
+
+Memory is full of keys **without** a TTL, so `volatile-lru` has nothing to evict. Find the database that grew (`info keyspace`: `keys` much larger than `expires`) and the application behind it: usually a cache written without an expiry. Fix the application, or raise `maxMemory` **and** the 1Gi container limit together. `ValkeyMemoryHigh` should have warned you at 85 %.
+
+### A Valkey pod is `Pending` after a node went away
+
+That is `local-path` working as designed: the volume is pinned to the lost node. If the lost pod was the primary, Sentinel has already promoted a replica; nothing is broken. If the node comes back, wait. If it is gone for good:
+
+```bash
+kubectl --context mk4 -n redis delete pvc data-valkey-2
+kubectl --context mk4 -n redis delete pod valkey-2
+```
+
+The pod is rebuilt on another node and resyncs from the primary. With `Retain`, the old PersistentVolume stays behind; delete it once you are sure.
+
+### Terraform cannot pull the chart: `error getting credentials`
+
+The chart is pulled from Docker Hub's OCI registry, and Helm uses your Docker config. If `~/.docker/config.json` names a `credsStore` (such as `desktop`) whose helper is not installed, the pull fails before anything is downloaded. `export DOCKER_CONFIG=$(mktemp -d)` for that shell is enough; the chart is public.
+
+### Every tenant change restarts all three pods. Is that safe?
+
+Yes, by design. The `checksum/acl` annotation rolls the StatefulSet one pod at a time, the PDB keeps two pods up, and the primary hands over before it stops. Expect a write pause of about a second. Batch tenant changes into one apply when you can.
+
+### `redis-cli` to `redis.jithendar.com` hangs or closes at once
+
+- Your address is not in `redis_allowed_ips`. The gateway closes the connection after the TLS handshake, with no error message. Check yours with `curl -s https://ifconfig.me`.
+- You forgot `--tls --sni redis.jithendar.com`. Without TLS, the gateway's listener cannot parse the first bytes.
+
+A quick way to tell which layer stops you: a reply of `NOAUTH Authentication required.` to an unauthenticated `PING` means TLS, the allowlist, the TCP route and the mesh all worked, and only the login is missing:
+
+```text
+$ redis-cli --tls --sni redis.jithendar.com -h redis.jithendar.com -p 443 PING
+NOAUTH Authentication required.
+```
+
+### Can I use `valkey.redis.svc` instead of `valkey-master`?
+
+Only for reads. `valkey` selects any pod, replicas included, and writes to a replica fail with `READONLY`. Applications should always use the `uri` from their Secret, which points at `valkey-master`. Sentinel-aware clients can use `valkey-sentinel.redis.svc:26379` with master name `mk4`.
+
+## 8. Best practices we followed, and what is next
+
+- **Pick the simplest HA shape that fits the data.** Replication plus Sentinel, not a sharded cluster, for 7.6 MB.
+- **Hide failover from applications.** One address through the master proxy, so no client needed Sentinel support.
+- **Hand over before stopping.** preStop failover, a longer grace period and Envoy outliving the application turn a rolling update into a one-second pause.
+- **Never evict queues.** `volatile-lru` on a server shared by caches and queues, with an alert well before memory is full.
+- **Isolate by database and ACL**, with no admin commands for applications, and with users, passwords and Secrets generated by Terraform rather than typed.
+- **Defence in depth on the network:** STRICT mTLS, an enforced ALLOW policy and NetworkPolicies, all derived from the same tenant list.
+- **Fail closed and fail loudly.** An empty allowlist fails the plan, and a post-renderer that cannot find its line fails the apply.
+- **Write tests for decisions**, not only for syntax, so a later edit cannot quietly undo them.
+
+Open items, in order:
+
+1. **Backups.** There is no off-cluster copy of the AOF and RDB files yet. Replicas protect against a lost node, not against a deleted key or a bad `FLUSHDB`. Harbor's job queue is the reason this comes first.
+2. **Apply the website's removal** from `redis_tenants`, then flush database 0 by hand.
+
+### Conclusion
+
+One Valkey replication group replaced four unmanaged Redis pods with a primary, two replicas on separate nodes, automatic failover and one place to monitor, while every application kept a single address and its own isolated databases. The lessons that cost the most time were not about Redis itself: an idle-connection timeout hidden in a sidecar's proxy config, a NetworkPolicy that has to name the pod port rather than the Service port, and a memory policy that decides whether a full server loses cache entries or loses jobs.

@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 540" width="900" height="540" role="img" aria-labelledby="k8s-tools-autoscaling-chain-title k8s-tools-autoscaling-chain-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="k8s-tools-autoscaling-chain-title">From a queue backlog to a new node: KEDA scales pods, Karpenter scales nodes</title>
+<desc id="k8s-tools-autoscaling-chain-desc">Messages pile up in a RabbitMQ queue. The KEDA operator polls the queue through its scaler and, through the external metrics API served by keda-operator-metrics-apiserver, feeds an HPA named keda-hpa-&lt;name&gt; that it creates and owns. The HPA raises the Deployment&#x27;s replicas between minReplicaCount and maxReplicaCount. If no node has room, the new pods stay Pending. Karpenter watches unschedulable pods, picks instance types allowed by a NodePool and its EC2NodeClass, creates a NodeClaim and launches an EC2 instance, which joins the cluster so the scheduler can bind the pods. When the queue drains, the HPA scales down after its stabilization window and Karpenter consolidates empty or underused nodes within the NodePool&#x27;s disruption budgets.</desc>
+<rect width="900" height="540" fill="#ffffff"/>
+<defs>
+<marker id="k8s-tools-autoscaling-chain-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+<marker id="k8s-tools-autoscaling-chain-write" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b45309"/></marker>
+<marker id="k8s-tools-autoscaling-chain-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#be123c"/></marker>
+<marker id="k8s-tools-autoscaling-chain-reject" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b91c1c"/></marker>
+<marker id="k8s-tools-autoscaling-chain-dashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+<marker id="k8s-tools-autoscaling-chain-life" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#cbd5e1"/></marker>
+</defs>
+<rect x="15" y="12" width="870" height="160" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="28" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Pod scaling: KEDA and the HPA</text>
+<rect x="15" y="196" width="870" height="160" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="212" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Node scaling: Karpenter</text>
+<rect x="15" y="380" width="870" height="148" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="396" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Scale down</text>
+<polyline points="225,95.0 245,95.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#k8s-tools-autoscaling-chain-sync)"/>
+<polyline points="440,95.0 460,95.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#k8s-tools-autoscaling-chain-sync)"/>
+<polyline points="655,95.0 675,95.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#k8s-tools-autoscaling-chain-sync)"/>
+<polyline points="772.5,150 772.5,224" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#k8s-tools-autoscaling-chain-sync)"/>
+<polyline points="675,279.0 655,279.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#k8s-tools-autoscaling-chain-sync)"/>
+<polyline points="460,279.0 440,279.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#k8s-tools-autoscaling-chain-sync)"/>
+<polyline points="245,279.0 225,279.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#k8s-tools-autoscaling-chain-sync)"/>
+<rect x="30" y="40" width="195" height="110" rx="7" fill="#fff1f2" stroke="#be123c" stroke-width="1.4"/>
+<text x="127.5" y="78.0" text-anchor="middle" font-size="14" font-weight="600" fill="#4c0519">RabbitMQ queue</text>
+<text x="127.5" y="94.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">roboshop.shipping.orders</text>
+<text x="127.5" y="110.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">backlog grows</text>
+<text x="127.5" y="126.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">e.g. 120 messages</text>
+<rect x="245" y="40" width="195" height="110" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="342.5" y="78.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">KEDA operator</text>
+<text x="342.5" y="94.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">polls every 15 s</text>
+<text x="342.5" y="110.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">metrics API server</text>
+<text x="342.5" y="126.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">exposes the value</text>
+<rect x="460" y="40" width="195" height="110" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="557.5" y="78.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">HPA keda-hpa-*</text>
+<text x="557.5" y="94.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">owned by KEDA</text>
+<text x="557.5" y="110.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">target 20 per replica</text>
+<text x="557.5" y="126.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">→ wants 6, max 4</text>
+<rect x="675" y="40" width="195" height="110" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="772.5" y="78.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">Deployment</text>
+<text x="772.5" y="94.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">replicas 1 → 4</text>
+<text x="772.5" y="110.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">new pods created</text>
+<text x="772.5" y="126.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">scheduler runs</text>
+<rect x="30" y="224" width="195" height="110" rx="7" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+<text x="127.5" y="262.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">EC2 instance</text>
+<text x="127.5" y="278.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">joins as a node</text>
+<text x="127.5" y="294.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">scheduler binds</text>
+<text x="127.5" y="310.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">the Pending pods</text>
+<rect x="245" y="224" width="195" height="110" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="342.5" y="262.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">NodeClaim</text>
+<text x="342.5" y="278.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">one per launch</text>
+<text x="342.5" y="294.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">status shows</text>
+<text x="342.5" y="310.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">launch errors</text>
+<rect x="460" y="224" width="195" height="110" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="557.5" y="262.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">Karpenter</text>
+<text x="557.5" y="278.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">batches Pending pods</text>
+<text x="557.5" y="294.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">fits NodePool rules</text>
+<text x="557.5" y="310.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">cheapest that fits</text>
+<rect x="675" y="224" width="195" height="110" rx="7" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.4"/>
+<text x="772.5" y="262.0" text-anchor="middle" font-size="14" font-weight="600" fill="#7f1d1d">Pending pods</text>
+<text x="772.5" y="278.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">no node has room</text>
+<text x="772.5" y="294.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">FailedScheduling</text>
+<text x="772.5" y="310.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">event on each pod</text>
+<rect x="30" y="404" width="400" height="108" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="230.0" y="441.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">Pods</text>
+<text x="230.0" y="457.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">queue drains; the HPA waits out</text>
+<text x="230.0" y="473.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">its scale-down stabilization window</text>
+<text x="230.0" y="489.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">cooldownPeriod applies only to 1 → 0</text>
+<rect x="470" y="404" width="400" height="108" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="670.0" y="441.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">Nodes</text>
+<text x="670.0" y="457.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Karpenter consolidates empty or</text>
+<text x="670.0" y="473.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">underused nodes, one budget at a time</text>
+<text x="670.0" y="489.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">PodDisruptionBudgets still apply</text>
+</svg>

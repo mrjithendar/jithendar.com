@@ -1,0 +1,51 @@
+%%{init: {"theme": "base", "flowchart": {"curve": "basis", "nodeSpacing": 26, "rankSpacing": 54, "padding": 12}, "themeVariables": {"fontFamily": "arial, sans-serif", "fontSize": "15px", "primaryTextColor": "#0f172a", "lineColor": "#475569", "clusterBkg": "#ffffff", "clusterBorder": "#cbd5e1", "edgeLabelBackground": "#ffffff"}}}%%
+%% RoboShop AI (Figure 2): the two AI entry points. They are independent; Moks never calls MCP.
+%% Evidence: services/moks/widget.py, services/moks/server.py, services/ai-gateway/server.py,
+%% services/mcp-server/README.md, services/web/nginx/snippets/routes.conf.
+flowchart LR
+  subgraph widgetPath["A. Moks shopping assistant (browser widget, no MCP)"]
+    direction LR
+    browser["<b>Browser</b><br/>Moks widget"]
+    web["<b>web</b> (NGINX)<br/>/moks/chat"]
+    subgraph moksPod["moks Deployment (one process)"]
+      direction TB
+      widget["<b>widget routes</b><br/>session + Origin check"]
+      engine["<b>engine</b> /internal/chat<br/>LangGraph: retrieve, ground, generate"]
+    end
+    gw["<b>ai-gateway</b><br/>/api/chat"]
+    cat["<b>catalogue-service</b><br/>/api/products"]
+    llm["<b>Bedrock or Ollama</b><br/>admin-selected, optional"]
+  end
+
+  subgraph mcpPath["B. MCP tools (private Service, no ingress)"]
+    direction LR
+    client["<b>MCP client</b><br/>stdio or POST /mcp"]
+    mcp["<b>mcp-server</b><br/>schemas, limits,<br/>confirmation"]
+    gw2["<b>ai-gateway</b><br/>/api/... re-authorizes"]
+    domain["<b>user, catalogue,<br/>cart, shipping</b>"]
+  end
+
+  browser -->|"message only"| web
+  web --> widget
+  widget -->|"message + rs_auth"| gw
+  gw -->|"history refs, unavailable SKUs,<br/>model config + revision"| engine
+  engine -->|"catalogue snapshot"| cat
+  engine -->|"revision check"| gw
+  engine -->|"≤ 4 grounded products"| llm
+
+  client -->|"Bearer: caller's session"| mcp
+  mcp -->|"same session, per call"| gw2
+  gw2 --> domain
+
+  classDef client fill:#f8fafc,stroke:#334155,stroke-width:1.5px,color:#0f172a
+  classDef edgeNode fill:#eef2ff,stroke:#4338ca,stroke-width:1.5px,color:#1e1b4b
+  classDef svc fill:#ecfdf5,stroke:#047857,stroke-width:1.5px,color:#064e3b
+  classDef ai fill:#f5f3ff,stroke:#6d28d9,stroke-width:1.5px,color:#2e1065
+  classDef external fill:#f1f5f9,stroke:#64748b,stroke-width:1.5px,color:#0f172a,stroke-dasharray:6 4
+
+  class browser,client client
+  class web edgeNode
+  class gw,gw2,cat,domain svc
+  class widget,engine,mcp ai
+  class llm external
+  style moksPod fill:#faf5ff,stroke:#a78bfa,stroke-dasharray:6 4

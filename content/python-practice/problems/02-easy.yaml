@@ -1,0 +1,1223 @@
+# Easy: functions, collections, file-style parsing and straightforward scripting.
+- slug: parse-ini-sections
+  title: Parse INI sections
+  difficulty: easy
+  roles: [devops-engineer, infrastructure-automation-engineer, python-developer]
+  topics: [file-handling, parsing, dictionaries]
+  minutes: 12
+  entrypoint: parse_ini
+  description: |
+    Parse INI text into a nested dictionary `{section: {key: value}}`.
+
+    - `[name]` starts a section (trim spaces inside the brackets).
+    - `key = value` lines belong to the current section; split on the first `=` and trim both sides.
+    - Lines starting with `;` or `#` (after leading spaces) and blank lines are ignored.
+    - Key/value lines before the first section go in a section named `"default"`.
+    - A section that appears twice is merged; later keys win.
+    - A section with no keys still appears with an empty dictionary.
+  io: { input: "text: str", output: "dict[str, dict[str, str]]" }
+  starter: |
+    def parse_ini(text: str) -> dict[str, dict[str, str]]:
+        config = {}
+        return config
+  hints:
+    - "Keep track of the 'current section' as you go line by line."
+    - "When you see [name], switch the current section with config.setdefault(name, {}); otherwise partition on '='."
+    - |
+      current = "default"
+      for line in text.splitlines():
+          s = line.strip()
+          if comment or blank: continue
+          if s.startswith("[") and s.endswith("]"): current = s[1:-1].strip(); config.setdefault(current, {}); continue
+          key, sep, value = s.partition("=") ; if sep: config.setdefault(current, {})[key.strip()] = value.strip()
+  solution:
+    code: |
+      def parse_ini(text: str) -> dict[str, dict[str, str]]:
+          config: dict[str, dict[str, str]] = {}
+          current = "default"
+          for line in text.splitlines():
+              s = line.strip()
+              if not s or s[0] in ";#":
+                  continue
+              if s.startswith("[") and s.endswith("]"):
+                  current = s[1:-1].strip()
+                  config.setdefault(current, {})
+                  continue
+              key, sep, value = s.partition("=")
+              if sep and key.strip():
+                  config.setdefault(current, {})[key.strip()] = value.strip()
+          return config
+    explanation: |
+      `setdefault` both creates a section the first time and returns the existing one for repeats, which
+      gives merging for free. The "default" section is created lazily, only if a key appears before any header.
+    time: O(n)
+    space: O(n)
+    alternatives: ["configparser.ConfigParser (it lowercases keys and has its own DEFAULT semantics)"]
+    edge_cases: ["Keys before any section", "Empty sections", "Values containing '='"]
+    production: ["configparser supports interpolation and multi-line values — prefer it for real files"]
+  examples:
+    - args: ["; comment\nname = demo\n[db]\nhost = localhost\nport=5432\n[ cache ]\n[db]\nport = 6432"]
+      expected: { default: { name: "demo" }, db: { host: "localhost", port: "6432" }, cache: {} }
+  hidden:
+    - { args: [""] }
+    - { args: ["[a]\nx=1=2\n# c\n  ; c2\n[b]"] }
+    - { args: ["k=v\nk=w"] }
+
+- slug: group-anagrams
+  title: Group anagrams
+  difficulty: easy
+  roles: [software-development-engineer, python-developer]
+  topics: [hashing, dictionaries, sorting]
+  minutes: 10
+  entrypoint: group_anagrams
+  description: |
+    Group words that are anagrams of each other (same letters, same counts). Sort the words inside each
+    group alphabetically, and sort the groups by their first word.
+  io: { input: "words: list[str]", output: "list[list[str]]" }
+  starter: |
+    def group_anagrams(words: list[str]) -> list[list[str]]:
+        return [[w] for w in words]
+  hints:
+    - "Anagrams share a canonical form."
+    - "Use the sorted letters (as a string or tuple) as a dictionary key."
+    - |
+      groups = defaultdict(list)
+      for w in words: groups["".join(sorted(w))].append(w)
+      return sorted(sorted(g) for g in groups.values())
+  solution:
+    code: |
+      from collections import defaultdict
+
+      def group_anagrams(words: list[str]) -> list[list[str]]:
+          groups: dict[str, list[str]] = defaultdict(list)
+          for word in words:
+              groups["".join(sorted(word))].append(word)
+          return sorted(sorted(group) for group in groups.values())
+    explanation: Sorting the letters maps every anagram to the same key. Sorting lists of strings compares their first elements first, giving the required group order.
+    time: O(n · k log k) for n words of length k
+    space: O(n · k)
+    alternatives: ["Key by a 26-letter count tuple: O(n · k) for lowercase ASCII"]
+    edge_cases: ["Duplicate words stay in the same group twice", "Empty string forms its own group"]
+    production: ["Normalise case and Unicode before grouping if input comes from users"]
+  examples:
+    - { args: [["listen", "silent", "enlist", "google", "gogole", "cat"]], expected: [["cat"], ["enlist", "listen", "silent"], ["gogole", "google"]] }
+  hidden:
+    - { args: [[]] }
+    - { args: [["", "a", "", "b"]] }
+    - { args: [["ab", "ba", "ab"]] }
+
+- slug: csv-to-records
+  title: Parse a CSV export into typed records
+  difficulty: easy
+  roles: [data-engineer, forward-deployed-engineer, python-developer]
+  topics: [etl, parsing]
+  minutes: 12
+  entrypoint: parse_csv
+  description: |
+    A customer sent a CSV export as text. The first row is the header. Return a list of dictionaries, one per
+    data row, with these conversions:
+
+    - Values that are integers (optionally negative) become `int`.
+    - The strings `true` and `false` (any case) become booleans.
+    - Empty values become `None`.
+    - Everything else stays a string.
+
+    Fields may be quoted with double quotes and contain commas. Skip rows that are completely empty.
+  io: { input: "text: str", output: "list[dict]" }
+  starter: |
+    def parse_csv(text: str) -> list[dict]:
+        rows = []
+        return rows
+  hints:
+    - "Don't split on commas yourself — quoted fields can contain commas. The standard library has a CSV reader."
+    - "csv.reader(io.StringIO(text)) handles quotes. Write a small convert(value) helper for the type rules."
+    - |
+      reader = csv.reader(io.StringIO(text)); header = next(reader, None)
+      for row in reader: if not any(row): continue; records.append({h: convert(v) for h, v in zip(header, row)})
+  solution:
+    code: |
+      import csv
+      import io
+      import re
+
+      INT = re.compile(r"-?\d+")
+
+      def convert(value: str):
+          if value == "":
+              return None
+          if INT.fullmatch(value):
+              return int(value)
+          if value.lower() in ("true", "false"):
+              return value.lower() == "true"
+          return value
+
+      def parse_csv(text: str) -> list[dict]:
+          reader = csv.reader(io.StringIO(text))
+          header = next(reader, None)
+          if header is None:
+              return []
+          return [{h: convert(v) for h, v in zip(header, row)} for row in reader if any(cell != "" for cell in row)]
+    explanation: The csv module implements quoting rules correctly; the conversion helper keeps type rules in one place and is easy to test.
+    time: O(n)
+    space: O(n)
+    alternatives: ["csv.DictReader then convert values", "pandas.read_csv with dtype rules"]
+    edge_cases: ["Header only → []", "Empty text → []", "Quoted commas", "'-0' becomes 0"]
+    production: ["Detect encodings and BOMs (utf-8-sig) in customer files", "Leading zeros (ZIP codes, IDs) should usually stay strings — make conversions column-specific"]
+  examples:
+    - args: ["id,name,active,notes\n1,\"Smith, Ann\",TRUE,\n-2,Bo,false,vip\n\n"]
+      expected: [{ id: 1, name: "Smith, Ann", active: true, notes: null }, { id: -2, name: "Bo", active: false, notes: "vip" }]
+  hidden:
+    - { args: [""] }
+    - { args: ["a,b\n"] }
+    - { args: ["x,y\n3.5,True\n007,\"\"\"quoted\"\"\""] }
+
+- slug: json-path-get
+  title: Read a nested value by path
+  difficulty: easy
+  roles: [backend-engineer, forward-deployed-engineer, automation-engineer]
+  topics: [json, parsing]
+  minutes: 12
+  entrypoint: get_path
+  description: |
+    Integrations often need one field deep inside an API response. Implement `get_path(data, path, default)`
+    where `path` is dotted with optional list indexes, e.g. `items[0].metadata.name` or `a.b[2][1]`.
+
+    Return `default` if any step is missing: a key that doesn't exist, an index out of range, or indexing
+    into the wrong type. An empty path returns `data` itself.
+  io: { input: "data: any JSON value, path: str, default: any", output: "the value at the path, or default" }
+  starter: |
+    def get_path(data, path: str, default=None):
+        return default
+  hints:
+    - "Turn the path into a list of steps first: strings for keys, integers for indexes."
+    - "re.findall(r'[^.\\[\\]]+|\\[\\d+\\]', path) splits 'a.b[0]' into ['a', 'b', '[0]']."
+    - |
+      for step in steps:
+          if step is an index: if isinstance(cur, list) and 0 <= i < len(cur): cur = cur[i] else return default
+          else: if isinstance(cur, dict) and step in cur: cur = cur[step] else return default
+  solution:
+    code: |
+      import re
+
+      TOKEN = re.compile(r"\[(\d+)\]|([^.\[\]]+)")
+
+      def get_path(data, path: str, default=None):
+          current = data
+          for index, key in TOKEN.findall(path):
+              if index:
+                  i = int(index)
+                  if not isinstance(current, list) or i >= len(current):
+                      return default
+                  current = current[i]
+              else:
+                  if not isinstance(current, dict) or key not in current:
+                      return default
+                  current = current[key]
+          return current
+    explanation: |
+      The regex yields either an index group or a key group per step. Checking the container type before
+      each step avoids TypeErrors (indexing a string) and silently wrong answers (a dict with key "0").
+    time: O(length of path)
+    space: O(length of path)
+    alternatives: ["A hand-written tokenizer", "JMESPath or jsonpath-ng for full query languages"]
+    edge_cases: ["Empty path returns the data", "Indexing into a string returns default", "A stored None value is returned, not default"]
+    production: ["Distinguish 'missing' from 'present but null' when it matters by passing a sentinel default"]
+  examples:
+    - { args: [{ items: [{ metadata: { name: "web" } }] }, "items[0].metadata.name", null], expected: "web" }
+    - { args: [{ a: [1, 2] }, "a[5]", "none"], expected: "none" }
+  tests:
+    - { args: [{ a: { b: null } }, "a.b", "default"], expected: null }
+  hidden:
+    - { args: [{ a: 1 }, "", null] }
+    - { args: [{ a: "text" }, "a[0]", "d"] }
+    - { args: [[[1, [2, 3]]], "[0][1][1]", null] }
+    - { args: [{ "0": "zero" }, "[0]", "d"] }
+
+- slug: diff-config-keys
+  title: Diff two configurations
+  difficulty: easy
+  roles: [devops-engineer, platform-engineer, infrastructure-automation-engineer]
+  topics: [dictionaries, infrastructure-as-code]
+  minutes: 10
+  entrypoint: diff_config
+  description: |
+    Compare an `old` and a `new` flat configuration dictionary. Return
+    `{"added": [...], "removed": [...], "changed": [...]}` where each list holds sorted keys: keys only in
+    `new`, keys only in `old`, and keys in both with different values.
+  io: { input: "old: dict, new: dict", output: "dict[str, list[str]]" }
+  starter: |
+    def diff_config(old: dict, new: dict) -> dict[str, list[str]]:
+        return {"added": [], "removed": [], "changed": []}
+  hints:
+    - "Dictionary key views support set operations."
+    - "new.keys() - old.keys() gives added keys; the intersection gives keys to compare."
+    - |
+      added = sorted(new.keys() - old.keys()); removed = sorted(old.keys() - new.keys())
+      changed = sorted(k for k in old.keys() & new.keys() if old[k] != new[k])
+  solution:
+    code: |
+      def diff_config(old: dict, new: dict) -> dict[str, list[str]]:
+          return {
+              "added": sorted(new.keys() - old.keys()),
+              "removed": sorted(old.keys() - new.keys()),
+              "changed": sorted(k for k in old.keys() & new.keys() if old[k] != new[k]),
+          }
+    explanation: Key views behave like sets, so each category is one set expression; sorting gives stable output.
+    time: O(n log n)
+    space: O(n)
+    alternatives: ["Loop over the union of keys and classify each one"]
+    edge_cases: ["Both empty", "Values of different types (1 vs '1') count as changed"]
+    production: ["Mask secret values when printing diffs", "Nested configs need a recursive diff with dotted paths"]
+  examples:
+    - { args: [{ replicas: 2, image: "v1", debug: true }, { replicas: 3, image: "v1", region: "eu" }], expected: { added: ["region"], removed: ["debug"], changed: ["replicas"] } }
+  hidden:
+    - { args: [{}, {}] }
+    - { args: [{ a: 1 }, { a: "1" }] }
+    - { args: [{ a: 1, b: 2 }, {}] }
+
+- slug: exponential-backoff-delays
+  title: Exponential backoff schedule
+  difficulty: easy
+  roles: [site-reliability-engineer, backend-engineer, genai-engineer]
+  topics: [retries, functions]
+  minutes: 8
+  entrypoint: backoff_delays
+  comparator: float
+  description: |
+    Compute the delays (seconds) before each retry: attempt k (starting at 0) waits `base * factor**k`,
+    capped at `max_delay`. Return the list of delays for `retries` retries, rounded to three decimals.
+    (Real clients add random jitter; this version is deterministic.)
+  io: { input: "base: float, factor: float, max_delay: float, retries: int", output: "list[float]" }
+  starter: |
+    def backoff_delays(base: float, factor: float, max_delay: float, retries: int) -> list[float]:
+        return [base] * retries
+  hints:
+    - "Each delay is independent of the others: it only depends on k."
+    - "min(max_delay, base * factor ** k) for k in range(retries)."
+    - "return [round(min(max_delay, base * factor ** k), 3) for k in range(retries)]"
+  solution:
+    code: |
+      def backoff_delays(base: float, factor: float, max_delay: float, retries: int) -> list[float]:
+          return [round(min(max_delay, base * factor**k), 3) for k in range(retries)]
+    explanation: The cap stops delays from growing without bound; computing each term directly avoids accumulating rounding error.
+    time: O(retries)
+    space: O(retries)
+    alternatives: ["Multiply a running delay by factor each step (watch for overflow with huge retries)"]
+    edge_cases: ["retries = 0 returns []", "factor = 1 gives a constant delay"]
+    production: ["Add full jitter (random.uniform(0, delay)) to avoid synchronized retry storms", "Respect Retry-After headers when the server sends them"]
+  examples:
+    - { args: [0.5, 2, 4, 5], expected: [0.5, 1.0, 2.0, 4.0, 4.0] }
+  hidden:
+    - { args: [1, 3, 100, 0] }
+    - { args: [0.1, 1.5, 1, 7] }
+    - { args: [2, 1, 10, 3] }
+
+- slug: log-level-counts
+  title: Count log levels
+  difficulty: easy
+  roles: [site-reliability-engineer, devops-engineer, automation-engineer]
+  topics: [log-analysis, parsing]
+  minutes: 10
+  entrypoint: level_counts
+  description: |
+    Each log line looks like `2026-11-02T10:00:00Z LEVEL message...` where LEVEL is one of DEBUG, INFO,
+    WARN, ERROR, FATAL. Count lines per level. Lines that don't have a valid ISO-looking timestamp
+    (YYYY-MM-DDTHH:MM:SSZ) and a known level as the first two fields are counted under `"malformed"`.
+    Return only levels that occurred (plus "malformed" if any).
+  io: { input: "lines: list[str]", output: "dict[str, int]" }
+  starter: |
+    def level_counts(lines: list[str]) -> dict[str, int]:
+        return {}
+  hints:
+    - "Validate the structure before counting; anything that fails goes to 'malformed'."
+    - "A compiled regex like ^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z (DEBUG|INFO|WARN|ERROR|FATAL)\\b checks both fields."
+    - |
+      m = PATTERN.match(line)
+      key = m.group(1) if m else "malformed"
+      counts[key] = counts.get(key, 0) + 1
+  solution:
+    code: |
+      import re
+      from collections import Counter
+
+      PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z (DEBUG|INFO|WARN|ERROR|FATAL)(?:\s|$)")
+
+      def level_counts(lines: list[str]) -> dict[str, int]:
+          counts = Counter()
+          for line in lines:
+              match = PATTERN.match(line)
+              counts[match.group(1) if match else "malformed"] += 1
+          return dict(counts)
+    explanation: Compiling the pattern once and anchoring it at the start keeps the check strict and fast.
+    time: O(total characters)
+    space: O(1)
+    alternatives: ["split(maxsplit=2) plus datetime.strptime for the timestamp"]
+    edge_cases: ["Lowercase levels are malformed", "A level glued to text (ERRORX) is malformed", "Empty lines are malformed"]
+    production: ["Structured (JSON) logs avoid fragile parsing entirely"]
+  examples:
+    - args: [["2026-11-02T10:00:00Z INFO started", "2026-11-02T10:00:01Z ERROR db down", "oops", "2026-11-02T10:00:02Z INFO ok"]]
+      expected: { INFO: 2, ERROR: 1, malformed: 1 }
+  hidden:
+    - { args: [[]] }
+    - { args: [["2026-11-02T10:00:00Z info x", "2026-11-02T10:00:00Z ERRORX", "2026-11-02T10:00:00Z FATAL"]] }
+
+- slug: semver-sort
+  title: Sort semantic versions
+  difficulty: easy
+  roles: [devops-engineer, platform-engineer, python-developer]
+  topics: [sorting, parsing]
+  minutes: 12
+  entrypoint: sort_versions
+  description: |
+    Sort version strings of the form `MAJOR.MINOR.PATCH` with an optional pre-release suffix
+    `-<label>` (for example `1.2.0-rc1`). Order rules:
+
+    - Compare MAJOR, MINOR, PATCH numerically.
+    - For equal numbers, a pre-release comes **before** the release (`1.2.0-rc1` < `1.2.0`).
+    - Two pre-releases of the same version compare by label as plain strings.
+
+    An optional leading `v` is allowed and kept in the output.
+  io: { input: "versions: list[str]", output: "list[str] sorted ascending" }
+  starter: |
+    def sort_versions(versions: list[str]) -> list[str]:
+        return sorted(versions)
+  hints:
+    - "Plain string sorting puts '1.10.0' before '1.9.0'. Build a sort key instead."
+    - "The key can be a tuple: (major, minor, patch, is_release, label). False sorts before True."
+    - |
+      core, _, label = v.lstrip("v").partition("-")
+      major, minor, patch = map(int, core.split("."))
+      return (major, minor, patch, label == "", label)
+  solution:
+    code: |
+      def version_key(version: str) -> tuple:
+          core, _, label = version.removeprefix("v").partition("-")
+          major, minor, patch = (int(part) for part in core.split("."))
+          return (major, minor, patch, label == "", label)
+
+      def sort_versions(versions: list[str]) -> list[str]:
+          return sorted(versions, key=version_key)
+    explanation: Tuples compare element by element. Putting `label == ""` before the label makes releases (True) sort after their pre-releases (False).
+    time: O(n log n)
+    space: O(n)
+    alternatives: ["packaging.version.Version for PEP 440 versions", "A full SemVer 2.0 comparator that splits labels on dots"]
+    edge_cases: ["'v' prefixes", "Multi-digit components", "Same version listed twice"]
+    production: ["SemVer 2.0 compares dotted pre-release identifiers numerically when they are numbers (rc.10 > rc.9)"]
+  examples:
+    - { args: [["1.10.0", "1.9.0", "1.10.0-rc1", "v1.2.3", "0.9.9"]], expected: ["0.9.9", "v1.2.3", "1.9.0", "1.10.0-rc1", "1.10.0"] }
+  hidden:
+    - { args: [[]] }
+    - { args: [["2.0.0-beta", "2.0.0-alpha", "2.0.0", "1.99.99"]] }
+    - { args: [["10.0.0", "9.0.0", "10.0.0"]] }
+
+- slug: balanced-brackets
+  title: Check balanced brackets in a template
+  difficulty: easy
+  roles: [software-development-engineer, python-developer, full-stack-engineer]
+  topics: [stacks, strings]
+  minutes: 10
+  entrypoint: is_balanced
+  description: |
+    Before rendering a template, a linter checks that every `(`, `[` and `{` is closed by the matching
+    bracket in the right order. Other characters are ignored. Return True if the string is balanced.
+  io: { input: "text: str", output: "bool" }
+  starter: |
+    def is_balanced(text: str) -> bool:
+        return text.count("(") == text.count(")")
+  hints:
+    - "The most recently opened bracket must be closed first."
+    - "Push opening brackets on a stack; on a closing bracket, the top of the stack must be its partner."
+    - |
+      pairs = {")": "(", "]": "[", "}": "{"}
+      for ch in text: if ch in "([{": push; elif ch in pairs: if not stack or stack.pop() != pairs[ch]: return False
+      return not stack
+  solution:
+    code: |
+      PAIRS = {")": "(", "]": "[", "}": "{"}
+
+      def is_balanced(text: str) -> bool:
+          stack: list[str] = []
+          for ch in text:
+              if ch in "([{":
+                  stack.append(ch)
+              elif ch in PAIRS:
+                  if not stack or stack.pop() != PAIRS[ch]:
+                      return False
+          return not stack
+    explanation: "A stack mirrors nesting: the last opened bracket is on top. Leftover openers at the end mean something was never closed."
+    time: O(n)
+    space: O(n) in the worst case
+    alternatives: ["Repeatedly delete '()', '[]', '{}' pairs — O(n²)"]
+    edge_cases: ["Empty string is balanced", "Closing bracket first", "Interleaved '([)]' is not balanced"]
+    production: ["Report the position of the first error so users can fix it"]
+  examples:
+    - { args: ["{{ items[0](x) }}"], expected: true }
+    - { args: ["([)]"], expected: false }
+  hidden:
+    - { args: [""] }
+    - { args: ["]"] }
+    - { args: ["((("] }
+    - { args: ["a(b)c[d]{e}"] }
+
+- slug: log-rotation-plan
+  title: Plan log file rotation
+  difficulty: easy
+  roles: [automation-engineer, devops-engineer, site-reliability-engineer]
+  topics: [file-handling, lists]
+  minutes: 12
+  entrypoint: rotation_plan
+  description: |
+    A directory holds `app.log`, `app.log.1`, `app.log.2`, … (higher number = older). Rotating keeps at most
+    `keep` rotated files:
+
+    1. Delete every rotated file whose number would exceed `keep` after shifting (number ≥ keep).
+    2. Rename `app.log.N` to `app.log.N+1`, from the **highest** N down to 1 (so nothing is overwritten).
+    3. Rename `app.log` to `app.log.1`.
+
+    Given the list of existing file names (any order) and `keep`, return the list of operations in the order
+    they must run: `["delete", name]` or `["rename", old, new]`. Ignore files that don't belong to the log.
+  constraints: ["keep >= 1"]
+  io: { input: "files: list[str], base: str, keep: int", output: "list[list[str]]" }
+  starter: |
+    def rotation_plan(files: list[str], base: str, keep: int) -> list[list[str]]:
+        return []
+  hints:
+    - "Extract the rotation numbers first; ignore anything that isn't base or base.<number>."
+    - "Delete numbers >= keep, then rename the rest in descending order, then the base file."
+    - |
+      nums = sorted(int(f[len(base)+1:]) for f in files if f.startswith(base + ".") and f[len(base)+1:].isdigit())
+      ops = [["delete", f"{base}.{n}"] for n in sorted(nums, reverse=True) if n >= keep]
+      ops += [["rename", f"{base}.{n}", f"{base}.{n+1}"] for n in sorted(nums, reverse=True) if n < keep]
+      if base in files: ops.append(["rename", base, f"{base}.1"])
+  solution:
+    code: |
+      def rotation_plan(files: list[str], base: str, keep: int) -> list[list[str]]:
+          prefix = base + "."
+          numbers = sorted(
+              (int(name[len(prefix):]) for name in files if name.startswith(prefix) and name[len(prefix):].isdigit()),
+              reverse=True,
+          )
+          ops: list[list[str]] = [["delete", f"{base}.{n}"] for n in numbers if n >= keep]
+          ops += [["rename", f"{base}.{n}", f"{base}.{n + 1}"] for n in numbers if n < keep]
+          if base in files:
+              ops.append(["rename", base, f"{base}.1"])
+          return ops
+    explanation: Renaming from the highest number down means each target name is already free when it is used.
+    time: O(n log n)
+    space: O(n)
+    alternatives: ["Use logging.handlers.RotatingFileHandler, which implements the same scheme"]
+    edge_cases: ["Gaps in numbering (app.log.1 and app.log.3)", "No base file", "Unrelated files like app.log.gz"]
+    production: ["Compress old files, and use copytruncate when the writer keeps the file open"]
+  examples:
+    - args: [["app.log", "app.log.1", "app.log.2", "other.txt"], "app.log", 2]
+      expected: [["delete", "app.log.2"], ["rename", "app.log.1", "app.log.2"], ["rename", "app.log", "app.log.1"]]
+  hidden:
+    - { args: [["app.log"], "app.log", 3] }
+    - { args: [["app.log.3", "app.log.1", "app.log.gz", "app.log"], "app.log", 5] }
+    - { args: [[], "x.log", 1] }
+
+- slug: latest-event-per-id
+  title: Keep the latest event per ID
+  difficulty: easy
+  roles: [data-engineer, backend-engineer, forward-deployed-engineer]
+  topics: [dictionaries, etl]
+  minutes: 10
+  entrypoint: latest_events
+  description: |
+    A queue delivered events out of order and with duplicates. Each event is `{"id": str, "ts": int, ...}`.
+    Keep only the event with the highest `ts` for each id; if two events for an id have the same `ts`, keep
+    the one that appears **later** in the input. Return the kept events sorted by id.
+  io: { input: "events: list[dict]", output: "list[dict]" }
+  starter: |
+    def latest_events(events: list[dict]) -> list[dict]:
+        return events
+  hints:
+    - "One pass with a dictionary keyed by id."
+    - "Replace the stored event when the new one's ts is greater than or equal to the stored ts."
+    - |
+      latest = {}
+      for e in events: if e["id"] not in latest or e["ts"] >= latest[e["id"]]["ts"]: latest[e["id"]] = e
+      return [latest[k] for k in sorted(latest)]
+  solution:
+    code: |
+      def latest_events(events: list[dict]) -> list[dict]:
+          latest: dict[str, dict] = {}
+          for event in events:
+              current = latest.get(event["id"])
+              if current is None or event["ts"] >= current["ts"]:
+                  latest[event["id"]] = event
+          return [latest[key] for key in sorted(latest)]
+    explanation: Using >= implements "later wins on ties" because the input is scanned in order.
+    time: O(n + k log k)
+    space: O(k)
+    alternatives: ["Sort by (id, ts, position) and take the last of each group"]
+    edge_cases: ["Ties on ts", "Single event", "Empty input"]
+    production: ["Use a monotonic sequence number instead of wall-clock timestamps when producers' clocks differ"]
+  examples:
+    - args: [[{ id: "b", ts: 5, v: 1 }, { id: "a", ts: 1, v: 2 }, { id: "b", ts: 3, v: 3 }, { id: "a", ts: 1, v: 4 }]]
+      expected: [{ id: "a", ts: 1, v: 4 }, { id: "b", ts: 5, v: 1 }]
+  hidden:
+    - { args: [[]] }
+    - { args: [[{ id: "x", ts: 9 }, { id: "x", ts: 10 }, { id: "x", ts: 2 }]] }
+
+- slug: expand-cron-field
+  title: Expand a cron field
+  difficulty: easy
+  roles: [devops-engineer, automation-engineer, infrastructure-automation-engineer]
+  topics: [parsing, datetime]
+  minutes: 15
+  entrypoint: expand_field
+  description: |
+    Expand one cron field into the sorted list of values it matches, given the field's allowed range
+    `[low, high]`. Support:
+
+    - `*` (every value), a single number `5`, a range `1-5`
+    - steps: `*/15` and `10-30/10`
+    - comma-separated lists of any of the above: `1,3,10-12`
+
+    Raise `ValueError` for anything invalid or out of range. Return a sorted list without duplicates.
+  io: { input: "field: str, low: int, high: int", output: "list[int]" }
+  starter: |
+    def expand_field(field: str, low: int, high: int) -> list[int]:
+        return [int(field)]
+  hints:
+    - "Split on commas first; each part is 'range' optionally followed by '/step'."
+    - "Turn every part into (start, end, step) and use range(start, end + 1, step). '*' means (low, high)."
+    - |
+      for part in field.split(","):
+          rng, _, step = part.partition("/"); step = int(step) if step else 1
+          start, end = (low, high) if rng == "*" else map(int, rng.split("-")) if "-" in rng else (int(rng), int(rng))
+          validate; values.update(range(start, end + 1, step))
+  solution:
+    code: |
+      def expand_field(field: str, low: int, high: int) -> list[int]:
+          values: set[int] = set()
+          for part in field.split(","):
+              rng, has_step, step_text = part.partition("/")
+              step = int(step_text) if has_step else 1
+              if step <= 0:
+                  raise ValueError(f"bad step in {part!r}")
+              if rng == "*":
+                  start, end = low, high
+              elif "-" in rng:
+                  a, b = rng.split("-", 1)
+                  start, end = int(a), int(b)
+              else:
+                  start = end = int(rng)
+                  if has_step:
+                      end = high
+              if start < low or end > high or start > end:
+                  raise ValueError(f"{part!r} is out of range {low}-{high}")
+              values.update(range(start, end + 1, step))
+          return sorted(values)
+    explanation: |
+      Every cron form reduces to a range with a step, so one `range()` call per part does the work. A set
+      removes overlaps between list items. (`5/10` means "from 5 to the end, every 10", as in Vixie cron.)
+    time: O(high - low)
+    space: O(high - low)
+    alternatives: ["Regex-based parsing with named groups"]
+    edge_cases: ["Overlapping list items", "Step larger than the range", "Out-of-range numbers raise ValueError", "Empty part (',,') raises ValueError via int('')"]
+    production: ["Real cron also accepts month and weekday names and treats 7 as Sunday", "croniter is a well-tested library for this"]
+  prelude: |
+    def __harness__(fn, field, low, high):
+        try:
+            return fn(field, low, high)
+        except ValueError:
+            return "ValueError"
+  examples:
+    - { args: ["*/15", 0, 59], expected: [0, 15, 30, 45] }
+    - { args: ["1,3,10-12", 1, 31], expected: [1, 3, 10, 11, 12] }
+    - { args: ["60", 0, 59], expected: "ValueError", explanation: "Invalid fields raise ValueError (the test harness reports it as the string 'ValueError')." }
+  hidden:
+    - { args: ["10-30/10", 0, 59] }
+    - { args: ["*", 1, 7] }
+    - { args: ["5-1", 0, 59] }
+    - { args: ["1,1,2", 0, 10] }
+    - { args: ["*/0", 0, 10] }
+
+- slug: flaky-test-detector
+  title: Detect flaky tests
+  difficulty: easy
+  roles: [automation-engineer, devops-engineer, software-development-engineer]
+  topics: [testing, dictionaries]
+  minutes: 10
+  entrypoint: flaky_tests
+  description: |
+    CI history is a list of runs `{"commit": str, "test": str, "passed": bool}`. A test is **flaky** if, for
+    at least one commit, it both passed and failed. Return the sorted list of flaky test names.
+  io: { input: "runs: list[dict]", output: "list[str]" }
+  starter: |
+    def flaky_tests(runs: list[dict]) -> list[str]:
+        return []
+  hints:
+    - "Group outcomes by the pair (test, commit)."
+    - "A set of outcomes per (test, commit): flaky when the set has both True and False."
+    - |
+      seen = defaultdict(set)
+      for r in runs: seen[(r["test"], r["commit"])].add(r["passed"])
+      return sorted({test for (test, _), outcomes in seen.items() if len(outcomes) == 2})
+  solution:
+    code: |
+      from collections import defaultdict
+
+      def flaky_tests(runs: list[dict]) -> list[str]:
+          outcomes: dict[tuple[str, str], set[bool]] = defaultdict(set)
+          for run in runs:
+              outcomes[(run["test"], run["commit"])].add(run["passed"])
+          return sorted({test for (test, _), seen in outcomes.items() if len(seen) == 2})
+    explanation: The same code producing different results is the definition of flakiness; grouping by commit rules out real regressions.
+    time: O(n + f log f)
+    space: O(n)
+    alternatives: ["Track pass and fail counts per key and check both are positive"]
+    edge_cases: ["A test that fails on one commit and passes on another is not flaky", "A test listed in the result once even if flaky on many commits"]
+    production: ["Quarantine flaky tests automatically but keep reporting them", "Record the runner and environment too — flakiness is often infrastructure"]
+  examples:
+    - args: [[{ commit: "c1", test: "t_login", passed: true }, { commit: "c1", test: "t_login", passed: false }, { commit: "c1", test: "t_api", passed: false }, { commit: "c2", test: "t_api", passed: true }]]
+      expected: ["t_login"]
+  hidden:
+    - { args: [[]] }
+    - { args: [[{ commit: "a", test: "z", passed: false }, { commit: "a", test: "z", passed: true }, { commit: "b", test: "y", passed: true }, { commit: "b", test: "y", passed: false }, { commit: "b", test: "z", passed: true }]] }
+
+- slug: parse-aws-arn
+  title: Parse an AWS ARN
+  difficulty: easy
+  roles: [aws-engineer, cloud-engineer, security-engineer]
+  topics: [aws, parsing, strings]
+  minutes: 10
+  entrypoint: parse_arn
+  description: |
+    An ARN has the form `arn:partition:service:region:account-id:resource`. The resource part may itself
+    contain colons or slashes (e.g. `function:my-fn:prod` or `role/admin`).
+
+    Return a dictionary with keys `partition`, `service`, `region`, `account`, `resource`. Return `None` if
+    the string doesn't start with `arn:` or has fewer than six parts.
+  io: { input: "arn: str", output: "dict | None" }
+  starter: |
+    def parse_arn(arn: str):
+        return None
+  hints:
+    - "Only the first five colons are separators."
+    - "str.split(':', 5) splits at most five times, leaving the resource intact."
+    - |
+      parts = arn.split(":", 5)
+      if len(parts) != 6 or parts[0] != "arn": return None
+      return dict(zip(["partition", "service", "region", "account", "resource"], parts[1:]))
+  solution:
+    code: |
+      FIELDS = ("partition", "service", "region", "account", "resource")
+
+      def parse_arn(arn: str):
+          parts = arn.split(":", 5)
+          if len(parts) != 6 or parts[0] != "arn":
+              return None
+          return dict(zip(FIELDS, parts[1:]))
+    explanation: maxsplit keeps colons inside the resource; global services (IAM, S3) simply have empty region or account fields.
+    time: O(n)
+    space: O(n)
+    alternatives: ["A regex with five non-greedy groups and a final catch-all"]
+    edge_cases: ["Empty region and account (S3 bucket ARNs)", "Resource containing ':'", "Not an ARN"]
+    production: ["Validate the partition (aws, aws-cn, aws-us-gov) before using the ARN in policies"]
+  examples:
+    - { args: ["arn:aws:lambda:eu-west-1:123456789012:function:my-fn:prod"], expected: { partition: "aws", service: "lambda", region: "eu-west-1", account: "123456789012", resource: "function:my-fn:prod" } }
+    - { args: ["arn:aws:s3:::my-bucket/logs/*"], expected: { partition: "aws", service: "s3", region: "", account: "", resource: "my-bucket/logs/*" } }
+  hidden:
+    - { args: ["arn:aws:iam::123456789012:role/admin"] }
+    - { args: ["urn:aws:x:y:z:w"] }
+    - { args: ["arn:aws:s3"] }
+
+- slug: s3-prefix-sizes
+  title: Size S3 prefixes
+  difficulty: easy
+  roles: [aws-engineer, cloud-engineer, data-engineer]
+  topics: [aws, dictionaries, strings]
+  minutes: 10
+  entrypoint: prefix_sizes
+  description: |
+    `list_objects_v2` returns objects as `{"Key": ..., "Size": ...}`. Sum sizes by the first `depth` path
+    segments of the key (segments are separated by `/`). An object with fewer segments is grouped by its
+    folder (all segments but the file name); objects at the bucket root are grouped under `""`.
+    Prefixes in the output end with `/` (except the root `""`).
+  io: { input: "objects: list[dict], depth: int", output: "dict[str, int]" }
+  starter: |
+    def prefix_sizes(objects: list[dict], depth: int) -> dict[str, int]:
+        return {}
+  hints:
+    - "The file name (last segment) never belongs to a prefix."
+    - "folders = key.split('/')[:-1]; keep at most depth of them."
+    - |
+      parts = key.split("/")[:-1][:depth]
+      prefix = "/".join(parts) + "/" if parts else ""
+      totals[prefix] += size
+  solution:
+    code: |
+      from collections import defaultdict
+
+      def prefix_sizes(objects: list[dict], depth: int) -> dict[str, int]:
+          totals: dict[str, int] = defaultdict(int)
+          for obj in objects:
+              folders = obj["Key"].split("/")[:-1][:depth]
+              totals["/".join(folders) + "/" if folders else ""] += obj["Size"]
+          return dict(totals)
+    explanation: Dropping the last segment removes the file name; slicing to depth groups deeper objects under their ancestor.
+    time: O(total key length)
+    space: O(p) for p prefixes
+    alternatives: ["Use Delimiter='/' in list_objects_v2 to let S3 group prefixes (one level at a time)"]
+    edge_cases: ["Keys ending in '/' (folder markers) have an empty file name", "Root objects", "depth larger than the key depth"]
+    production: ["S3 Storage Lens or Inventory reports are cheaper than listing billions of objects"]
+  examples:
+    - { args: [[{ Key: "logs/2026/11/a.gz", Size: 10 }, { Key: "logs/2026/10/b.gz", Size: 5 }, { Key: "img/x.png", Size: 7 }, { Key: "readme.txt", Size: 1 }], 2], expected: { "logs/2026/": 15, "img/": 7, "": 1 } }
+  hidden:
+    - { args: [[], 1] }
+    - { args: [[{ Key: "a/b/", Size: 0 }, { Key: "a/b/c", Size: 3 }], 5] }
+
+- slug: kubernetes-resource-totals
+  title: Total Kubernetes resource requests
+  difficulty: easy
+  roles: [kubernetes-engineer, platform-engineer, site-reliability-engineer]
+  topics: [kubernetes, parsing]
+  minutes: 15
+  entrypoint: total_requests
+  description: |
+    Given a list of containers, each `{"cpu": str, "memory": str}` (Kubernetes quantities), return
+    `{"cpu_millicores": int, "memory_bytes": int}` with the totals.
+
+    CPU: `"250m"` is 250 millicores, `"2"` or `"0.5"` are cores (× 1000).
+    Memory: plain bytes `"1000"`, binary suffixes `Ki Mi Gi Ti` (powers of 1024) and decimal suffixes
+    `k M G T` (powers of 1000). Round CPU to the nearest millicore.
+  io: { input: "containers: list[dict]", output: "dict[str, int]" }
+  starter: |
+    def total_requests(containers: list[dict]) -> dict[str, int]:
+        return {"cpu_millicores": 0, "memory_bytes": 0}
+  hints:
+    - "Write one parser per resource type and keep a table of suffix multipliers."
+    - "Check the two-letter suffixes (Ki, Mi…) before the one-letter ones (k, M…)."
+    - |
+      def cpu(q): return int(q[:-1]) if q.endswith("m") else round(float(q) * 1000)
+      def mem(q): for suffix, mult in SUFFIXES (longest first): if q.endswith(suffix): return int(float(q[:-len(suffix)]) * mult); return int(q)
+  solution:
+    code: |
+      MEMORY = [("Ki", 1024), ("Mi", 1024**2), ("Gi", 1024**3), ("Ti", 1024**4), ("k", 1000), ("M", 1000**2), ("G", 1000**3), ("T", 1000**4)]
+
+      def cpu_millicores(q: str) -> int:
+          return int(q[:-1]) if q.endswith("m") else round(float(q) * 1000)
+
+      def memory_bytes(q: str) -> int:
+          for suffix, multiplier in MEMORY:
+              if q.endswith(suffix):
+                  return int(float(q[: -len(suffix)]) * multiplier)
+          return int(q)
+
+      def total_requests(containers: list[dict]) -> dict[str, int]:
+          return {
+              "cpu_millicores": sum(cpu_millicores(c["cpu"]) for c in containers),
+              "memory_bytes": sum(memory_bytes(c["memory"]) for c in containers),
+          }
+    explanation: Ordering the suffix table so two-letter suffixes are checked first prevents "Mi" from being read as "M" plus garbage.
+    time: O(n)
+    space: O(1)
+    alternatives: ["A regex ^([0-9.]+)([A-Za-z]*)$ and a dict lookup on the suffix"]
+    edge_cases: ["Fractional cores like 0.1", "Decimal vs binary units ('1G' vs '1Gi')", "No containers"]
+    production: ["The kubernetes client has utils.parse_quantity, which handles every suffix including exponents"]
+  examples:
+    - { args: [[{ cpu: "250m", memory: "128Mi" }, { cpu: "0.5", memory: "1G" }]], expected: { cpu_millicores: 750, memory_bytes: 1134217728 } }
+  hidden:
+    - { args: [[]] }
+    - { args: [[{ cpu: "2", memory: "1000" }, { cpu: "1m", memory: "1Ki" }, { cpu: "0.1", memory: "2k" }]] }
+    - { args: [[{ cpu: "1500m", memory: "1.5Gi" }]] }
+
+- slug: simple-tokenizer
+  title: Tokenise text for an LLM pipeline
+  difficulty: easy
+  roles: [genai-engineer, ai-engineer, machine-learning-engineer]
+  topics: [llm-integration, strings, regex]
+  minutes: 10
+  entrypoint: tokenize
+  description: |
+    Before counting tokens precisely, a pipeline uses a rough tokenizer: lowercase the text, then emit
+    every run of letters/digits as one token and every other non-space character as its own token.
+    Whitespace separates tokens and is not emitted.
+
+    Example: `"Hello, world!!"` → `["hello", ",", "world", "!", "!"]`.
+  io: { input: "text: str", output: "list[str]" }
+  starter: |
+    def tokenize(text: str) -> list[str]:
+        return text.split()
+  hints:
+    - "Two kinds of tokens: word runs and single punctuation characters."
+    - "One regex with alternation: [a-z0-9]+ or any single non-space, non-word character."
+    - "return re.findall(r'[a-z0-9]+|[^\\sa-z0-9]', text.lower())"
+  solution:
+    code: |
+      import re
+
+      TOKEN = re.compile(r"[a-z0-9]+|[^\sa-z0-9]")
+
+      def tokenize(text: str) -> list[str]:
+          return TOKEN.findall(text.lower())
+    explanation: The regex engine tries the word alternative first, so letters and digits group together; anything else non-space is matched one character at a time.
+    time: O(n)
+    space: O(n)
+    alternatives: ["A manual character loop with a buffer for the current word"]
+    edge_cases: ["Empty text", "Underscores and accented letters count as punctuation here", "Only whitespace"]
+    production: ["Use the model's real tokenizer (tiktoken, SentencePiece) for billing and context limits — rough counts can be off by 30% or more"]
+  examples:
+    - { args: ["Hello, world!!"], expected: ["hello", ",", "world", "!", "!"] }
+  hidden:
+    - { args: [""] }
+    - { args: ["GPU-2 costs $3.50/hr"] }
+    - { args: ["   \n\t "] }
+
+- slug: cosine-similarity
+  title: Cosine similarity of embeddings
+  difficulty: easy
+  roles: [ai-engineer, genai-engineer, machine-learning-engineer]
+  topics: [vectors, functions]
+  minutes: 8
+  entrypoint: cosine
+  comparator: float
+  description: |
+    Return the cosine similarity of two equal-length vectors, rounded to six decimals: the dot product divided
+    by the product of the vectors' lengths (L2 norms). If either vector has length zero, return `0.0`.
+  io: { input: "a: list[float], b: list[float]", output: "float" }
+  starter: |
+    def cosine(a: list[float], b: list[float]) -> float:
+        return 0.0
+  hints:
+    - "You need three sums: a·b, a·a and b·b."
+    - "zip(a, b) pairs up components; math.sqrt for the norms; guard the zero case."
+    - |
+      dot = sum(x * y for x, y in zip(a, b))
+      na = sqrt(sum(x * x for x in a)); nb = ...
+      return 0.0 if na == 0 or nb == 0 else round(dot / (na * nb), 6)
+  solution:
+    code: |
+      import math
+
+      def cosine(a: list[float], b: list[float]) -> float:
+          dot = sum(x * y for x, y in zip(a, b))
+          norm_a = math.sqrt(sum(x * x for x in a))
+          norm_b = math.sqrt(sum(y * y for y in b))
+          if norm_a == 0 or norm_b == 0:
+              return 0.0
+          return round(dot / (norm_a * norm_b), 6)
+    explanation: Cosine measures the angle between vectors and ignores their length, which is why it is popular for comparing embeddings.
+    time: O(d)
+    space: O(1)
+    alternatives: ["math.hypot(*a) for the norm", "numpy: a @ b / (norm(a) * norm(b))"]
+    edge_cases: ["Zero vector", "Opposite vectors give -1", "Identical direction gives 1"]
+    production: ["Normalise embeddings once at write time so similarity becomes a dot product", "Vector databases do this at scale with approximate indexes (HNSW)"]
+  examples:
+    - { args: [[1, 0], [0, 1]], expected: 0.0 }
+    - { args: [[1, 2, 3], [2, 4, 6]], expected: 1.0 }
+  hidden:
+    - { args: [[0, 0], [1, 1]] }
+    - { args: [[1, -1], [-1, 1]] }
+    - { args: [[0.3, 0.1, 0.9], [0.2, 0.8, 0.4]] }
+
+- slug: render-prompt-template
+  title: Render a prompt template
+  difficulty: easy
+  roles: [genai-engineer, ai-engineer, forward-deployed-engineer]
+  topics: [llm-integration, strings, regex]
+  minutes: 12
+  entrypoint: render
+  description: |
+    Prompt templates use `{{ name }}` placeholders (spaces inside the braces are optional). Replace each
+    placeholder with `str(values[name])`. Placeholders whose name is missing from `values` are left
+    unchanged, and their names are reported.
+
+    Return `[rendered_text, sorted_list_of_missing_names]` (each missing name once).
+  io: { input: "template: str, values: dict", output: "[str, list[str]]" }
+  starter: |
+    def render(template: str, values: dict) -> list:
+        return [template, []]
+  hints:
+    - "A regex with a replacement function lets you decide per match."
+    - "re.sub(pattern, repl, text) calls repl(match) for each placeholder; return match.group(0) to leave it."
+    - |
+      PATTERN = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+      def repl(m): name = m.group(1); if name in values: return str(values[name]); missing.add(name); return m.group(0)
+  solution:
+    code: |
+      import re
+
+      PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+
+      def render(template: str, values: dict) -> list:
+          missing: set[str] = set()
+
+          def replace(match: re.Match) -> str:
+              name = match.group(1)
+              if name in values:
+                  return str(values[name])
+              missing.add(name)
+              return match.group(0)
+
+          return [PLACEHOLDER.sub(replace, template), sorted(missing)]
+    explanation: Rendering in a single regex pass means a value that itself contains '{{x}}' is not expanded again — no template injection.
+    time: O(n)
+    space: O(n)
+    alternatives: ["string.Template with safe_substitute (uses $name syntax)", "Jinja2 with StrictUndefined"]
+    edge_cases: ["Values containing braces are inserted literally", "Same missing name twice is reported once", "Non-string values are converted with str()"]
+    production: ["Fail closed: refuse to send a prompt with missing variables", "Version templates and log the version with each model call"]
+  examples:
+    - { args: ["Summarise {{ doc }} for {{audience}}. {{ tone }}", { doc: "the RFC", audience: "SREs" }], expected: ["Summarise the RFC for SREs. {{ tone }}", ["tone"]] }
+  hidden:
+    - { args: ["{{a}}{{a}}{{ b }}", { a: "{{b}}" }] }
+    - { args: ["no placeholders", {}] }
+    - { args: ["{{ n }} items", { n: 3 }] }
+
+- slug: paginate-api
+  title: Collect every page from an API
+  difficulty: easy
+  roles: [backend-engineer, forward-deployed-engineer, automation-engineer, cloud-engineer]
+  topics: [pagination, http-apis]
+  minutes: 12
+  entrypoint: fetch_all
+  description: |
+    You get an API client with one method, `client.list_items(page_token=None)`. It returns a dictionary
+    `{"items": [...], "next_page_token": str | None}`. Call it until there is no next token and return all
+    items in order.
+
+    The client is provided by the test harness (it records your calls). Don't call it more often than needed.
+  io: { input: "client — has list_items(page_token=None) -> dict", output: "list" }
+  prelude: |
+    class FakeClient:
+        """Serves pre-defined pages. Records every call so the harness can check you don't over-fetch."""
+        def __init__(self, pages):
+            self._pages = pages
+            self.calls = []
+
+        def list_items(self, page_token=None):
+            self.calls.append(page_token)
+            index = 0 if page_token is None else int(page_token.removeprefix("p"))
+            if index >= len(self._pages):
+                raise ValueError(f"invalid page token {page_token!r}")
+            nxt = f"p{index + 1}" if index + 1 < len(self._pages) else None
+            return {"items": list(self._pages[index]), "next_page_token": nxt}
+
+    def __harness__(fn, pages):
+        client = FakeClient(pages)
+        return {"items": fn(client), "calls": len(client.calls)}
+  starter: |
+    def fetch_all(client) -> list:
+        return client.list_items()["items"]
+  hints:
+    - "Loop until the response says there is nothing more."
+    - "Start with token = None; after each call, extend your list and set token = response['next_page_token']."
+    - |
+      items, token = [], None
+      while True:
+          page = client.list_items(page_token=token); items.extend(page["items"])
+          token = page["next_page_token"]; if not token: break
+  solution:
+    code: |
+      def fetch_all(client) -> list:
+          items: list = []
+          token = None
+          while True:
+              page = client.list_items(page_token=token)
+              items.extend(page["items"])
+              token = page.get("next_page_token")
+              if not token:
+                  return items
+    explanation: The loop always makes the first call, then follows tokens until the server stops sending one — exactly one call per page.
+    time: O(total items)
+    space: O(total items)
+    alternatives: ["A generator that yields items page by page (better for very large result sets)", "boto3 paginators for AWS APIs"]
+    edge_cases: ["A single page", "Empty pages in the middle still have a next token"]
+    production: ["Add a maximum page count to stop runaway loops when a server repeats tokens", "Retry transient errors per page, not the whole listing"]
+  examples:
+    - { args: [[[1, 2], [3], [4, 5]]], expected: { items: [1, 2, 3, 4, 5], calls: 3 } }
+  hidden:
+    - { args: [[[]]] }
+    - { args: [[[1], [], [2]]] }
+    - { args: [[["a", "b", "c"]]] }
+
+- slug: mask-secrets
+  title: Mask secrets in nested config
+  difficulty: easy
+  roles: [security-engineer, devops-engineer, backend-engineer]
+  topics: [security, dictionaries]
+  minutes: 12
+  entrypoint: mask
+  description: |
+    Before logging a configuration, replace the value of every key whose name contains `password`, `secret`,
+    `token` or `key` (case-insensitive) with `"***"`. The structure can nest dictionaries and lists to any
+    depth; mask at every level. A masked key's value is replaced entirely, even if it is a dictionary.
+    Return a new structure; don't modify the input.
+  io: { input: "data: dict | list | scalar", output: "same shape with secrets masked" }
+  starter: |
+    def mask(data):
+        return data
+  hints:
+    - "The data is a tree: handle dicts, lists and plain values separately."
+    - "Write a recursive function. For dicts, decide per key whether to mask or recurse."
+    - |
+      if isinstance(data, dict): return {k: "***" if is_secret(k) else mask(v) for k, v in data.items()}
+      if isinstance(data, list): return [mask(v) for v in data]
+      return data
+  solution:
+    code: |
+      SENSITIVE = ("password", "secret", "token", "key")
+
+      def is_secret(name) -> bool:
+          lowered = str(name).lower()
+          return any(word in lowered for word in SENSITIVE)
+
+      def mask(data):
+          if isinstance(data, dict):
+              return {k: "***" if is_secret(k) else mask(v) for k, v in data.items()}
+          if isinstance(data, list):
+              return [mask(v) for v in data]
+          return data
+    explanation: Recursion follows the shape of the data. Building new containers instead of mutating keeps the caller's config intact.
+    time: O(n) over all nodes
+    space: O(n) for the copy, O(depth) recursion
+    alternatives: ["An explicit stack instead of recursion for very deep data"]
+    edge_cases: ["'monkey' contains 'key' and is masked — over-masking is the safe failure", "Secrets inside lists of dicts", "Non-string keys"]
+    production: ["Mask at the logging layer (a logging.Filter) so nobody forgets", "Also scan values for secret patterns, not just key names"]
+  examples:
+    - args: [{ db: { host: "h", Password: "p" }, apiKey: "k", users: [{ name: "a", token: "t" }] }]
+      expected: { db: { host: "h", Password: "***" }, apiKey: "***", users: [{ name: "a", token: "***" }] }
+  hidden:
+    - { args: [[1, "two", { secret_config: { nested: 1 } }]] }
+    - { args: ["plain"] }
+    - { args: [{ monkey: "banana", regular: [[{ TOKEN: 1 }]] }] }
+
+- slug: iam-allowed-actions
+  title: List actions an IAM policy allows
+  difficulty: easy
+  roles: [aws-engineer, security-engineer, cloud-engineer]
+  topics: [iam, aws, json]
+  minutes: 12
+  entrypoint: allowed_actions
+  description: |
+    Given an IAM policy document (as a dictionary), return the sorted list of distinct actions in statements
+    whose `Effect` is `"Allow"`. `Statement` may be a single object or a list; `Action` may be a string or a
+    list. Ignore statements with `NotAction`. Action names compare case-insensitively: return them
+    lowercased.
+  io: { input: "policy: dict", output: "list[str]" }
+  starter: |
+    def allowed_actions(policy: dict) -> list[str]:
+        return []
+  hints:
+    - "Normalise 'one or many' fields to lists before looping."
+    - "A tiny helper as_list(x) returns x if it is a list, else [x]."
+    - |
+      for st in as_list(policy.get("Statement", [])):
+          if st.get("Effect") == "Allow" and "Action" in st: actions.update(a.lower() for a in as_list(st["Action"]))
+  solution:
+    code: |
+      def as_list(value) -> list:
+          return value if isinstance(value, list) else [value]
+
+      def allowed_actions(policy: dict) -> list[str]:
+          actions: set[str] = set()
+          for statement in as_list(policy.get("Statement", [])):
+              if statement.get("Effect") == "Allow" and "Action" in statement:
+                  actions.update(a.lower() for a in as_list(statement["Action"]))
+          return sorted(actions)
+    explanation: AWS allows scalars where lists are expected; normalising up front keeps the main loop simple.
+    time: O(n log n)
+    space: O(n)
+    alternatives: ["policyuniverse or parliament for full policy analysis"]
+    edge_cases: ["Single statement object", "Deny statements are ignored", "Wildcards like 's3:*' are kept as-is"]
+    production: ["Deny always wins over Allow — listing allowed actions is not the same as computing effective permissions", "Flag '*' and 'iam:PassRole' for review"]
+  examples:
+    - args: [{ Version: "2012-10-17", Statement: [{ Effect: "Allow", Action: ["s3:GetObject", "S3:getobject", "s3:ListBucket"] }, { Effect: "Deny", Action: "s3:DeleteObject" }, { Effect: "Allow", Action: "ec2:Describe*" }] }]
+      expected: ["ec2:describe*", "s3:getobject", "s3:listbucket"]
+  hidden:
+    - { args: [{ Statement: { Effect: "Allow", Action: "*" } }] }
+    - { args: [{ Statement: [{ Effect: "Allow", NotAction: "iam:*" }] }] }
+    - { args: [{}] }
+
+- slug: histogram-buckets
+  title: Cumulative histogram buckets
+  difficulty: easy
+  roles: [site-reliability-engineer, mlops-engineer, backend-engineer]
+  topics: [monitoring, statistics]
+  minutes: 10
+  entrypoint: histogram
+  description: |
+    Prometheus histograms are cumulative: the bucket `le="0.5"` counts observations less than or equal to
+    0.5, including those in smaller buckets. Given observations and sorted upper bounds, return a list of
+    `[bound, count]` pairs, followed by `["+Inf", total_count]`.
+  io: { input: "values: list[float], bounds: list[float] (ascending)", output: "list[list]" }
+  starter: |
+    def histogram(values: list[float], bounds: list[float]) -> list[list]:
+        return [[b, 0] for b in bounds] + [["+Inf", len(values)]]
+  hints:
+    - "Each bucket counts every value <= its bound."
+    - "Sort the values once; bisect_right(sorted_values, bound) is the number of values <= bound."
+    - "s = sorted(values); return [[b, bisect_right(s, b)] for b in bounds] + [['+Inf', len(values)]]"
+  solution:
+    code: |
+      from bisect import bisect_right
+
+      def histogram(values: list[float], bounds: list[float]) -> list[list]:
+          ordered = sorted(values)
+          return [[bound, bisect_right(ordered, bound)] for bound in bounds] + [["+Inf", len(values)]]
+    explanation: After sorting, the count of values up to a bound is the insertion point to its right — O(log n) per bucket.
+    time: O(n log n + b log n)
+    space: O(n)
+    alternatives: ["Count per bucket (non-cumulative) in one pass and then take a running sum: O(n·b) or O(n log b)"]
+    edge_cases: ["Values exactly on a bound are included", "No values", "Values above every bound only appear in +Inf"]
+    production: ["Choose bounds around your SLO threshold — quantile estimates are only as precise as the buckets"]
+  examples:
+    - { args: [[0.1, 0.4, 0.5, 2.0, 0.05], [0.1, 0.5, 1.0]], expected: [[0.1, 2], [0.5, 4], [1.0, 4], ["+Inf", 5]] }
+  hidden:
+    - { args: [[], [1, 2]] }
+    - { args: [[5, 6, 7], [1]] }
+
+- slug: group-by-aggregate
+  title: Group-by aggregation
+  difficulty: easy
+  roles: [data-engineer, forward-deployed-engineer, machine-learning-engineer]
+  topics: [sql-patterns, etl, dictionaries]
+  minutes: 12
+  entrypoint: group_by
+  comparator: float
+  description: |
+    Implement a tiny `GROUP BY`: given rows (dictionaries), a key column and a value column, return one row
+    per key with `count`, `sum` and `avg` (rounded to two decimals) of the value column. Rows whose value is
+    `None` are counted in `count` but excluded from `sum` and `avg` (like SQL). `avg` is `None` when no value
+    is present. Return the groups sorted by key.
+  io: { input: "rows: list[dict], key: str, value: str", output: "list[dict] with key, count, sum, avg" }
+  starter: |
+    def group_by(rows: list[dict], key: str, value: str) -> list[dict]:
+        return []
+  hints:
+    - "Track three things per group: row count, sum of non-null values and number of non-null values."
+    - "A dict of small lists [count, total, n] works; compute avg at the end."
+    - |
+      for r in rows: g = groups.setdefault(r[key], [0, 0, 0]); g[0] += 1; if r[value] is not None: g[1] += r[value]; g[2] += 1
+      [{key: k, "count": c, "sum": s, "avg": round(s / n, 2) if n else None} for k, (c, s, n) in sorted(groups.items())]
+  solution:
+    code: |
+      def group_by(rows: list[dict], key: str, value: str) -> list[dict]:
+          groups: dict = {}
+          for row in rows:
+              g = groups.setdefault(row[key], [0, 0, 0])
+              g[0] += 1
+              v = row.get(value)
+              if v is not None:
+                  g[1] += v
+                  g[2] += 1
+          return [
+              {key: k, "count": count, "sum": total, "avg": round(total / n, 2) if n else None}
+              for k, (count, total, n) in sorted(groups.items())
+          ]
+    explanation: Keeping the non-null count separately reproduces SQL's semantics, where COUNT(*) counts rows but AVG ignores NULLs.
+    time: O(n + g log g)
+    space: O(g)
+    alternatives: ["itertools.groupby after sorting by key", "pandas: df.groupby(key)[value].agg(['size', 'sum', 'mean'])"]
+    edge_cases: ["All values None → sum 0 and avg None", "Single group", "No rows"]
+    production: ["Push aggregation to the database when the data lives there — moving rows is the expensive part"]
+  examples:
+    - args: [[{ team: "b", ms: 10 }, { team: "a", ms: 4 }, { team: "b", ms: null }, { team: "b", ms: 20 }], "team", "ms"]
+      expected: [{ team: "a", count: 1, sum: 4, avg: 4.0 }, { team: "b", count: 3, sum: 30, avg: 15.0 }]
+  hidden:
+    - { args: [[], "k", "v"] }
+    - { args: [[{ k: "x", v: null }], "k", "v"] }
+    - { args: [[{ k: 1, v: 1 }, { k: 1, v: 2 }, { k: 0, v: 0.5 }], "k", "v"] }

@@ -1,0 +1,661 @@
+---
+title: "Deploy Moks CMS on Kubernetes: k3s, cert-manager, CloudNativePG and Zero-Downtime Rollouts"
+slug: deploy-moks-cms-kubernetes-k3s
+description: "Run Moks CMS, the AI-powered CMS behind jithendar.com, on k3s: Traefik, Let's Encrypt, CloudNativePG, two replicas, probes, network policy and CI."
+seoTitle: "Deploy Moks CMS on k3s Kubernetes, Step by Step"
+seoDescription: "k3s, Traefik, cert-manager HTTP-01, CloudNativePG, a hardened two-replica Deployment, probes, PDB, NetworkPolicy, rollouts, rollback and a CI deployer."
+author: jithendar-dharmapuri
+category: kubernetes
+tags: [Moks CMS, Kubernetes, k3s, Traefik, cert-manager, CloudNativePG, PostgreSQL, Next.js, Let's Encrypt, DevOps, Deployment]
+contentType: tutorial
+status: draft
+featuredImage:
+  src: /images/deploy-moks-cms/deploy-k8s-architecture.png
+  alt: "Moks CMS on k3s. The browser reaches Traefik on ports 80 and 443, which uses a TLS Secret written by cert-manager after a Let's Encrypt HTTP-01 challenge. Traefik routes to the Service in namespace moks-cms, which balances two web pods. The pods read a Secret, upload media to object storage and connect to a CloudNativePG primary with a streaming replica."
+  width: 1800
+  height: 1400
+related:
+  - blog/deploy-moks-cms-linux-server-ec2-docker
+  - blog/deploy-moks-cms-amazon-eks
+  - blog/lets-encrypt-k3s-cert-manager-automatic-renewal
+  - blog/cloudnativepg-postgres-cluster-minikube-terraform
+sources:
+  - title: "K3s: Quick-Start Guide"
+    url: https://docs.k3s.io/quick-start
+    publisher: K3s
+  - title: "K3s: Networking services (Traefik, ServiceLB)"
+    url: https://docs.k3s.io/networking/networking-services
+    publisher: K3s
+  - title: "cert-manager: Installing with Helm"
+    url: https://cert-manager.io/docs/installation/helm/
+    publisher: cert-manager
+  - title: "cert-manager: HTTP01 challenge"
+    url: https://cert-manager.io/docs/configuration/acme/http01/
+    publisher: cert-manager
+  - title: "CloudNativePG documentation"
+    url: https://cloudnative-pg.io/documentation/current/
+    publisher: CloudNativePG
+  - title: "Kubernetes: Deployments"
+    url: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
+    publisher: Kubernetes
+  - title: "Kubernetes: Configure Liveness, Readiness and Startup Probes"
+    url: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+    publisher: Kubernetes
+---
+<Todo>Draft written from the repository on 2026-11-14 (minikube/30-jithendar-com.yaml and the Let's Encrypt and CloudNativePG articles). Not run end to end on a fresh k3s node: before publishing, (1) follow it on a new VM, (2) confirm the Traefik chart value names in the HelmChartConfig against the Traefik version k3s installs then, and that ServiceLB with externalTrafficPolicy Local really passes the visitor's address to the app (check the X-Forwarded-For the app logs), (3) pin cert-manager and CloudNativePG chart versions to the ones you tested, (4) check the "How production differs" section still matches mk4.</Todo>
+
+[Part 1](/blog/deploy-moks-cms-linux-server-ec2-docker) ran Moks CMS, the AI-powered CMS behind jithendar.com, on one server with Docker Compose. It works, and it is cheap, but every release costs a few seconds of errors and the database lives and dies with one disk. This part moves the same image to Kubernetes, on k3s, and fixes both: two app replicas roll one at a time with no gap, and PostgreSQL runs as a primary with a streaming replica that takes over on failure.
+
+k3s is a full, certified Kubernetes distribution packaged as one binary. It installs in under a minute, runs on a single small VM, and ships with an ingress controller (Traefik) and a load balancer for bare metal (ServiceLB). That makes it the shortest path from "a Linux server" to "a real cluster". jithendar.com itself runs Moks CMS on k3s; the last section lists where that production setup differs from this guide.
+
+::toc
+
+:::callout{type="info" title="Adapting this guide"}
+The Moks CMS source is proprietary, so the manifests below are reproduced in full and written for your own image. They also work for any Next.js app built with `output: "standalone"` that uses PostgreSQL. Replace `example.com` and `ghcr.io/your-user/moks-cms` throughout. If you run Moks CMS under your own domain, change `PRODUCTION_HOST` in `src/config/site.ts` first: it still names jithendar.com, and on any other domain every page is served as `noindex`.
+:::
+
+:::callout{type="info" title="What about the AI features?"}
+The web app deployed here is the whole CMS: the editor, admin, media library, comments, members, scheduled publishing, and image and video generation (add a `GEMINI_API_KEY`, or set it in the admin). Ask the Blog, the SEO agent and the editorial agent crew run in a second service, the Moks CMS agent, which needs PostgreSQL with pgvector and a Claude API key. This series does not deploy the agent. Everything here works without it, and you can add it later.
+:::
+
+## What you will build
+
+:::figure{caption="Figure 1. Everything runs inside the cluster except Let's Encrypt and object storage. TLS ends at Traefik."}
+![Moks CMS on k3s. The browser reaches Traefik on ports 80 and 443, which uses a TLS Secret written by cert-manager after a Let's Encrypt HTTP-01 challenge. Traefik routes to the Service in namespace moks-cms, which balances two web pods. The pods read the Secret moks-cms-env, upload media to object storage and connect to a CloudNativePG primary behind the postgres-rw Service, which streams to a replica.](/images/deploy-moks-cms/deploy-k8s-architecture.svg)
+:::
+
+| Component | Role |
+| --- | --- |
+| k3s | Kubernetes itself, plus Traefik (ingress) and ServiceLB (exposes Traefik on the node's ports 80 and 443) |
+| cert-manager | Gets and renews the Let's Encrypt certificate and stores it in a Secret |
+| CloudNativePG | An operator that runs PostgreSQL as a primary and replicas, handles failover and writes the connection Secret |
+| `moks-cms` Deployment | Two replicas of Moks CMS, hardened, with probes and a PodDisruptionBudget |
+
+## Prerequisites
+
+- One Linux VM with at least 2 vCPUs and 4 GiB of memory for a single-node cluster, or three for a cluster that survives losing a node. Ubuntu 24.04 works well; any distribution k3s supports will do.
+- Ports 80 and 443 open to the internet, and 6443 (the Kubernetes API) open only to your address.
+- A domain with A records for the apex and `www` pointing at the node (or at every node).
+- `kubectl` and `helm` on your machine, and an image built and pushed as in [Part 1, step 4](/blog/deploy-moks-cms-linux-server-ec2-docker#step-4-build-and-push-the-image). Build for the nodes' architecture.
+
+## Step 1: Install k3s
+
+On the first node:
+
+```bash
+curl -sfL https://get.k3s.io | sh -s - server --tls-san "$(curl -s https://checkip.amazonaws.com)"
+sudo k3s kubectl get nodes
+```
+
+`--tls-san` adds the public address to the API server's certificate, so `kubectl` from your machine trusts it. The kubeconfig on the node is readable by root only, so read it with `sudo` over SSH, then point it at the node's address:
+
+```bash
+# on your machine
+ssh ubuntu@NODE_IP sudo cat /etc/rancher/k3s/k3s.yaml > ~/.kube/k3s.yaml
+chmod 600 ~/.kube/k3s.yaml
+sed -i.bak "s/127.0.0.1/NODE_IP/" ~/.kube/k3s.yaml
+export KUBECONFIG=~/.kube/k3s.yaml
+kubectl get nodes
+```
+
+To add worker nodes, read the join token on the first node and run the installer on each worker:
+
+```bash
+sudo cat /var/lib/rancher/k3s/server/node-token      # on the first node
+curl -sfL https://get.k3s.io | K3S_URL=https://FIRST_NODE_IP:6443 K3S_TOKEN=THE_TOKEN sh -   # on each worker
+```
+
+Between nodes, allow UDP 8472 (flannel VXLAN) and TCP 10250 (kubelet).
+
+## Step 2: Keep the visitor's address at Traefik
+
+By default the node rewrites the source address of incoming connections, so Traefik, and then the app's rate limiter, see the node's IP instead of the visitor's. `externalTrafficPolicy: Local` keeps the real address. k3s manages Traefik as a Helm chart; you change its values with a `HelmChartConfig`:
+
+```yaml
+# traefik-config.yaml
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    service:
+      spec:
+        externalTrafficPolicy: Local
+```
+
+```bash
+kubectl apply -f traefik-config.yaml
+kubectl -n kube-system rollout status deploy/traefik
+```
+
+The HTTP-to-HTTPS redirect is set on the app's Ingress in step 7, not here. A redirect on Traefik's whole HTTP entry point would also catch cert-manager's challenge requests.
+
+## Step 3: Install cert-manager and a Let's Encrypt issuer
+
+```bash
+helm install cert-manager oci://quay.io/jetstack/charts/cert-manager \
+  --version v1.20.4 \
+  --namespace cert-manager --create-namespace \
+  --set crds.enabled=true
+kubectl -n cert-manager rollout status deploy/cert-manager-webhook
+```
+
+Create two ClusterIssuers. Use staging until the whole chain works; it has far higher rate limits and a failed attempt costs nothing:
+
+```yaml
+# issuers.yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: you@example.com
+    privateKeySecretRef:
+      name: letsencrypt-staging-account
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: traefik
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: you@example.com
+    privateKeySecretRef:
+      name: letsencrypt-account
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: traefik
+```
+
+```bash
+kubectl apply -f issuers.yaml
+kubectl get clusterissuer   # READY True for both
+```
+
+HTTP-01 proves you control a name by serving a token on port 80. It needs nothing but the open port. Production jithendar.com uses DNS-01 instead, because it has a wildcard certificate; [this article](/blog/lets-encrypt-k3s-cert-manager-automatic-renewal) explains that setup.
+
+## Step 4: Run PostgreSQL with CloudNativePG
+
+Install the operator:
+
+```bash
+helm repo add cnpg https://cloudnative-pg.github.io/charts
+helm upgrade --install cnpg cnpg/cloudnative-pg --namespace cnpg-system --create-namespace
+kubectl -n cnpg-system rollout status deploy/cnpg-cloudnative-pg
+```
+
+Then describe the database you want. Two instances means a primary and a hot standby:
+
+```yaml
+# postgres.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: moks-cms
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgres
+  namespace: moks-cms
+spec:
+  instances: 2
+  storage:
+    size: 10Gi
+  bootstrap:
+    initdb:
+      database: moks
+      owner: moks
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }
+```
+
+```bash
+kubectl apply -f postgres.yaml
+kubectl -n moks-cms get cluster postgres -w      # wait for "Cluster in healthy state"
+```
+
+The operator creates the Services `postgres-rw` (always the primary), `postgres-ro` and `postgres-r`, and a Secret `postgres-app` whose `uri` key is a ready-made connection string for the `moks` user. The app reads that key directly, so the password never passes through your hands.
+
+On a single node, both instances share one disk, which protects against a crashed PostgreSQL process but not a lost node. With three nodes the operator places them apart. Configure backups to object storage before you depend on the data; the CloudNativePG documentation covers it under "Backup", using the Barman Cloud plugin.
+
+## Step 5: Create the app's Secrets
+
+```bash
+kubectl -n moks-cms create secret generic moks-cms-env \
+  --from-literal=BETTER_AUTH_SECRET="$(openssl rand -hex 32)" \
+  --from-literal=SETTINGS_ENCRYPTION_KEY="$(openssl rand -hex 32)" \
+  --from-literal=ADMIN_BOOTSTRAP_TOKEN="$(openssl rand -hex 24)" \
+  --from-literal=TURNSTILE_SITE_KEY="" \
+  --from-literal=TURNSTILE_SECRET_KEY=""
+
+# only for a private image
+kubectl -n moks-cms create secret docker-registry registry-pull \
+  --docker-server=ghcr.io --docker-username=your-user --docker-password="$GHCR_READ_TOKEN"
+```
+
+Save `SETTINGS_ENCRYPTION_KEY` somewhere outside the cluster now: it decrypts the credentials you later store in the admin, and a database restore is useless without it.
+
+```bash
+kubectl -n moks-cms get secret moks-cms-env -o jsonpath='{.data.SETTINGS_ENCRYPTION_KEY}' | base64 -d; echo
+```
+
+## Step 6: Deploy the app
+
+This is the Deployment jithendar.com runs in production, with the parts specific to that site removed (its content image, telemetry endpoint and agent settings). Everything that makes it safe to run stays:
+
+```yaml
+# app.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: moks-cms
+  namespace: moks-cms
+  labels: { app: moks-cms }
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: { app: moks-cms }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  template:
+    metadata:
+      labels: { app: moks-cms }
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      imagePullSecrets:
+        - name: registry-pull          # remove for a public image
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: moks-cms }
+      containers:
+        - name: web
+          image: ghcr.io/your-user/moks-cms:REPLACE_WITH_TAG
+          ports:
+            - { name: http, containerPort: 3000 }
+          env:
+            - { name: APP_ENV, value: production }
+            - { name: SITE_URL, value: https://example.com }
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: postgres-app, key: uri }
+          envFrom:
+            - secretRef: { name: moks-cms-env }
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: "2", memory: 1536Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          startupProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 2
+            failureThreshold: 30
+            timeoutSeconds: 1
+          readinessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 20
+            failureThreshold: 3
+            timeoutSeconds: 3
+          lifecycle:
+            preStop:
+              exec: { command: ["sleep", "5"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: next-cache, mountPath: /app/.next/cache }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+        - name: next-cache
+          emptyDir: { sizeLimit: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: moks-cms
+  namespace: moks-cms
+spec:
+  selector: { app: moks-cms }
+  ports:
+    - { name: http, port: 80, targetPort: http }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: moks-cms
+  namespace: moks-cms
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: moks-cms }
+```
+
+What each part is for:
+
+- **`maxSurge: 1, maxUnavailable: 0`.** A rollout adds a new pod before it removes an old one, so capacity never drops. Figure 2 below walks through it.
+- **Three probes on `/api/health`.** The endpoint does not touch the database, so a slow database never gets pods killed. The startup probe gives the first boot up to 60 seconds for migrations; readiness decides when the Service sends traffic; liveness restarts a hung process.
+- **`preStop: sleep 5`.** When a pod is told to stop, it leaves the Service's endpoints at the same moment. The sleep keeps it serving for the few seconds Traefik needs to notice, so no request lands on a closed socket.
+- **Read-only root, no capabilities, user 1000, no service account token.** The app writes only to `/tmp` and its image cache, both `emptyDir`.
+- **PodDisruptionBudget.** A node drain (an upgrade, say) can never take both replicas at once.
+- **`ScheduleAnyway` spread.** Replicas go to different nodes when there are several. Production uses `DoNotSchedule`, which is stricter, but on a single node with `maxSurge` it can leave a rollout waiting.
+
+```bash
+kubectl apply -f app.yaml
+kubectl -n moks-cms rollout status deploy/moks-cms
+kubectl -n moks-cms logs deploy/moks-cms --tail=50   # migrations, then "ready"
+```
+
+The two pods start together, and the migrations run once: the first pod takes a PostgreSQL advisory lock, and the second waits for it and finds nothing left to do.
+
+## Step 7: Expose it with an Ingress
+
+```yaml
+# ingress.yaml
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: https-only
+  namespace: moks-cms
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: www-to-apex
+  namespace: moks-cms
+spec:
+  redirectRegex:
+    regex: ^https?://www\.example\.com/(.*)
+    replacement: https://example.com/${1}
+    permanent: true
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: moks-cms
+  namespace: moks-cms
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-staging    # switch to letsencrypt once this works
+    traefik.ingress.kubernetes.io/router.middlewares: moks-cms-https-only@kubernetescrd,moks-cms-www-to-apex@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: [example.com, www.example.com]
+      secretName: moks-cms-tls
+  rules:
+    - host: example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: moks-cms, port: { name: http } }
+    - host: www.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: moks-cms, port: { name: http } }
+```
+
+Two middlewares run in order. `https-only` redirects plain HTTP to HTTPS, and does nothing to a request that is already HTTPS. `www-to-apex` only matches `www`, so the apex passes through untouched. Traefik names a middleware from another resource as `<namespace>-<name>@kubernetescrd`.
+
+Both apply to this Ingress only. When cert-manager renews the certificate, it creates its own short-lived Ingress for the challenge path, which these middlewares do not touch, so Let's Encrypt can still reach the token over plain HTTP.
+
+```bash
+kubectl apply -f ingress.yaml
+kubectl -n moks-cms get certificate -w     # moks-cms-tls: READY True
+```
+
+When the staging certificate is ready (your browser will distrust it, which is expected), change the annotation to `letsencrypt`, delete the staging Secret so cert-manager asks again, and wait for the real one:
+
+```bash
+kubectl -n moks-cms annotate ingress moks-cms cert-manager.io/cluster-issuer=letsencrypt --overwrite
+kubectl -n moks-cms delete secret moks-cms-tls
+kubectl -n moks-cms get certificate -w
+```
+
+:::callout{type="warning" title="Finish /setup straight away"}
+As soon as the Ingress has a certificate, open `https://example.com/setup`, enter `ADMIN_BOOTSTRAP_TOKEN`, and create the admin account. Setup also imports the articles and pages shipped in the image. The page asks for the token, so it is not open, but a fresh install should not wait there: the WordPress site that ran on jithendar.com before Moks CMS was taken over through a first-run window like this one. Then remove the token from the Secret.
+:::
+
+```bash
+kubectl -n moks-cms patch secret moks-cms-env --type=json -p='[{"op":"remove","path":"/data/ADMIN_BOOTSTRAP_TOKEN"}]'
+kubectl -n moks-cms rollout restart deploy/moks-cms
+```
+
+## Step 8: Limit who can talk to what
+
+k3s enforces NetworkPolicy out of the box. Two policies cover the important paths: only Traefik may reach the app, and only the app (and the operator) may reach PostgreSQL:
+
+```yaml
+# netpol.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-from-traefik
+  namespace: moks-cms
+spec:
+  podSelector:
+    matchLabels: { app: moks-cms }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { app.kubernetes.io/name: traefik }
+      ports:
+        - { port: 3000, protocol: TCP }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-from-web
+  namespace: moks-cms
+spec:
+  podSelector:
+    matchLabels: { cnpg.io/cluster: postgres }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: moks-cms }
+      ports:
+        - { port: 5432, protocol: TCP }
+    - from:
+        - podSelector:
+            matchLabels: { cnpg.io/cluster: postgres }   # replication between instances
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: cnpg-system }   # the operator's status checks
+      ports:
+        - { port: 8000, protocol: TCP }
+```
+
+```bash
+kubectl apply -f netpol.yaml
+curl -fsS https://example.com/api/health      # still ok
+kubectl -n moks-cms get cluster postgres     # still healthy
+```
+
+Check the label on your Traefik pods first (`kubectl -n kube-system get pods --show-labels`). If the health check fails after applying, that selector is the first suspect.
+
+## Check the deployment
+
+```bash
+D=https://example.com
+curl -fsS "$D/api/health"                                        # {"status":"ok","version":"<tag>"}
+for p in / /sitemap.xml /feed.xml /robots.txt; do
+  printf '%s %s\n' "$(curl -s -o /dev/null -w '%{http_code}' "$D$p")" "$p"
+done
+curl -s -o /dev/null -w '%{http_code}\n' "$D/no-such-page"        # 404
+curl -s -o /dev/null -w '%{redirect_url}\n' "http://example.com/"            # https://example.com/
+curl -s -o /dev/null -w '%{redirect_url}\n' "https://www.example.com/blog"   # https://example.com/blog
+kubectl -n moks-cms get pods -o wide                             # two web pods, two postgres pods
+```
+
+Then test the thing the cluster is for. Delete a web pod while you watch the site, and promote the database replica by hand:
+
+```bash
+# one web pod: the other keeps serving while Kubernetes replaces it
+kubectl -n moks-cms delete "$(kubectl -n moks-cms get pod -l app=moks-cms -o name | head -1)"
+
+# the database: see which instance is the replica, then promote it (needs the cnpg kubectl plugin)
+kubectl cnpg status postgres -n moks-cms
+kubectl cnpg promote postgres postgres-2 -n moks-cms   # use the replica's name from the status output
+```
+
+Run `curl` against the site in a loop in another terminal while you do this. Deleting a pod should cost no failed requests. The database switchover may cost a few, while connections to the old primary close.
+
+## Releasing and rolling back
+
+:::figure{caption="Figure 2. One extra pod starts, proves it is healthy, then takes over from an old one. A pod that never becomes ready stops the rollout with the old pods still serving."}
+![Five steps: a new pod starts with maxSurge 1 and maxUnavailable 0, applies migrations under an advisory lock, passes its startup probe on /api/health, passes readiness and joins the Service, then an old pod is removed from the Service, sleeps five seconds in preStop and stops. If the startup probe never passes, the rollout stalls and the old pods keep serving.](/images/deploy-moks-cms/deploy-k8s-rollout.svg)
+:::
+
+A release is a new image tag:
+
+```bash
+kubectl -n moks-cms set image deploy/moks-cms web=ghcr.io/your-user/moks-cms:NEW_TAG
+kubectl -n moks-cms rollout status deploy/moks-cms --timeout=5m
+curl -fsS https://example.com/api/health    # "version":"NEW_TAG"
+```
+
+And a rollback is one command, because every revision points at its own tag:
+
+```bash
+kubectl -n moks-cms rollout undo deploy/moks-cms
+kubectl -n moks-cms rollout history deploy/moks-cms
+```
+
+That only works with **immutable tags**. If you deploy `:latest` with `imagePullPolicy: Always`, as jithendar.com did until November 2026, the previous revision is also `:latest`, and `rollout undo` restarts the same broken image. That is why production now deploys every release under its own `pr-<number>` tag.
+
+As on one server, migrations only move forward: the previous image must run on the new schema. Write additive migrations (new nullable columns, new tables) and remove old columns in a later release.
+
+### Let CI deploy, with a narrow key
+
+Give CI a ServiceAccount that can update this one Deployment and watch its rollout, and nothing else. In particular, it cannot read Secrets:
+
+```yaml
+# ci-deployer.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ci-deployer
+  namespace: moks-cms
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ci-deployer
+  namespace: moks-cms
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [moks-cms]
+    verbs: [get, patch]
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ci-deployer
+  namespace: moks-cms
+subjects:
+  - kind: ServiceAccount
+    name: ci-deployer
+    namespace: moks-cms
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ci-deployer
+```
+
+```bash
+kubectl apply -f ci-deployer.yaml
+kubectl -n moks-cms create token ci-deployer --duration=8760h   # store as a CI secret; rotate it yearly
+kubectl auth can-i get secrets -n moks-cms --as=system:serviceaccount:moks-cms:ci-deployer   # no
+```
+
+The CI job then builds and pushes the image, and runs the two `set image` and `rollout status` commands above with that token and the cluster's API address. Keep the API port open only to your CI's addresses, or run the job on a self-hosted runner inside your network.
+
+## Scaling out
+
+Two replicas are enough for a blog. To scale on load, k3s already runs metrics-server, so a HorizontalPodAutoscaler works as is:
+
+```bash
+kubectl -n moks-cms autoscale deploy/moks-cms --cpu-percent=70 --min=2 --max=4
+```
+
+With more than one replica, each pod has its own in-memory caches. An edit in the admin shows on the pod that handled it at once, and on the others when their cache expires. The app can tell the other replicas to clear their caches over Redis or Valkey pub/sub: set `CACHE_BUS_REDIS_URL` to a Redis URL whose user may only `PUBLISH` and `SUBSCRIBE`, and edits show everywhere within about a second. Sessions and rate limits are already in PostgreSQL, so nothing else needs Redis.
+
+## How production differs
+
+jithendar.com runs Moks CMS on k3s too, but its cluster grew into a few things this guide leaves out on purpose:
+
+| This guide | Production |
+| --- | --- |
+| Traefik (bundled) | Istio ingress gateway, behind a cloud load balancer that passes the client address through with the PROXY protocol |
+| HTTP-01 certificate for two names | DNS-01 wildcard certificate through Cloudflare ([how it renews](/blog/lets-encrypt-k3s-cert-manager-automatic-renewal)) |
+| One CloudNativePG cluster per app | One shared CloudNativePG cluster with a PgBouncer pooler, created by Terraform ([the setup](/blog/cloudnativepg-postgres-cluster-minikube-terraform)) |
+| Articles come from the app image | A separate small content image, copied in by an init container, so publishing an article does not rebuild the app |
+| CI updates the image | CI also applies changed manifests on merge |
+
+None of these are needed to run the site well. They exist because the same cluster hosts other applications.
+
+## Troubleshooting
+
+| Symptom | Likely cause | Check |
+| --- | --- | --- |
+| Certificate stuck at `READY False` | DNS not pointing at the node, port 80 closed, or a NetworkPolicy blocking the solver pod | `kubectl -n moks-cms describe certificate moks-cms-tls`, then `kubectl get challenges -A` |
+| Pods `CrashLoopBackOff` right away | A missing variable; the log names it | `kubectl -n moks-cms logs deploy/moks-cms --previous` |
+| Pods never ready, log shows connection errors | `postgres-app` missing (cluster not healthy yet) or blocked by NetworkPolicy | `kubectl -n moks-cms get cluster postgres`, remove `postgres-from-web` briefly |
+| `ImagePullBackOff` | Wrong tag, private image without `registry-pull`, or an image built for the wrong architecture | `kubectl -n moks-cms describe pod <pod>` |
+| Rollout stuck at "1 old replica pending termination" | The new pod is not ready (see above), or `DoNotSchedule` spread on too few nodes | `kubectl -n moks-cms get pods`, `describe` the new pod |
+| Everyone shares one rate limit | Traefik sees the node's address | step 2, `externalTrafficPolicy: Local` |
+| Every page is `noindex` | `APP_ENV` is not `production`, or the domain is not `PRODUCTION_HOST` | page source |
+
+## Where to go next
+
+- [Part 1: One Linux server](/blog/deploy-moks-cms-linux-server-ec2-docker), if a cluster is more than you need.
+- [Part 3: Amazon EKS](/blog/deploy-moks-cms-amazon-eks) runs the same Deployment on a managed control plane, with RDS instead of an in-cluster database and an ALB instead of Traefik.
+- [Istio on minikube](/blog/istio-service-mesh-minikube-features-setup-troubleshooting), if you want the gateway production uses.

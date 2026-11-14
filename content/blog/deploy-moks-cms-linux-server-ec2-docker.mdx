@@ -1,0 +1,597 @@
+---
+title: "Deploy Moks CMS on One Linux Server: EC2, Docker Compose, Caddy and PostgreSQL"
+slug: deploy-moks-cms-linux-server-ec2-docker
+description: "Run Moks CMS, the AI-powered CMS behind jithendar.com, on one EC2 instance or any Linux server: Docker Compose, Caddy, PostgreSQL, backups and releases."
+seoTitle: "Deploy Moks CMS on EC2 with Docker Compose and Caddy"
+seoDescription: "Step by step: an EC2 instance, Docker Compose, Caddy with Let's Encrypt, PostgreSQL 18, nightly backups to S3, one-command releases and rollback."
+author: jithendar-dharmapuri
+category: aws-cloud
+tags: [Moks CMS, AWS, EC2, Docker, Docker Compose, Caddy, PostgreSQL, Next.js, Let's Encrypt, DevOps, Deployment]
+contentType: tutorial
+status: draft
+featuredImage:
+  src: /images/deploy-moks-cms/deploy-server-architecture.png
+  alt: "Moks CMS on one Linux server. DNS points the domain at the EC2 instance's Elastic IP. Docker Compose runs Caddy on ports 80 and 443, which proxies to the Next.js container on port 3000, which uses PostgreSQL on port 5432. CI pushes images to a registry the server pulls from, media goes to R2 or S3, and a nightly pg_dump goes to an S3 bucket."
+  width: 1800
+  height: 1240
+related:
+  - blog/deploy-moks-cms-kubernetes-k3s
+  - blog/deploy-moks-cms-amazon-eks
+  - blog/how-i-built-jithendar-com
+sources:
+  - title: "Next.js: output (standalone)"
+    url: https://nextjs.org/docs/app/api-reference/config/next-config-js/output
+    publisher: Vercel
+  - title: "Install Docker Engine on Ubuntu"
+    url: https://docs.docker.com/engine/install/ubuntu/
+    publisher: Docker
+  - title: "Caddy: Automatic HTTPS"
+    url: https://caddyserver.com/docs/automatic-https
+    publisher: Caddy
+  - title: "postgres: Docker Official Image"
+    url: https://hub.docker.com/_/postgres
+    publisher: Docker Hub
+  - title: "Amazon EC2 instance IAM roles"
+    url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html
+    publisher: Amazon Web Services
+  - title: "AWS Systems Manager Session Manager"
+    url: https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager.html
+    publisher: Amazon Web Services
+---
+<Todo>Draft written from the repository on 2026-11-14 (services/www Dockerfile, .env.example, src/db, minikube/30-jithendar-com.yaml). Not run end to end: before publishing, (1) launch a fresh t4g.medium and follow every step, (2) confirm the Compose file starts on Docker Compose v2 with Postgres 18's volume path, (3) confirm the prices in "What it costs" on the AWS pricing pages, (4) decide whether to make PRODUCTION_HOST configurable first (see "Adapting this guide").</Todo>
+
+Moks CMS is the AI/ML-powered content management system I built, and jithendar.com is the site it runs. Besides posts, pages and an editor, it answers readers' questions from its own articles (Ask the Blog), drafts and reviews articles with an editorial agent crew, ranks SEO work with machine-learning models fed by Search Console, and generates images. This series shows how to deploy it three ways: on one Linux server, on Kubernetes, and on Amazon EKS.
+
+jithendar.com runs Moks CMS on Kubernetes today, but the CMS does not need Kubernetes. Its core is one Next.js server and one PostgreSQL database. Everything else is optional: object storage for media, email, the AI agent service. That makes a single Linux server a perfectly good home for it, and the cheapest one by a wide margin.
+
+This guide puts Moks CMS on one Amazon EC2 instance with Docker Compose, Caddy for HTTPS and PostgreSQL in a container. Only steps 1 and 2 are AWS-specific. On Hetzner, DigitalOcean, a Raspberry Pi or a server under your desk, start at step 3.
+
+::toc
+
+:::callout{type="info" title="Adapting this guide"}
+The Moks CMS source is proprietary, so you cannot clone it. The guide reproduces the files that matter, and they also work for any Next.js app built with `output: "standalone"` that keeps its data in PostgreSQL. Replace `example.com` with your domain throughout. If you run Moks CMS under your own domain, change `PRODUCTION_HOST` in `src/config/site.ts` first: it still names jithendar.com, and the CMS only lets search engines index that host, so on any other domain every page is served as `noindex`.
+:::
+
+:::callout{type="info" title="What about the AI features?"}
+The web app deployed here is the whole CMS: the editor, admin, media library, comments, members, scheduled publishing, and image and video generation (add a `GEMINI_API_KEY`, or set it in the admin). Ask the Blog, the SEO agent and the editorial agent crew run in a second service, the Moks CMS agent, which needs PostgreSQL with pgvector and a Claude API key. This series does not deploy the agent. Everything here works without it, and you can add it later.
+:::
+
+## What you will build
+
+:::figure{caption="Figure 1. One server, three containers. Only Caddy publishes ports; the app and the database talk over the Compose network."}
+![Moks CMS on one Linux server. DNS points the domain at the server. Docker Compose runs Caddy on ports 80 and 443, which proxies to the Next.js container on port 3000, which uses PostgreSQL on port 5432. CI pushes images to a registry the server pulls from, media uploads go to R2 or S3, and a nightly pg_dump is copied to an S3 bucket.](/images/deploy-moks-cms/deploy-server-architecture.svg)
+:::
+
+| Piece | What it does | Why this choice |
+| --- | --- | --- |
+| Caddy 2 | Listens on 80 and 443, gets and renews a Let's Encrypt certificate, proxies to the app | HTTPS with no Certbot, no cron and no separate renewal step |
+| `web` | Moks CMS: the Next.js standalone server (`node server.js`) on port 3000 | The same image jithendar.com runs on Kubernetes |
+| `postgres` | PostgreSQL 18 with its data in a named volume | jithendar.com runs PostgreSQL 18; the CMS itself needs no extensions |
+| Object storage | Media uploads (Cloudflare R2, configured in Admin → Storage) | Keeps the server stateless apart from the database |
+| S3 bucket | Nightly database dumps | The server's disk is not a backup |
+
+## What the app needs to run
+
+Before any infrastructure, it helps to know exactly what the Moks CMS container expects. These come from its `.env.example` and the checks in its source.
+
+| Variable | Required | What it is |
+| --- | --- | --- |
+| `APP_ENV` | yes | `production`. Anything else is never indexable and allows development fallbacks. |
+| `SITE_URL` | yes | `https://example.com`, no trailing slash. Sign-in only accepts requests from this origin. |
+| `DATABASE_URL` | yes | `postgres://user:password@host:5432/db`. Without it in production the app refuses to start. |
+| `BETTER_AUTH_SECRET` | yes | Signs sessions. Long random string. |
+| `SETTINGS_ENCRYPTION_KEY` | yes | 32+ characters. Encrypts the credentials you later save in the admin (storage, email, social sign-in). **Back it up with the database**: without it those credentials cannot be read. |
+| `ADMIN_BOOTSTRAP_TOKEN` | first run | Unlocks `/setup`, which creates the first admin account. |
+| `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | recommended | Cloudflare Turnstile. The contact form fails closed without them. |
+| `SMTP_URL`, `MAIL_FROM` | optional | Email until you configure it in Admin → Email. |
+| `CACHE_BUS_REDIS_URL` | optional | Only matters with more than one app replica. |
+
+Three behaviours shape the rest of the guide:
+
+- **Migrations run on start.** The app applies pending SQL migrations when it boots, under a PostgreSQL advisory lock, so there is no separate migration step and two replicas cannot apply the same one twice.
+- **`GET /api/health`** returns `{"status":"ok","version":"<commit>"}` without touching the database. The version comes from the `GIT_SHA` build argument, which is how a release script knows the new build is live.
+- **The container can run with a read-only root filesystem.** It only writes to `/tmp` and `/app/.next/cache` (optimised images), and both can be throwaway.
+
+## Prerequisites
+
+- A domain whose DNS you can edit.
+- An AWS account and the AWS CLI v2, signed in, if you follow steps 1 and 2.
+- A container registry. GitHub Container Registry (GHCR) is the simplest; Amazon ECR works too.
+- Docker with Buildx on the machine that builds the image (your laptop or CI), not necessarily on the server.
+
+Set a few variables once. The commands below use them:
+
+```bash
+export AWS_REGION=us-east-1
+export DOMAIN=example.com
+export MY_IP=$(curl -s https://checkip.amazonaws.com)
+```
+
+## Step 1: Launch the EC2 instance
+
+A `t4g.medium` (2 Graviton vCPUs, 4 GiB) runs the app and PostgreSQL with room to spare. The app's Kubernetes limits are 512 MiB requested and 1.5 GiB at most, and a small PostgreSQL needs a few hundred MiB. A `t4g.small` (2 GiB) works for a quiet site, but leaves no headroom.
+
+Create a security group that allows HTTP and HTTPS from anywhere and SSH only from your address:
+
+```bash
+VPC_ID=$(aws ec2 describe-vpcs --filters Name=is-default,Values=true \
+  --query 'Vpcs[0].VpcId' --output text)
+
+SG_ID=$(aws ec2 create-security-group --group-name moks-cms-web \
+  --description "Moks CMS web server" --vpc-id "$VPC_ID" \
+  --query GroupId --output text)
+
+aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol tcp --port 80  --cidr 0.0.0.0/0
+aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol tcp --port 443 --cidr 0.0.0.0/0
+aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol udp --port 443 --cidr 0.0.0.0/0  # HTTP/3
+aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol tcp --port 22  --cidr "$MY_IP/32"
+```
+
+Give the instance an IAM role. It lets the server write backups to S3 (step 10) and lets you reach it through Session Manager, so port 22 can be closed later:
+
+```bash
+aws iam create-role --role-name moks-cms-web \
+  --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+
+aws iam attach-role-policy --role-name moks-cms-web \
+  --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+aws iam create-instance-profile --instance-profile-name moks-cms-web
+aws iam add-role-to-instance-profile --instance-profile-name moks-cms-web --role-name moks-cms-web
+```
+
+Launch Ubuntu 24.04 for arm64. The AMI ID comes from Canonical's public SSM parameter, so you never copy an ID that is out of date. `HttpTokens=required` turns on IMDSv2 only:
+
+```bash
+AMI_ID=$(aws ssm get-parameter \
+  --name /aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id \
+  --query Parameter.Value --output text)
+
+INSTANCE_ID=$(aws ec2 run-instances \
+  --image-id "$AMI_ID" --instance-type t4g.medium \
+  --key-name your-key-pair \
+  --security-group-ids "$SG_ID" \
+  --iam-instance-profile Name=moks-cms-web \
+  --metadata-options HttpTokens=required \
+  --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":30,"VolumeType":"gp3","Encrypted":true}}]' \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=moks-cms-web}]' \
+  --query 'Instances[0].InstanceId' --output text)
+
+aws ec2 wait instance-running --instance-ids "$INSTANCE_ID"
+```
+
+Give it a fixed address. An instance's public IP changes when it stops and starts; an Elastic IP does not:
+
+```bash
+ALLOC_ID=$(aws ec2 allocate-address --domain vpc --query AllocationId --output text)
+aws ec2 associate-address --instance-id "$INSTANCE_ID" --allocation-id "$ALLOC_ID"
+PUBLIC_IP=$(aws ec2 describe-addresses --allocation-ids "$ALLOC_ID" --query 'Addresses[0].PublicIp' --output text)
+echo "$PUBLIC_IP"
+```
+
+## Step 2: Point DNS at the server
+
+Create two A records, for the apex and for `www`, pointing at `$PUBLIC_IP`. In Route 53:
+
+```bash
+ZONE_ID=$(aws route53 list-hosted-zones-by-name --dns-name "$DOMAIN" \
+  --query 'HostedZones[0].Id' --output text)
+
+aws route53 change-resource-record-sets --hosted-zone-id "$ZONE_ID" --change-batch "{
+  \"Changes\": [
+    {\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"$DOMAIN\",\"Type\":\"A\",\"TTL\":300,\"ResourceRecords\":[{\"Value\":\"$PUBLIC_IP\"}]}},
+    {\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"www.$DOMAIN\",\"Type\":\"A\",\"TTL\":300,\"ResourceRecords\":[{\"Value\":\"$PUBLIC_IP\"}]}}
+  ]}"
+```
+
+If the domain is on Cloudflare, create the same two records and leave them **DNS only** (grey cloud) for now. Two things break behind Cloudflare's proxy until you configure for it: Caddy's HTTP challenge when Cloudflare's own TLS mode is wrong, and the app's per-visitor rate limits. The app trusts the right-most `X-Forwarded-For` address, which behind the proxy is a Cloudflare edge, so every visitor would share one limit.
+
+Check before moving on:
+
+```bash
+dig +short "$DOMAIN" "www.$DOMAIN"   # both print the Elastic IP
+```
+
+## Step 3: Install Docker on the server
+
+Connect with SSH (`ssh ubuntu@$PUBLIC_IP`) or Session Manager (`aws ssm start-session --target $INSTANCE_ID`), then install Docker Engine and the Compose plugin from Docker's repository:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl unzip
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+  https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo usermod -aG docker ubuntu   # log out and back in for this to apply
+```
+
+Cap Docker's logs. The default `json-file` driver never rotates, and a busy site fills a 30 GB disk:
+
+```bash
+sudo tee /etc/docker/daemon.json > /dev/null <<'JSON'
+{ "log-driver": "json-file", "log-opts": { "max-size": "10m", "max-file": "3" } }
+JSON
+sudo systemctl restart docker
+```
+
+Install the AWS CLI too. The backup script uses it:
+
+```bash
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscliv2.zip
+unzip -q /tmp/awscliv2.zip -d /tmp && sudo /tmp/aws/install
+```
+
+On another distribution, Docker's [install pages](https://docs.docker.com/engine/install/) cover Debian, Fedora, RHEL and others. Everything after this step is the same.
+
+## Step 4: Build and push the image
+
+The Moks CMS Dockerfile is a three-stage build: install dependencies, run `next build`, then copy only the standalone output into a small runtime image that runs as a non-root user.
+
+```dockerfile
+# services/www/Dockerfile (abridged)
+FROM node:26-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund --prefer-offline
+
+FROM node:26-alpine AS build
+WORKDIR /app
+ARG APP_ENV=production
+ENV APP_ENV=$APP_ENV NEXT_TELEMETRY_DISABLED=1
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN --mount=type=cache,target=/app/.next/cache npm run build
+
+FROM node:26-alpine AS runtime
+WORKDIR /app
+ARG GIT_SHA=dev
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=3000 GIT_SHA=$GIT_SHA
+COPY --from=build --chown=1000:1000 /app/.next/standalone ./
+COPY --from=build --chown=1000:1000 /app/.next/static ./.next/static
+COPY --from=build --chown=1000:1000 /app/public ./public
+USER 1000:1000
+EXPOSE 3000
+CMD ["node", "server.js"]
+```
+
+The standalone output also carries the `content/` folder and the SQL migrations (`outputFileTracingIncludes` in `next.config.ts`), so the image is complete on its own.
+
+Build on your laptop or in CI, not on the server: `next build` for a site this size wants more memory than a small instance has spare. Match the server's architecture. Graviton is `linux/arm64`; most other servers are `linux/amd64`. Tag every image with the commit, and pass the same value as `GIT_SHA` so the health endpoint reports it:
+
+```bash
+TAG=$(git rev-parse --short=12 HEAD)
+IMAGE_REPO=ghcr.io/your-user/moks-cms
+
+echo "$GHCR_TOKEN" | docker login ghcr.io -u your-user --password-stdin
+docker buildx build services/www \
+  --platform linux/arm64 \
+  --build-arg GIT_SHA="$TAG" \
+  -t "$IMAGE_REPO:$TAG" \
+  --push
+```
+
+`GHCR_TOKEN` is a GitHub token with `write:packages`. On the server, log in once with a token that only has `read:packages`:
+
+```bash
+echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u your-user --password-stdin
+```
+
+:::callout{type="tip" title="Using Amazon ECR instead"}
+ECR login tokens expire after 12 hours, so a one-time `docker login` on the server stops working. Install the credential helper (`sudo apt-get install -y amazon-ecr-credential-helper`), add `{"credHelpers": {"<account>.dkr.ecr.<region>.amazonaws.com": "ecr-login"}}` to `~/.docker/config.json`, and attach `AmazonEC2ContainerRegistryReadOnly` to the instance role. Docker then fetches fresh credentials on every pull.
+:::
+
+## Step 5: Create the configuration
+
+Everything lives in `/opt/moks-cms` on the server. Generate the secrets there, so they never pass through your shell history on another machine:
+
+```bash
+sudo mkdir -p /opt/moks-cms && sudo chown ubuntu:ubuntu /opt/moks-cms
+cd /opt/moks-cms
+
+cat > .env <<EOF
+IMAGE_REPO=ghcr.io/your-user/moks-cms
+IMAGE_TAG=replace-with-your-first-tag
+DOMAIN=example.com
+SITE_URL=https://example.com
+POSTGRES_PASSWORD=$(openssl rand -hex 24)
+BETTER_AUTH_SECRET=$(openssl rand -hex 32)
+SETTINGS_ENCRYPTION_KEY=$(openssl rand -hex 32)
+ADMIN_BOOTSTRAP_TOKEN=$(openssl rand -hex 24)
+TURNSTILE_SITE_KEY=
+TURNSTILE_SECRET_KEY=
+BACKUP_BUCKET=example-com-db-backups
+EOF
+chmod 600 .env
+```
+
+Hex secrets are deliberate: the database password ends up inside `DATABASE_URL`, and hex never needs URL escaping. Copy `.env` into your password manager now. If the server is lost, the database dump alone does not give you back the credentials stored in the admin; you also need `SETTINGS_ENCRYPTION_KEY`.
+
+## Step 6: Write the Compose file
+
+```yaml
+# /opt/moks-cms/compose.yaml
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: moks
+      POSTGRES_USER: moks
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      # PostgreSQL 18 images keep data under a versioned folder inside this path.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U moks -d moks"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: *logging
+
+  web:
+    image: ${IMAGE_REPO}:${IMAGE_TAG}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      SITE_URL: ${SITE_URL}
+      DATABASE_URL: postgres://moks:${POSTGRES_PASSWORD}@postgres:5432/moks
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
+      SETTINGS_ENCRYPTION_KEY: ${SETTINGS_ENCRYPTION_KEY}
+      ADMIN_BOOTSTRAP_TOKEN: ${ADMIN_BOOTSTRAP_TOKEN}
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY}
+    # The same hardening as the Kubernetes pod: read-only root, no capabilities, non-root user.
+    read_only: true
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:size=64m
+      - /app/.next/cache:size=256m
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      start_period: 60s
+      retries: 3
+    logging: *logging
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [web]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data      # certificates and the ACME account: keep this volume
+      - caddy_config:/config
+    logging: *logging
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+```
+
+A few choices worth calling out:
+
+- **Only Caddy publishes ports.** PostgreSQL and the app are reachable only on the Compose network, so the security group is the whole firewall story.
+- **The image cache is a tmpfs.** Docker creates tmpfs mounts world-writable, so user 1000 can write to it, and a restart starts it empty, just like the `emptyDir` the Kubernetes pod uses.
+- **`depends_on` with `service_healthy`** keeps the app from starting before PostgreSQL accepts connections, which would otherwise fail the first boot's migrations.
+
+## Step 7: Configure Caddy
+
+```caddy
+# /opt/moks-cms/Caddyfile
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy web:3000
+}
+
+www.{$DOMAIN} {
+	redir https://{$DOMAIN}{uri} permanent
+}
+```
+
+That is the entire HTTPS setup. On first start, Caddy asks Let's Encrypt for certificates for both names, answers the challenge on port 80 or 443, stores the result in `caddy_data`, and renews well before expiry. It also redirects HTTP to HTTPS on its own. `reverse_proxy` adds the visitor's address to `X-Forwarded-For`, which is what the app's rate limiter reads.
+
+## Step 8: Start it and finish the setup
+
+Set `IMAGE_TAG` in `.env` to the tag you pushed, then:
+
+```bash
+cd /opt/moks-cms
+docker compose pull
+docker compose up -d
+docker compose logs -f web
+```
+
+The first boot applies every migration. Wait until the logs stop moving and `docker compose ps` shows `web` as `healthy`.
+
+:::callout{type="warning" title="Finish /setup straight away"}
+Until an admin account exists, `/setup` is the way in. It asks for `ADMIN_BOOTSTRAP_TOKEN`, so it is not open to anyone, but do not leave a fresh install sitting there. The WordPress site that ran on jithendar.com before Moks CMS was taken over through exactly this kind of window.
+:::
+
+Open `https://example.com/setup`, enter the token from `.env`, and create your account. Setup also imports the articles and pages that ship in the image's `content/` folder. After that, `/setup` disappears for good. Remove `ADMIN_BOOTSTRAP_TOKEN` from `.env` and run `docker compose up -d` once more.
+
+Then configure the rest in the admin rather than in files: Storage (R2 bucket for media), Email, and Integrations. Those settings are stored encrypted in the database.
+
+## Step 9: Check the deployment
+
+These are the checks jithendar.com's smoke test runs after every release, cut down for one server:
+
+```bash
+D=https://example.com
+curl -fsS "$D/api/health"                                        # {"status":"ok","version":"<your tag>"}
+curl -s -o /dev/null -w '%{http_code}\n' "$D/"                    # 200
+curl -s -o /dev/null -w '%{http_code}\n' "$D/sitemap.xml"         # 200
+curl -s -o /dev/null -w '%{http_code}\n' "$D/feed.xml"            # 200
+curl -s -o /dev/null -w '%{http_code}\n' "$D/no-such-page"        # 404
+curl -s -o /dev/null -w '%{redirect_url}\n' "http://example.com/"     # https://example.com/
+curl -s -o /dev/null -w '%{redirect_url}\n' "https://www.example.com/blog"  # https://example.com/blog
+curl -s "$D/robots.txt" | grep Sitemap
+```
+
+If the homepage source contains `<meta name="robots" content="noindex`, either `APP_ENV` is not `production` or the domain does not match `PRODUCTION_HOST` (see "Adapting this guide").
+
+## Step 10: Back up the database
+
+The EBS volume can be snapshotted, but a snapshot of a running database is only crash-consistent. A logical dump is portable, small and restores anywhere.
+
+Create a private, versioned bucket that deletes dumps after 30 days, and let the instance role write to it and nothing else:
+
+```bash
+BUCKET=example-com-db-backups
+aws s3api create-bucket --bucket "$BUCKET" --region "$AWS_REGION"   # outside us-east-1, add --create-bucket-configuration LocationConstraint=$AWS_REGION
+aws s3api put-public-access-block --bucket "$BUCKET" \
+  --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+aws s3api put-bucket-versioning --bucket "$BUCKET" --versioning-configuration Status=Enabled
+aws s3api put-bucket-lifecycle-configuration --bucket "$BUCKET" --lifecycle-configuration '{
+  "Rules": [{"ID":"expire-dumps","Status":"Enabled","Filter":{"Prefix":"postgres/"},
+             "Expiration":{"Days":30},"NoncurrentVersionExpiration":{"NoncurrentDays":7}}]}'
+
+aws iam put-role-policy --role-name moks-cms-web --policy-name db-backups --policy-document "{
+  \"Version\":\"2012-10-17\",
+  \"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"s3:PutObject\",\"Resource\":\"arn:aws:s3:::$BUCKET/postgres/*\"}]}"
+```
+
+The script streams `pg_dump` straight into S3, so nothing large lands on the disk. `pipefail` makes a failed dump fail the job instead of uploading an empty file:
+
+```bash
+#!/usr/bin/env bash
+# /opt/moks-cms/backup.sh
+set -euo pipefail
+cd /opt/moks-cms
+BACKUP_BUCKET=$(grep '^BACKUP_BUCKET=' .env | cut -d= -f2)
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+docker compose exec -T postgres pg_dump -U moks -d moks -Fc \
+  | aws s3 cp - "s3://${BACKUP_BUCKET}/postgres/moks-cms-${stamp}.dump"
+echo "backup ok: moks-cms-${stamp}.dump"
+```
+
+```bash
+chmod +x /opt/moks-cms/backup.sh
+/opt/moks-cms/backup.sh   # run it once by hand
+echo '0 3 * * * ubuntu /opt/moks-cms/backup.sh >> /var/log/moks-cms-backup.log 2>&1' \
+  | sudo tee /etc/cron.d/moks-cms-backup
+sudo touch /var/log/moks-cms-backup.log && sudo chown ubuntu /var/log/moks-cms-backup.log
+```
+
+A backup you have never restored is a hope. Restore into the running database like this (the app is stopped while it runs):
+
+```bash
+cd /opt/moks-cms
+docker compose stop web
+aws s3 cp "s3://example-com-db-backups/postgres/moks-cms-20261114T030000Z.dump" - \
+  | docker compose exec -T postgres pg_restore -U moks -d moks --clean --if-exists --no-owner
+docker compose start web
+```
+
+Moks CMS also has its own content backups in Admin → Operations → Backups, written to R2. They cover posts, pages, comments and settings, not accounts' passwords. Use both: the dump is the disaster-recovery copy, and the admin backup is the convenient undo.
+
+## Releasing a new version
+
+:::figure{caption="Figure 2. A release replaces only the web container. If the new build does not report healthy, the previous tag goes back."}
+![Five steps: build the image tagged with the commit, push it, set the new tag and run docker compose up, migrations run on start under an advisory lock, then the health check calls /api/health. If the check fails, set the previous tag and run compose up again.](/images/deploy-moks-cms/deploy-server-release.svg)
+:::
+
+A release is a new tag in `.env` and `docker compose up -d web`. The script below does that, waits until `/api/health` reports the new version, and puts the old tag back if it never does:
+
+```bash
+#!/usr/bin/env bash
+# /opt/moks-cms/release.sh <tag>
+set -euo pipefail
+cd /opt/moks-cms
+new="$1"
+old=$(grep '^IMAGE_TAG=' .env | cut -d= -f2)
+site=$(grep '^SITE_URL=' .env | cut -d= -f2)
+
+sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${new}/" .env
+docker compose pull web
+docker compose up -d web
+
+for _ in $(seq 1 60); do
+  if curl -fsS "$site/api/health" | grep -q "\"version\":\"${new}\""; then
+    echo "live: ${new}"
+    exit 0
+  fi
+  sleep 2
+done
+
+echo "health check failed; rolling back to ${old}" >&2
+sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${old}/" .env
+docker compose up -d web
+exit 1
+```
+
+Run it from CI after the push. Session Manager keeps port 22 closed:
+
+```bash
+aws ssm send-command --instance-ids "$INSTANCE_ID" \
+  --document-name AWS-RunShellScript \
+  --parameters "commands=[\"sudo -u ubuntu /opt/moks-cms/release.sh $TAG\"]"
+```
+
+Two limits to know:
+
+- **One container means a few seconds of 502s per release.** Caddy has nothing to send requests to while the new container starts. For a blog that is usually fine; if it is not, the [Kubernetes version](/blog/deploy-moks-cms-kubernetes-k3s) rolls pods one at a time with no gap.
+- **Migrations only move forward.** Rolling back the image does not roll back the schema. The project writes migrations so the previous image still runs on the new schema (new columns are nullable, nothing is renamed in place). If you write your own, keep to that rule, or a rollback after a migration will fail.
+
+## Hardening checklist
+
+- [ ] Close port 22 in the security group once Session Manager works (`aws ssm start-session --target $INSTANCE_ID`).
+- [ ] Turn on automatic security updates: `sudo apt-get install -y unattended-upgrades && sudo dpkg-reconfigure -plow unattended-upgrades`.
+- [ ] Remove `ADMIN_BOOTSTRAP_TOKEN` from `.env` after setup.
+- [ ] Set the Turnstile keys, so the contact form works and resists bots.
+- [ ] Add an alarm for disk usage and for the instance status check (CloudWatch, or any uptime monitor pointed at `/api/health`).
+- [ ] Restore a backup into a scratch instance once a quarter.
+- [ ] Keep `.env` in a password manager, not only on the server.
+
+## Troubleshooting
+
+| Symptom | Likely cause | Check |
+| --- | --- | --- |
+| Caddy logs `challenge failed` or no certificate | DNS does not point at the server yet, port 80 or 443 is closed, or Cloudflare's proxy is on | `dig +short example.com`, the security group, `docker compose logs caddy` |
+| `web` keeps restarting | A required variable is missing; the log names it (for example `BETTER_AUTH_SECRET is required in production.`) | `docker compose logs web` |
+| `web` exits with `DATABASE_URL is required in production.` | The variable is empty or misspelled in `compose.yaml` | `docker compose config` |
+| Sign-in fails or loops back to the sign-in page | `SITE_URL` is not exactly the address in the browser (scheme, host, no trailing slash) | `.env` |
+| Every page is `noindex` | `APP_ENV` is not `production`, or the domain is not `PRODUCTION_HOST` | page source, `src/config/site.ts` |
+| Everyone hits the rate limit together | A proxy in front (such as Cloudflare) is the right-most `X-Forwarded-For` hop | put DNS back to DNS only, or terminate at Cloudflare and configure the trusted proxy chain |
+| 502 for a minute after a release | The new container is still starting or applying migrations | `docker compose ps`, `docker compose logs web` |
+
+## What it costs
+
+Approximate on-demand prices in `us-east-1`, checked against the AWS pricing pages when you deploy:
+
+| Item | Monthly |
+| --- | --- |
+| `t4g.medium` instance | about $24.50 |
+| 30 GB gp3 volume | about $2.40 |
+| Public IPv4 address (Elastic IP) | about $3.65 |
+| S3 for dumps, Route 53 zone | about $1 |
+| **Total** | **about $32** |
+
+A one-year Savings Plan or reserved instance cuts the instance line by roughly a third. For comparison, the [EKS version](/blog/deploy-moks-cms-amazon-eks) of the same site costs several times as much, and what you buy with it is redundancy, not speed.
+
+## Where to go next
+
+- [Part 2: Deploy Moks CMS on Kubernetes (k3s)](/blog/deploy-moks-cms-kubernetes-k3s) adds two replicas, zero-downtime rollouts and a replicated database, still on servers you own.
+- [Part 3: Deploy Moks CMS on Amazon EKS](/blog/deploy-moks-cms-amazon-eks) moves the same workload to a managed cluster with RDS.
+- [How I built jithendar.com](/blog/how-i-built-jithendar-com) explains what Moks CMS is made of, from the site it was built for.

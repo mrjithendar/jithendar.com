@@ -1,0 +1,1131 @@
+# Medium (part 1): API integration, data processing, error handling, decorators and asyncio.
+- slug: lru-cache
+  title: Build an LRU cache
+  difficulty: medium
+  roles: [backend-engineer, software-development-engineer, python-developer]
+  topics: [caching, classes, complexity]
+  minutes: 20
+  entrypoint: LRUCache
+  description: |
+    Implement a class `LRUCache(capacity)` with:
+
+    - `get(key)` → the value, or `-1` if the key is missing. A hit makes the key most recently used.
+    - `put(key, value)` → inserts or updates; when the cache is over capacity, evict the **least recently
+      used** key.
+
+    Both operations must be O(1) on average. The harness creates your cache and replays a list of
+    operations, collecting the result of every `get` (and `None` for `put`).
+  io: { input: "capacity: int, ops: list of ['get', key] or ['put', key, value]", output: "list of results" }
+  prelude: |
+    def __harness__(cls, capacity, ops):
+        cache = cls(capacity)
+        out = []
+        for op in ops:
+            if op[0] == "get":
+                out.append(cache.get(op[1]))
+            else:
+                out.append(cache.put(op[1], op[2]))
+        return out
+  starter: |
+    class LRUCache:
+        def __init__(self, capacity: int):
+            self.capacity = capacity
+            self.data = {}
+
+        def get(self, key):
+            return self.data.get(key, -1)
+
+        def put(self, key, value) -> None:
+            self.data[key] = value
+  hints:
+    - "You need both fast lookup (a hash map) and a fast way to know the oldest key (an ordering)."
+    - "collections.OrderedDict keeps insertion order and has move_to_end() and popitem(last=False) in O(1)."
+    - |
+      get: if key not in d: return -1; d.move_to_end(key); return d[key]
+      put: d[key] = value; d.move_to_end(key); if len(d) > capacity: d.popitem(last=False)
+  solution:
+    code: |
+      from collections import OrderedDict
+
+      class LRUCache:
+          def __init__(self, capacity: int):
+              self.capacity = capacity
+              self.items: OrderedDict = OrderedDict()
+
+          def get(self, key):
+              if key not in self.items:
+                  return -1
+              self.items.move_to_end(key)
+              return self.items[key]
+
+          def put(self, key, value) -> None:
+              self.items[key] = value
+              self.items.move_to_end(key)
+              if len(self.items) > self.capacity:
+                  self.items.popitem(last=False)
+    explanation: |
+      OrderedDict is a hash map plus a doubly linked list. The end of the list is "most recent"; touching a
+      key moves it there, and eviction pops from the front.
+    time: O(1) per operation
+    space: O(capacity)
+    alternatives: ["A dict plus a hand-written doubly linked list (what OrderedDict does internally)", "Plain dict: pop and re-insert to move a key to the end (dicts are ordered since 3.7)"]
+    edge_cases: ["Updating an existing key refreshes it", "Capacity 1", "get on a missing key does not change order"]
+    production: ["functools.lru_cache for function results", "Thread safety needs a lock around both operations", "Distributed caches (Redis) use approximate LRU"]
+    alternative_code:
+      - |
+        class LRUCache:
+            def __init__(self, capacity: int):
+                self.capacity = capacity
+                self.d = {}
+
+            def get(self, key):
+                if key not in self.d:
+                    return -1
+                value = self.d.pop(key)
+                self.d[key] = value
+                return value
+
+            def put(self, key, value) -> None:
+                self.d.pop(key, None)
+                self.d[key] = value
+                if len(self.d) > self.capacity:
+                    del self.d[next(iter(self.d))]
+  examples:
+    - args: [2, [["put", "a", 1], ["put", "b", 2], ["get", "a"], ["put", "c", 3], ["get", "b"], ["get", "c"]]]
+      expected: [null, null, 1, null, -1, 3]
+      explanation: "Reading 'a' makes 'b' the least recently used, so adding 'c' evicts 'b'."
+  hidden:
+    - { args: [1, [["put", 1, 1], ["put", 2, 2], ["get", 1], ["get", 2]]] }
+    - { args: [2, [["put", "x", 1], ["put", "x", 5], ["put", "y", 2], ["put", "z", 3], ["get", "x"], ["get", "y"]]] }
+    - { args: [3, [["get", "nope"], ["put", "a", 1], ["get", "a"], ["get", "a"]]] }
+
+- slug: retry-decorator
+  title: Write a retry decorator
+  difficulty: medium
+  roles: [python-developer, backend-engineer, site-reliability-engineer]
+  topics: [decorators, retries, exceptions]
+  minutes: 20
+  entrypoint: retry
+  description: |
+    Write a decorator factory `retry(times, exceptions)`:
+
+    - The decorated function is called up to `times` times in total.
+    - If it raises an exception that is an instance of one of `exceptions` (a tuple of exception classes),
+      try again; any other exception propagates immediately.
+    - If every attempt fails, re-raise the **last** exception.
+    - Preserve the wrapped function's `__name__` (use functools.wraps).
+
+    The harness decorates a flaky function that fails a given number of times and reports what happened.
+  io: { input: "times: int, exceptions: tuple[type[BaseException], ...]", output: "a decorator" }
+  prelude: |
+    class TransientError(Exception):
+        pass
+
+    class FatalError(Exception):
+        pass
+
+    def __harness__(retry, times, failures, kind):
+        calls = {"n": 0}
+        error = {"transient": TransientError, "fatal": FatalError}[kind]
+
+        def flaky(x):
+            """Fails `failures` times, then returns x * 2."""
+            calls["n"] += 1
+            if calls["n"] <= failures:
+                raise error(f"attempt {calls['n']}")
+            return x * 2
+
+        wrapped = retry(times, (TransientError,))(flaky)
+        try:
+            result = wrapped(21)
+            outcome = {"result": result}
+        except Exception as exc:
+            outcome = {"raised": type(exc).__name__, "message": str(exc)}
+        outcome["calls"] = calls["n"]
+        outcome["name"] = getattr(wrapped, "__name__", None)
+        return outcome
+  starter: |
+    import functools
+
+    def retry(times: int, exceptions: tuple):
+        def decorator(fn):
+            return fn
+        return decorator
+  hints:
+    - "A decorator factory is a function that returns a decorator, which returns a wrapper."
+    - "Inside the wrapper, loop `times` times, call fn in try/except exceptions, remember the last exception, re-raise it after the loop."
+    - |
+      def decorator(fn):
+          @functools.wraps(fn)
+          def wrapper(*args, **kwargs):
+              for attempt in range(times):
+                  try: return fn(*args, **kwargs)
+                  except exceptions as exc: last = exc
+              raise last
+          return wrapper
+  solution:
+    code: |
+      import functools
+
+      def retry(times: int, exceptions: tuple):
+          def decorator(fn):
+              @functools.wraps(fn)
+              def wrapper(*args, **kwargs):
+                  last: BaseException | None = None
+                  for _ in range(times):
+                      try:
+                          return fn(*args, **kwargs)
+                      except exceptions as exc:
+                          last = exc
+                  assert last is not None
+                  raise last
+              return wrapper
+          return decorator
+    explanation: |
+      `except exceptions` accepts a tuple, so only the listed types are retried and everything else
+      propagates on the first attempt. `functools.wraps` copies `__name__`, `__doc__` and friends.
+    time: O(times) calls
+    space: O(1)
+    alternatives: ["tenacity or backoff libraries in production code"]
+    edge_cases: ["Success on the first try makes one call", "A non-retryable exception is raised without retrying", "times = 1 means no retries"]
+    production: ["Add backoff with jitter between attempts", "Only retry idempotent operations", "Log each retry with the attempt number"]
+  examples:
+    - { args: [3, 2, "transient"], expected: { result: 42, calls: 3, name: "flaky" }, explanation: "Fails twice, succeeds on the third call." }
+    - { args: [3, 5, "transient"], expected: { raised: "TransientError", message: "attempt 3", calls: 3, name: "flaky" } }
+  hidden:
+    - { args: [3, 1, "fatal"] }
+    - { args: [1, 0, "transient"] }
+    - { args: [5, 4, "transient"] }
+
+- slug: timer-context-manager
+  title: Time code with a context manager
+  difficulty: medium
+  roles: [python-developer, site-reliability-engineer, backend-engineer]
+  topics: [context-managers, classes, exceptions]
+  minutes: 15
+  entrypoint: Timer
+  description: |
+    Write a context manager class `Timer(clock, sink, name)`:
+
+    - On enter, read the start time from `clock()` (a function returning seconds).
+    - On exit, read the time again and call `sink(name, elapsed_ms, ok)` where `elapsed_ms` is rounded to
+      one decimal and `ok` is False if the block raised.
+    - It must **not** swallow exceptions.
+    - `with Timer(...) as t:` binds the Timer itself; after the block, `t.elapsed_ms` holds the result.
+
+    The harness supplies a fake clock so results are deterministic.
+  io: { input: "clock: () -> float, sink: (name, ms, ok) -> None, name: str", output: "a context manager" }
+  prelude: |
+    def __harness__(Timer, ticks, fail):
+        times = iter(ticks)
+        records = []
+        clock = lambda: next(times)
+        try:
+            with Timer(clock, lambda n, ms, ok: records.append([n, ms, ok]), "job") as t:
+                if fail:
+                    raise RuntimeError("boom")
+            propagated = False
+        except RuntimeError:
+            propagated = True
+        return {"records": records, "elapsed": getattr(t, "elapsed_ms", None), "propagated": propagated}
+  starter: |
+    class Timer:
+        def __init__(self, clock, sink, name):
+            self.clock, self.sink, self.name = clock, sink, name
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return True
+  hints:
+    - "__exit__ receives the exception (or None) and returning True would swallow it."
+    - "Store the start in __enter__, compute and report in __exit__, and return False."
+    - |
+      def __enter__(self): self.start = self.clock(); return self
+      def __exit__(self, exc_type, exc, tb):
+          self.elapsed_ms = round((self.clock() - self.start) * 1000, 1)
+          self.sink(self.name, self.elapsed_ms, exc_type is None); return False
+  solution:
+    code: |
+      class Timer:
+          def __init__(self, clock, sink, name):
+              self.clock, self.sink, self.name = clock, sink, name
+              self.elapsed_ms = None
+
+          def __enter__(self):
+              self.start = self.clock()
+              return self
+
+          def __exit__(self, exc_type, exc, tb):
+              self.elapsed_ms = round((self.clock() - self.start) * 1000, 1)
+              self.sink(self.name, self.elapsed_ms, exc_type is None)
+              return False
+    explanation: Returning a falsy value from __exit__ lets the exception continue after the timing is recorded — measuring failures matters as much as successes.
+    time: O(1)
+    space: O(1)
+    alternatives: ["contextlib.contextmanager with try/finally around yield"]
+    edge_cases: ["The block raises", "Zero elapsed time"]
+    production: ["Use time.perf_counter (monotonic) not time.time", "OpenTelemetry spans are context managers that do this and more"]
+    alternative_code:
+      - |
+        class Timer:
+            def __init__(self, clock, sink, name):
+                self.clock, self.sink, self.name, self.elapsed_ms = clock, sink, name, None
+
+            def __enter__(self):
+                self._t0 = self.clock()
+                return self
+
+            def __exit__(self, *exc):
+                self.elapsed_ms = round((self.clock() - self._t0) * 1000, 1)
+                self.sink(self.name, self.elapsed_ms, exc[0] is None)
+  examples:
+    - { args: [[10.0, 10.25], false], expected: { records: [["job", 250.0, true]], elapsed: 250.0, propagated: false } }
+    - { args: [[1.0, 1.0005], true], expected: { records: [["job", 0.5, false]], elapsed: 0.5, propagated: true } }
+  hidden:
+    - { args: [[5, 5], false] }
+    - { args: [[0, 3.14159], true] }
+
+- slug: token-bucket-rate-limiter
+  title: Token bucket rate limiter
+  difficulty: medium
+  roles: [backend-engineer, platform-engineer, site-reliability-engineer]
+  topics: [rate-limiting, simulation]
+  minutes: 20
+  entrypoint: token_bucket
+  description: |
+    A token bucket holds up to `capacity` tokens and starts full. Tokens refill continuously at `rate` tokens
+    per second (fractions allowed), never exceeding capacity. Each request takes one token if at least one is
+    available; otherwise it is rejected.
+
+    Given request timestamps in seconds (non-decreasing), return a list of booleans: allowed or not.
+  io: { input: "capacity: int, rate: float, timestamps: list[float]", output: "list[bool]" }
+  starter: |
+    def token_bucket(capacity: int, rate: float, timestamps: list[float]) -> list[bool]:
+        return [True] * len(timestamps)
+  hints:
+    - "You don't need a timer — refill lazily when a request arrives."
+    - "Keep (tokens, last_time). On each request add (now - last) * rate, cap at capacity, then try to spend one."
+    - |
+      tokens, last = capacity, timestamps[0] if timestamps else 0
+      for t in timestamps: tokens = min(capacity, tokens + (t - last) * rate); last = t
+          if tokens >= 1: tokens -= 1; allowed else rejected
+  solution:
+    code: |
+      def token_bucket(capacity: int, rate: float, timestamps: list[float]) -> list[bool]:
+          tokens = float(capacity)
+          last = timestamps[0] if timestamps else 0.0
+          out = []
+          for now in timestamps:
+              tokens = min(capacity, tokens + (now - last) * rate)
+              last = now
+              if tokens >= 1 - 1e-9:
+                  tokens -= 1
+                  out.append(True)
+              else:
+                  out.append(False)
+          return out
+    explanation: |
+      Lazy refill computes how many tokens accrued since the previous request, so each request is O(1) and
+      no background thread is needed. The tiny epsilon absorbs floating-point error (0.1 * 10 may be 0.9999…).
+    time: O(n)
+    space: O(n) for the output
+    alternatives: ["Leaky bucket (constant outflow queue)", "Fixed or sliding window counters"]
+    edge_cases: ["Bursts up to capacity at the same timestamp", "Long idle periods refill only to capacity", "rate = 0 allows exactly capacity requests"]
+    production: ["In a cluster keep the bucket in Redis and update it atomically (Lua script)", "Return Retry-After so clients can back off"]
+  examples:
+    - { args: [2, 1, [0, 0, 0, 0.5, 1.0, 1.0]], expected: [true, true, false, false, true, false] }
+  hidden:
+    - { args: [1, 0, [0, 1, 2]] }
+    - { args: [3, 0.5, [0, 0, 0, 0, 2, 3.9, 4, 10, 10, 10, 10]] }
+    - { args: [5, 10, []] }
+    - { args: [1, 10, [0, 0.1, 0.2, 0.25, 0.3]] }
+
+- slug: merge-maintenance-windows
+  title: Merge maintenance windows
+  difficulty: medium
+  roles: [site-reliability-engineer, software-development-engineer, platform-engineer]
+  topics: [intervals, sorting]
+  minutes: 15
+  entrypoint: merge_windows
+  description: |
+    Teams book maintenance windows as `[start, end]` minute offsets (end exclusive). Merge overlapping or
+    touching windows (`[1, 3]` and `[3, 5]` become `[1, 5]`) and return the merged list sorted by start.
+    Then also return the total number of minutes covered.
+
+    Return `{"windows": [...], "minutes": int}`.
+  io: { input: "windows: list[[int, int]]", output: "dict" }
+  starter: |
+    def merge_windows(windows: list[list[int]]) -> dict:
+        return {"windows": windows, "minutes": 0}
+  hints:
+    - "Sort by start time first — then overlaps are always adjacent."
+    - "Walk the sorted list; extend the last merged window if the next starts at or before its end."
+    - |
+      merged = []
+      for s, e in sorted(windows):
+          if merged and s <= merged[-1][1]: merged[-1][1] = max(merged[-1][1], e)
+          else: merged.append([s, e])
+  solution:
+    code: |
+      def merge_windows(windows: list[list[int]]) -> dict:
+          merged: list[list[int]] = []
+          for start, end in sorted(windows):
+              if merged and start <= merged[-1][1]:
+                  merged[-1][1] = max(merged[-1][1], end)
+              else:
+                  merged.append([start, end])
+          return {"windows": merged, "minutes": sum(e - s for s, e in merged)}
+    explanation: After sorting, a window can only overlap the most recent merged one, so one pass suffices. `max` handles windows nested inside another.
+    time: O(n log n)
+    space: O(n)
+    alternatives: ["A sweep line over +1/-1 events, useful when you also need maximum overlap"]
+    edge_cases: ["Touching windows merge", "Nested windows", "Empty input"]
+    production: ["Store times in UTC; convert at the edges", "Zero-length windows ([5, 5]) — decide whether they count"]
+  examples:
+    - { args: [[[30, 60], [0, 10], [10, 20], [50, 90]]], expected: { windows: [[0, 20], [30, 90]], minutes: 80 } }
+  hidden:
+    - { args: [[]] }
+    - { args: [[[0, 100], [10, 20], [30, 40]]] }
+    - { args: [[[5, 6], [1, 2], [3, 4]]] }
+
+- slug: deployment-order
+  title: Order deployments by dependency
+  difficulty: medium
+  roles: [platform-engineer, devops-engineer, software-development-engineer]
+  topics: [graphs, sorting]
+  minutes: 20
+  entrypoint: deploy_order
+  description: |
+    Services must be deployed after the services they depend on. Given `deps` mapping each service to the
+    list of services it depends on, return a deployment order. When several services are ready at the same
+    time, deploy them in alphabetical order (this makes the answer unique). Services that only appear as
+    dependencies are included too.
+
+    If the dependencies contain a cycle, return `None`.
+  io: { input: "deps: dict[str, list[str]]", output: "list[str] | None" }
+  starter: |
+    def deploy_order(deps: dict[str, list[str]]):
+        return sorted(deps)
+  hints:
+    - "This is a topological sort. Track how many unmet dependencies each service has."
+    - "Kahn's algorithm with a min-heap: start with services that have zero dependencies, pop the smallest, then decrement its dependents."
+    - |
+      indegree[s] = number of deps of s; dependents[d] = services that depend on d
+      heap = [s for s with indegree 0]; while heap: s = heappop; order.append(s); for t in dependents[s]: indegree[t] -= 1; if 0: heappush
+      return order if len(order) == number of services else None
+  solution:
+    code: |
+      import heapq
+      from collections import defaultdict
+
+      def deploy_order(deps: dict[str, list[str]]):
+          services = set(deps) | {d for ds in deps.values() for d in ds}
+          indegree = {s: 0 for s in services}
+          dependents: dict[str, list[str]] = defaultdict(list)
+          for service, needs in deps.items():
+              for need in set(needs):
+                  indegree[service] += 1
+                  dependents[need].append(service)
+          ready = [s for s, n in indegree.items() if n == 0]
+          heapq.heapify(ready)
+          order = []
+          while ready:
+              s = heapq.heappop(ready)
+              order.append(s)
+              for t in dependents[s]:
+                  indegree[t] -= 1
+                  if indegree[t] == 0:
+                      heapq.heappush(ready, t)
+          return order if len(order) == len(services) else None
+    explanation: |
+      Kahn's algorithm repeatedly deploys a service with no remaining dependencies. If some services never
+      reach zero, they are part of a cycle. The heap picks the alphabetically smallest ready service.
+    time: O((V + E) log V)
+    space: O(V + E)
+    alternatives: ["graphlib.TopologicalSorter (stdlib, Python 3.9+)", "DFS with colouring to detect cycles"]
+    edge_cases: ["Duplicate dependencies", "Self-dependency is a cycle", "Services only referenced as dependencies"]
+    production: ["Deploy independent services in parallel by levels, not one by one", "Report the cycle members to the user"]
+  examples:
+    - { args: [{ web: ["api", "auth"], api: ["db"], auth: ["db"], worker: ["db"] }], expected: ["db", "api", "auth", "web", "worker"] }
+    - { args: [{ a: ["b"], b: ["a"] }], expected: null }
+  hidden:
+    - { args: [{}] }
+    - { args: [{ x: ["x"] }] }
+    - { args: [{ c: [], b: [], a: ["c", "c"] }] }
+
+- slug: async-fetch-with-limit
+  title: Fetch concurrently with a limit
+  difficulty: medium
+  roles: [ai-engineer, backend-engineer, genai-engineer, python-developer]
+  topics: [asyncio, concurrency]
+  minutes: 20
+  entrypoint: fetch_all
+  description: |
+    Write `async def fetch_all(urls, limit)` that fetches every URL with the provided coroutine
+    `fetch(url)` (it takes a few milliseconds), running **at most `limit` fetches at the same time** but more
+    than one when `limit > 1`. Return the results in the same order as `urls`.
+
+    `fetch` is available as a global (the harness defines it and measures concurrency).
+  io: { input: "urls: list[str], limit: int", output: "list[str] (results in input order)" }
+  prelude: |
+    import asyncio
+
+    _state = {"active": 0, "peak": 0}
+
+    async def fetch(url):
+        _state["active"] += 1
+        _state["peak"] = max(_state["peak"], _state["active"])
+        try:
+            await asyncio.sleep(0.005)
+            return url.upper()
+        finally:
+            _state["active"] -= 1
+
+    async def __harness__(fn, urls, limit):
+        _state.update(active=0, peak=0)
+        results = await fn(urls, limit)
+        return {"results": results, "within_limit": _state["peak"] <= limit, "concurrent": _state["peak"] > 1 or limit == 1 or len(urls) < 2}
+  starter: |
+    import asyncio
+
+    async def fetch_all(urls: list[str], limit: int) -> list[str]:
+        results = []
+        for url in urls:
+            results.append(await fetch(url))
+        return results
+  hints:
+    - "asyncio.gather runs coroutines concurrently and keeps their order; you need something to cap concurrency."
+    - "Wrap each fetch in `async with semaphore:` where semaphore = asyncio.Semaphore(limit)."
+    - |
+      sem = asyncio.Semaphore(limit)
+      async def one(u):
+          async with sem: return await fetch(u)
+      return await asyncio.gather(*(one(u) for u in urls))
+  solution:
+    code: |
+      import asyncio
+
+      async def fetch_all(urls: list[str], limit: int) -> list[str]:
+          semaphore = asyncio.Semaphore(limit)
+
+          async def one(url: str) -> str:
+              async with semaphore:
+                  return await fetch(url)
+
+          return list(await asyncio.gather(*(one(u) for u in urls)))
+    explanation: |
+      gather starts every coroutine and returns results in argument order. The semaphore lets only `limit`
+      of them past `async with` at once; the rest wait without blocking the event loop.
+    time: O(n) work; wall time ≈ ceil(n / limit) × latency
+    space: O(n)
+    alternatives: ["A fixed pool of `limit` worker tasks reading from an asyncio.Queue", "asyncio.TaskGroup (3.11+) with a semaphore"]
+    edge_cases: ["Empty list", "limit larger than the number of URLs", "limit = 1 runs sequentially"]
+    production: ["Use return_exceptions=True or TaskGroup error handling so one failure doesn't hide the rest", "httpx.AsyncClient limits connections per host too"]
+    alternative_code:
+      - |
+        import asyncio
+
+        async def fetch_all(urls: list[str], limit: int) -> list[str]:
+            results: list = [None] * len(urls)
+            queue: asyncio.Queue = asyncio.Queue()
+            for item in enumerate(urls):
+                queue.put_nowait(item)
+
+            async def worker():
+                while not queue.empty():
+                    i, url = queue.get_nowait()
+                    results[i] = await fetch(url)
+
+            await asyncio.gather(*(worker() for _ in range(min(limit, len(urls)) or 1)))
+            return results
+  examples:
+    - { args: [["a", "b", "c", "d", "e"], 2], expected: { results: ["A", "B", "C", "D", "E"], within_limit: true, concurrent: true } }
+  hidden:
+    - { args: [[], 3] }
+    - { args: [["x"], 1] }
+    - { args: [["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"], 3] }
+    - { args: [["p", "q"], 10] }
+
+- slug: model-timeout-fallback
+  title: Fall back to a second model on timeout
+  difficulty: medium
+  roles: [genai-engineer, ai-engineer, solutions-architect]
+  topics: [asyncio, resilience, llm-integration]
+  minutes: 20
+  entrypoint: complete
+  description: |
+    Write `async def complete(prompt, providers, timeout)`. `providers` is a list of async functions
+    `provider(prompt) -> str`, in order of preference. Call them one at a time:
+
+    - If a provider returns within `timeout` seconds, return `{"text": ..., "provider": index}`.
+    - If it times out or raises any exception, move on to the next provider.
+    - If all fail, return `{"text": None, "provider": None}`.
+
+    The harness builds fake providers with fixed delays and failures.
+  io: { input: "prompt: str, providers: list of async callables, timeout: float", output: "dict" }
+  prelude: |
+    import asyncio
+
+    def _make(spec):
+        async def provider(prompt):
+            await asyncio.sleep(spec["delay"])
+            if spec.get("error"):
+                raise RuntimeError(spec["error"])
+            return f"{spec['name']}: {prompt}"
+        return provider
+
+    async def __harness__(fn, prompt, specs, timeout):
+        return await fn(prompt, [_make(s) for s in specs], timeout)
+  starter: |
+    import asyncio
+
+    async def complete(prompt: str, providers: list, timeout: float) -> dict:
+        return {"text": await providers[0](prompt), "provider": 0}
+  hints:
+    - "asyncio.wait_for(coro, timeout) raises TimeoutError when the deadline passes and cancels the coroutine."
+    - "Loop over enumerate(providers); try wait_for; on TimeoutError or Exception continue."
+    - |
+      for i, p in enumerate(providers):
+          try: return {"text": await asyncio.wait_for(p(prompt), timeout), "provider": i}
+          except (asyncio.TimeoutError, Exception): continue
+      return {"text": None, "provider": None}
+  solution:
+    code: |
+      import asyncio
+
+      async def complete(prompt: str, providers: list, timeout: float) -> dict:
+          for index, provider in enumerate(providers):
+              try:
+                  text = await asyncio.wait_for(provider(prompt), timeout)
+              except Exception:  # TimeoutError is an Exception subclass
+                  continue
+              return {"text": text, "provider": index}
+          return {"text": None, "provider": None}
+    explanation: |
+      wait_for cancels the slow call, so a hung provider doesn't keep running. Catching Exception (not
+      BaseException) still lets task cancellation propagate.
+    time: O(p) calls; worst case p × timeout wall time
+    space: O(1)
+    alternatives: ["Hedged requests: start the backup after a short delay and take whichever finishes first", "asyncio.timeout() context manager (3.11+)"]
+    edge_cases: ["The first provider errors immediately", "All providers fail", "Empty provider list"]
+    production: ["Track per-provider error rates and skip unhealthy ones (circuit breaker)", "Budget total latency, not just per-call timeout", "Log which provider served each request"]
+  examples:
+    - args: ["hi", [{ name: "primary", delay: 0.2 }, { name: "backup", delay: 0.001 }], 0.05]
+      expected: { text: "backup: hi", provider: 1 }
+  hidden:
+    - { args: ["x", [{ name: "a", delay: 0.001, error: "500" }, { name: "b", delay: 0.2 }, { name: "c", delay: 0.001 }], 0.05] }
+    - { args: ["x", [{ name: "a", delay: 0.2 }], 0.02] }
+    - { args: ["x", [], 1] }
+    - { args: ["fast", [{ name: "a", delay: 0.001 }, { name: "b", delay: 0.001 }], 0.5] }
+
+- slug: p95-latency-per-route
+  title: p95 latency per route
+  difficulty: medium
+  roles: [site-reliability-engineer, devops-engineer, backend-engineer]
+  topics: [log-analysis, statistics, parsing]
+  minutes: 20
+  entrypoint: p95_by_route
+  description: |
+    Access-log lines look like `GET /api/users?id=1 200 123ms`. For each route (method plus path **without**
+    the query string), compute the 95th percentile of the latency using the **nearest-rank** method: sort
+    the values and take the element at rank `ceil(0.95 × n)` (1-based). Skip lines that don't match the
+    format. Return `{"GET /api/users": 123, ...}`.
+  io: { input: "lines: list[str]", output: "dict[str, int]" }
+  starter: |
+    def p95_by_route(lines: list[str]) -> dict[str, int]:
+        return {}
+  hints:
+    - "Group latencies by route first, then compute the percentile per group."
+    - "Parse with a regex: method, path, status, digits followed by 'ms'. Drop everything after '?' in the path."
+    - |
+      groups[f"{method} {path.split('?')[0]}"].append(int(ms))
+      p95 = sorted(v)[math.ceil(0.95 * len(v)) - 1]
+  solution:
+    code: |
+      import math
+      import re
+      from collections import defaultdict
+
+      LINE = re.compile(r"^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) (\S+) (\d{3}) (\d+)ms$")
+
+      def p95_by_route(lines: list[str]) -> dict[str, int]:
+          groups: dict[str, list[int]] = defaultdict(list)
+          for line in lines:
+              m = LINE.match(line.strip())
+              if m:
+                  groups[f"{m.group(1)} {m.group(2).split('?', 1)[0]}"].append(int(m.group(4)))
+          return {route: sorted(v)[math.ceil(0.95 * len(v)) - 1] for route, v in groups.items()}
+    explanation: Nearest-rank always returns an observed value, which is easy to explain in an incident review.
+    time: O(n log n)
+    space: O(n)
+    alternatives: ["statistics.quantiles(v, n=100) (interpolates)", "Streaming estimators (t-digest, HDR histogram) for unbounded data"]
+    edge_cases: ["A route with one request", "Query strings", "Malformed lines"]
+    production: ["High-cardinality paths (/users/123) need templating (/users/:id) before grouping", "Percentiles cannot be averaged across hosts — merge histograms instead"]
+  examples:
+    - args: [["GET /a?x=1 200 10ms", "GET /a 200 20ms", "GET /a 500 30ms", "POST /a 201 5ms", "garbage"]]
+      expected: { "GET /a": 30, "POST /a": 5 }
+  hidden:
+    - { args: [[]] }
+    - { args: [["GET /x 200 1ms", "GET /x 200 2ms", "GET /x 200 3ms", "GET /x 200 4ms", "GET /x 200 5ms", "GET /x 200 6ms", "GET /x 200 7ms", "GET /x 200 8ms", "GET /x 200 9ms", "GET /x 200 10ms", "GET /x 200 11ms", "GET /x 200 12ms", "GET /x 200 13ms", "GET /x 200 14ms", "GET /x 200 15ms", "GET /x 200 16ms", "GET /x 200 17ms", "GET /x 200 18ms", "GET /x 200 19ms", "GET /x 200 20ms", "GET /x 200 1000ms"]] }
+    - { args: [["GET /a 200 10 ms", "FETCH /a 200 1ms", "DELETE /b?q 204 7ms"]] }
+
+- slug: unhealthy-pods-report
+  title: Report unhealthy pods
+  difficulty: medium
+  roles: [kubernetes-engineer, site-reliability-engineer, platform-engineer]
+  topics: [kubernetes, json, monitoring]
+  minutes: 20
+  entrypoint: unhealthy_pods
+  description: |
+    You get pods as returned by the Kubernetes API (`kubectl get pods -o json` → `items`). Report every pod
+    that is unhealthy, with the reasons, sorted by `namespace/name`:
+
+    - `"phase:<Phase>"` when `status.phase` is not `Running` or `Succeeded`
+    - `"not-ready:<container>"` for each container in a Running pod whose `ready` is false
+    - `"restarts:<container>=<n>"` for each container with `restartCount` > `max_restarts`
+    - `"waiting:<container>=<reason>"` for each container whose `state.waiting.reason` is set
+
+    Reasons are listed in the order above, containers in their listed order. Return
+    `[{"pod": "ns/name", "reasons": [...]}]`; healthy pods are omitted.
+  io: { input: "pods: list[dict], max_restarts: int", output: "list[dict]" }
+  starter: |
+    def unhealthy_pods(pods: list[dict], max_restarts: int) -> list[dict]:
+        return []
+  hints:
+    - "Fields can be missing (a Pending pod may have no containerStatuses) — use .get with defaults."
+    - "Build the reasons list per pod in four passes (phase, ready, restarts, waiting) so the order is right."
+    - |
+      phase = pod["status"].get("phase"); statuses = pod["status"].get("containerStatuses") or []
+      reasons = [...]; if reasons: out.append({"pod": f"{ns}/{name}", "reasons": reasons})
+      return sorted(out, key=lambda r: r["pod"])
+  solution:
+    code: |
+      def unhealthy_pods(pods: list[dict], max_restarts: int) -> list[dict]:
+          report = []
+          for pod in pods:
+              meta, status = pod.get("metadata", {}), pod.get("status", {})
+              phase = status.get("phase", "Unknown")
+              statuses = status.get("containerStatuses") or []
+              reasons = []
+              if phase not in ("Running", "Succeeded"):
+                  reasons.append(f"phase:{phase}")
+              if phase == "Running":
+                  reasons += [f"not-ready:{c['name']}" for c in statuses if not c.get("ready")]
+              reasons += [f"restarts:{c['name']}={c.get('restartCount', 0)}" for c in statuses if c.get("restartCount", 0) > max_restarts]
+              for c in statuses:
+                  reason = ((c.get("state") or {}).get("waiting") or {}).get("reason")
+                  if reason:
+                      reasons.append(f"waiting:{c['name']}={reason}")
+              if reasons:
+                  report.append({"pod": f"{meta.get('namespace', 'default')}/{meta.get('name')}", "reasons": reasons})
+          return sorted(report, key=lambda r: r["pod"])
+    explanation: Defensive .get() calls handle the many optional fields in real pod objects; separate passes guarantee the documented reason order.
+    time: O(pods × containers)
+    space: O(output)
+    alternatives: ["The kubernetes Python client's V1Pod objects (attribute access, same shape)"]
+    edge_cases: ["Pending pods without containerStatuses", "Succeeded jobs with not-ready containers are healthy", "Missing namespace defaults to 'default'"]
+    production: ["Init containers have their own initContainerStatuses", "CrashLoopBackOff shows up as a waiting reason — alert on it"]
+  examples:
+    - args:
+        - - { metadata: { name: "web-1", namespace: "prod" }, status: { phase: "Running", containerStatuses: [{ name: "app", ready: false, restartCount: 7, state: { waiting: { reason: "CrashLoopBackOff" } } }] } }
+          - { metadata: { name: "web-2", namespace: "prod" }, status: { phase: "Running", containerStatuses: [{ name: "app", ready: true, restartCount: 0, state: { running: {} } }] } }
+          - { metadata: { name: "job-1", namespace: "batch" }, status: { phase: "Pending" } }
+        - 3
+      expected:
+        - { pod: "batch/job-1", reasons: ["phase:Pending"] }
+        - { pod: "prod/web-1", reasons: ["not-ready:app", "restarts:app=7", "waiting:app=CrashLoopBackOff"] }
+  hidden:
+    - { args: [[], 0] }
+    - { args: [[{ metadata: { name: "done" }, status: { phase: "Succeeded", containerStatuses: [{ name: "x", ready: false, restartCount: 1 }] } }], 0] }
+    - { args: [[{ metadata: { name: "a", namespace: "n" }, status: { phase: "Failed", containerStatuses: [{ name: "c1", ready: false, restartCount: 2 }, { name: "c2", ready: false, restartCount: 9, state: { waiting: { reason: "ImagePullBackOff" } } }] } }], 5] }
+
+- slug: resolve-variable-references
+  title: Resolve variable references
+  difficulty: medium
+  roles: [devops-engineer, infrastructure-automation-engineer, platform-engineer]
+  topics: [file-handling, graphs, parsing]
+  minutes: 20
+  entrypoint: resolve
+  description: |
+    Configuration values may reference other variables as `${NAME}`. Resolve every value recursively:
+
+    - References to variables defined in `variables` are replaced by their resolved value.
+    - References to undefined names resolve to the empty string.
+    - If resolving a variable would require itself (directly or through others), return `None` for the
+      whole result.
+
+    Return the dictionary of fully resolved values.
+  io: { input: "variables: dict[str, str]", output: "dict[str, str] | None" }
+  starter: |
+    def resolve(variables: dict[str, str]):
+        return dict(variables)
+  hints:
+    - "Resolving one variable may require resolving others first — recursion with memoisation."
+    - "Track the variables currently being resolved (a 'visiting' set) to detect cycles."
+    - |
+      def value(name, visiting): if name in done: return done[name]; if name in visiting: raise Cycle
+          visiting.add(name); text = PATTERN.sub(lambda m: value(m[1], visiting) if m[1] in variables else "", variables[name])
+          visiting.remove(name); done[name] = text; return text
+  solution:
+    code: |
+      import re
+
+      REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+      class Cycle(Exception):
+          pass
+
+      def resolve(variables: dict[str, str]):
+          done: dict[str, str] = {}
+          visiting: set[str] = set()
+
+          def value(name: str) -> str:
+              if name in done:
+                  return done[name]
+              if name in visiting:
+                  raise Cycle(name)
+              visiting.add(name)
+              text = REF.sub(lambda m: value(m.group(1)) if m.group(1) in variables else "", variables[name])
+              visiting.discard(name)
+              done[name] = text
+              return text
+
+          try:
+              return {name: value(name) for name in variables}
+          except Cycle:
+              return None
+    explanation: This is a depth-first search over the reference graph. The memo makes each variable resolve once; the visiting set finds back edges, i.e. cycles.
+    time: O(total length of all values)
+    space: O(number of variables) recursion depth
+    alternatives: ["Topologically sort the reference graph first, then substitute in order"]
+    edge_cases: ["Self reference", "Undefined names", "A long chain of references", "Values with no references"]
+    production: ["Python's default recursion limit (1000) can be hit by very long chains — use an explicit stack", "Never resolve references from untrusted input into shell commands"]
+  examples:
+    - { args: [{ HOST: "db", PORT: "5432", URL: "postgres://${HOST}:${PORT}/${DB_NAME}" }], expected: { HOST: "db", PORT: "5432", URL: "postgres://db:5432/" } }
+    - { args: [{ A: "${B}", B: "${A}" }], expected: null }
+  hidden:
+    - { args: [{}] }
+    - { args: [{ X: "${X}" }] }
+    - { args: [{ A: "1", B: "${A}${A}", C: "${B}-${B}", D: "$A {A} ${ A}" }] }
+
+- slug: clean-jsonl-export
+  title: Clean a JSON Lines export
+  difficulty: medium
+  roles: [data-engineer, forward-deployed-engineer, backend-engineer]
+  topics: [etl, json, validation]
+  minutes: 20
+  entrypoint: clean_jsonl
+  description: |
+    A customer's export is JSON Lines (one JSON object per line). Produce clean records and a summary:
+
+    1. Skip blank lines. Lines that are not valid JSON objects count as `invalid`.
+    2. A record needs a non-empty string `email` and a numeric `amount` (int or float, not bool) — otherwise
+       it is `invalid`.
+    3. Normalise: `email` stripped and lowercased; `amount` rounded to 2 decimals; keep only these two
+       fields.
+    4. Drop duplicates by email, keeping the **first** occurrence (count them as `duplicates`).
+
+    Return `{"records": [...], "invalid": n, "duplicates": n}`.
+  io: { input: "text: str", output: "dict" }
+  starter: |
+    import json
+
+    def clean_jsonl(text: str) -> dict:
+        records = [json.loads(line) for line in text.splitlines() if line.strip()]
+        return {"records": records, "invalid": 0, "duplicates": 0}
+  hints:
+    - "Validate before normalising, and normalise before deduplicating (emails differ only by case)."
+    - "json.JSONDecodeError for bad lines; isinstance(x, (int, float)) and not isinstance(x, bool) for amounts."
+    - |
+      for line in text.splitlines(): if not line.strip(): continue; try: obj = json.loads(line) except ValueError: invalid += 1; continue
+          if not dict or bad fields: invalid += 1; continue
+          email = obj["email"].strip().lower(); if email in seen: duplicates += 1; continue
+  solution:
+    code: |
+      import json
+
+      def clean_jsonl(text: str) -> dict:
+          records, seen = [], set()
+          invalid = duplicates = 0
+          for line in text.splitlines():
+              if not line.strip():
+                  continue
+              try:
+                  obj = json.loads(line)
+              except ValueError:
+                  invalid += 1
+                  continue
+              email = obj.get("email") if isinstance(obj, dict) else None
+              amount = obj.get("amount") if isinstance(obj, dict) else None
+              if not isinstance(email, str) or not email.strip() or isinstance(amount, bool) or not isinstance(amount, (int, float)):
+                  invalid += 1
+                  continue
+              email = email.strip().lower()
+              if email in seen:
+                  duplicates += 1
+                  continue
+              seen.add(email)
+              records.append({"email": email, "amount": round(amount, 2)})
+          return {"records": records, "invalid": invalid, "duplicates": duplicates}
+    explanation: |
+      `bool` is a subclass of `int` in Python, so `True` would pass a naive numeric check — exclude it
+      explicitly. Normalising the email before checking `seen` makes the deduplication case-insensitive.
+    time: O(n)
+    space: O(n)
+    alternatives: ["Pydantic models for validation with error reporting", "pandas.read_json(lines=True) then drop_duplicates"]
+    edge_cases: ["A JSON array on a line is invalid", "amount: true is invalid", "Whitespace-only emails are invalid"]
+    production: ["Write rejected lines to a dead-letter file with the reason so the customer can fix them", "Floats for money are a smell — use Decimal or integer cents"]
+  examples:
+    - args: ["{\"email\": \" A@x.com \", \"amount\": 10.555, \"extra\": 1}\n\nnot json\n{\"email\": \"a@X.com\", \"amount\": 3}\n{\"email\": \"b@x.com\", \"amount\": true}"]
+      expected: { records: [{ email: "a@x.com", amount: 10.55 }], invalid: 2, duplicates: 1 }
+  hidden:
+    - { args: [""] }
+    - { args: ["[1,2]\n{\"email\": \"\", \"amount\": 1}\n{\"email\": \"c@x\", \"amount\": \"5\"}\n{\"email\": \"d@x\", \"amount\": -0.004}"] }
+    - { args: ["{\"email\": \"z@z\", \"amount\": 1}\n{\"email\": \"Z@Z \", \"amount\": 2}\n{\"email\": \"y@y\", \"amount\": 2.999}"] }
+
+- slug: chunk-text-with-overlap
+  title: Chunk documents with overlap for RAG
+  difficulty: medium
+  roles: [genai-engineer, ai-engineer, data-engineer]
+  topics: [rag, lists, llm-integration]
+  minutes: 15
+  entrypoint: chunk_tokens
+  description: |
+    Retrieval pipelines split documents into overlapping chunks so that context isn't lost at boundaries.
+    Given a list of tokens, a chunk `size` and an `overlap` (0 ≤ overlap < size), return chunks where each
+    chunk starts `size - overlap` tokens after the previous one. Stop when a chunk reaches the end of the
+    tokens — don't emit a final chunk that is entirely contained in the previous one.
+
+    Return a list of `{"start": index, "tokens": [...]}`.
+  io: { input: "tokens: list[str], size: int, overlap: int", output: "list[dict]" }
+  starter: |
+    def chunk_tokens(tokens: list[str], size: int, overlap: int) -> list[dict]:
+        return [{"start": 0, "tokens": tokens}]
+  hints:
+    - "The step between chunk starts is size - overlap."
+    - "Loop start = 0, step, 2·step… and stop after the first chunk whose end reaches len(tokens)."
+    - |
+      step = size - overlap; start = 0
+      while True: chunks.append({"start": start, "tokens": tokens[start:start + size]})
+          if start + size >= len(tokens): break; start += step
+  solution:
+    code: |
+      def chunk_tokens(tokens: list[str], size: int, overlap: int) -> list[dict]:
+          if not tokens:
+              return []
+          step = size - overlap
+          chunks, start = [], 0
+          while True:
+              chunks.append({"start": start, "tokens": tokens[start : start + size]})
+              if start + size >= len(tokens):
+                  return chunks
+              start += step
+    explanation: Stopping as soon as a chunk covers the end avoids a redundant tail chunk that would only repeat overlapped tokens.
+    time: O(n × size / step)
+    space: O(n × size / step)
+    alternatives: ["Split on semantic boundaries (headings, sentences) first, then window within sections"]
+    edge_cases: ["Fewer tokens than size → one chunk", "overlap = 0 → plain batching", "No tokens → no chunks"]
+    production: ["Chunk by the embedding model's tokenizer, not words", "Store the start offset so citations can point back into the source document"]
+  examples:
+    - { args: [["a", "b", "c", "d", "e", "f", "g"], 4, 2], expected: [{ start: 0, tokens: ["a", "b", "c", "d"] }, { start: 2, tokens: ["c", "d", "e", "f"] }, { start: 4, tokens: ["e", "f", "g"] }] }
+  hidden:
+    - { args: [[], 3, 1] }
+    - { args: [["x", "y"], 5, 4] }
+    - { args: [["1", "2", "3", "4", "5", "6"], 3, 0] }
+    - { args: [["1", "2", "3", "4", "5", "6"], 4, 2] }
+
+- slug: tfidf-retrieval
+  title: Keyword retrieval with TF-IDF
+  difficulty: medium
+  roles: [genai-engineer, ai-engineer, machine-learning-engineer]
+  topics: [rag, statistics, dictionaries]
+  minutes: 25
+  entrypoint: top_k
+  description: |
+    Rank documents for a query with TF-IDF:
+
+    - Tokenise by lowercasing and splitting on non-alphanumeric characters.
+    - `tf(t, d)` = count of t in d / number of tokens in d.
+    - `idf(t)` = ln(N / df(t)) + 1 where N is the number of documents and df the number of documents
+      containing t. Terms that appear in no document contribute 0.
+    - Score(d) = sum over the **distinct** query terms of tf × idf.
+
+    Return the ids of the top `k` documents with score > 0, highest first, ties broken by id ascending.
+  io: { input: "docs: dict[str, str], query: str, k: int", output: "list[str]" }
+  starter: |
+    def top_k(docs: dict[str, str], query: str, k: int) -> list[str]:
+        return sorted(docs)[:k]
+  hints:
+    - "Precompute token counts per document and document frequency per term."
+    - "Use collections.Counter per document; df[t] += 1 for each distinct term in a document."
+    - |
+      score = sum(counts[d][t] / len(tokens[d]) * (log(N / df[t]) + 1) for t in set(query_terms) if df[t])
+      ranked = sorted((-score, id) ...); return [id for s, id in ranked if s < 0][:k]
+  solution:
+    code: |
+      import math
+      import re
+      from collections import Counter
+
+      def tokens(text: str) -> list[str]:
+          return [t for t in re.split(r"[^a-z0-9]+", text.lower()) if t]
+
+      def top_k(docs: dict[str, str], query: str, k: int) -> list[str]:
+          counts = {doc_id: Counter(tokens(text)) for doc_id, text in docs.items()}
+          lengths = {doc_id: sum(c.values()) for doc_id, c in counts.items()}
+          df = Counter(t for c in counts.values() for t in c)
+          n = len(docs)
+          terms = set(tokens(query))
+          scored = []
+          for doc_id, c in counts.items():
+              if not lengths[doc_id]:
+                  continue
+              score = sum(c[t] / lengths[doc_id] * (math.log(n / df[t]) + 1) for t in terms if df[t])
+              if score > 0:
+                  scored.append((-score, doc_id))
+          return [doc_id for _, doc_id in sorted(scored)[:k]]
+    explanation: Rare terms get a higher idf, so a document matching an unusual query word outranks one matching only common words. Normalising tf by length stops long documents from winning by size alone.
+    time: O(total tokens + D log D)
+    space: O(total tokens)
+    alternatives: ["BM25 (saturating tf, length normalisation) — the usual lexical baseline", "Hybrid search: combine BM25 with embedding similarity"]
+    edge_cases: ["Query terms in no document", "Empty documents", "k larger than the number of matches"]
+    production: ["Precompute and store the index; don't re-tokenise the corpus per query", "Use OpenSearch/Elasticsearch for lexical retrieval at scale"]
+  examples:
+    - args: [{ d1: "Kubernetes pod restarts", d2: "Restarting pods in Kubernetes clusters", d3: "AWS Lambda cold starts" }, "pod restarts", 2]
+      expected: ["d1"]
+      explanation: "Only d1 contains 'pod' and 'restarts' exactly; d2 has 'pods' and 'restarting', which are different tokens."
+  hidden:
+    - { args: [{ a: "x y z", b: "x x", c: "" }, "x z", 5] }
+    - { args: [{ a: "alpha", b: "beta" }, "gamma", 3] }
+    - { args: [{ b: "same text", a: "same text" }, "same", 1] }
+
+- slug: config-drift-plan
+  title: Plan changes from desired state
+  difficulty: medium
+  roles: [infrastructure-automation-engineer, platform-engineer, devops-engineer]
+  topics: [infrastructure-as-code, dictionaries]
+  minutes: 20
+  entrypoint: plan
+  description: |
+    Compare desired resources with actual ones (both lists of dictionaries with a unique `id`). Produce a
+    plan like a mini Terraform:
+
+    - `create` for ids only in desired
+    - `delete` for ids only in actual — **unless** the actual resource has `"protected": true`, in which case
+      emit `skip` instead
+    - `update` for ids in both whose other fields differ; include the sorted list of changed field names
+      (fields present on either side, ignoring `protected`)
+
+    Return a list of actions `{"action": ..., "id": ..., "fields": [...]}` (fields only for updates), sorted
+    by id.
+  io: { input: "desired: list[dict], actual: list[dict]", output: "list[dict]" }
+  starter: |
+    def plan(desired: list[dict], actual: list[dict]) -> list[dict]:
+        return []
+  hints:
+    - "Index both lists by id first."
+    - "For updates compare the union of keys (minus id and protected) between the two dictionaries."
+    - |
+      want = {r["id"]: r for r in desired}; have = {r["id"]: r for r in actual}
+      for id in sorted(want | have): classify
+      changed = sorted(k for k in (w.keys() | h.keys()) - {"id", "protected"} if w.get(k) != h.get(k))
+  solution:
+    code: |
+      def plan(desired: list[dict], actual: list[dict]) -> list[dict]:
+          want = {r["id"]: r for r in desired}
+          have = {r["id"]: r for r in actual}
+          actions = []
+          for rid in sorted(want.keys() | have.keys()):
+              w, h = want.get(rid), have.get(rid)
+              if h is None:
+                  actions.append({"action": "create", "id": rid})
+              elif w is None:
+                  actions.append({"action": "skip" if h.get("protected") else "delete", "id": rid})
+              else:
+                  ignored = {"id", "protected"}
+                  changed = sorted(k for k in (w.keys() | h.keys()) - ignored if w.get(k) != h.get(k))
+                  if changed:
+                      actions.append({"action": "update", "id": rid, "fields": changed})
+          return actions
+    explanation: Indexing by id turns the comparison into set operations. Comparing the union of keys catches fields that were added or removed, not just changed.
+    time: O(n log n)
+    space: O(n)
+    alternatives: ["DeepDiff for nested structures"]
+    edge_cases: ["Protected resources are never deleted", "A field removed from desired shows up as changed", "No changes → empty plan"]
+    production: ["Always show the plan and require approval before applying deletes", "Treat 'unknown' (computed) fields specially, as Terraform does"]
+  examples:
+    - args:
+        - [{ id: "web", size: "m", replicas: 3 }, { id: "cache", size: "s" }]
+        - [{ id: "web", size: "m", replicas: 2 }, { id: "old", size: "s" }, { id: "db", size: "l", protected: true }]
+      expected: [{ action: "create", id: "cache" }, { action: "skip", id: "db" }, { action: "delete", id: "old" }, { action: "update", id: "web", fields: ["replicas"] }]
+  hidden:
+    - { args: [[], []] }
+    - { args: [[{ id: "a", x: 1 }], [{ id: "a", x: 1, protected: true }]] }
+    - { args: [[{ id: "a", x: 1 }], [{ id: "a", y: 1 }]] }
+
+- slug: terraform-plan-summary
+  title: Summarise a Terraform plan
+  difficulty: medium
+  roles: [infrastructure-automation-engineer, cloud-engineer, devops-engineer]
+  topics: [infrastructure-as-code, json]
+  minutes: 15
+  entrypoint: summarize_plan
+  description: |
+    `terraform show -json plan.out` contains `resource_changes`, each with an `address`, a `type` and
+    `change.actions` — a list such as `["create"]`, `["update"]`, `["delete"]`, `["delete", "create"]`
+    (replace) or `["no-op"]`.
+
+    Return `{"create": n, "update": n, "delete": n, "replace": n, "blocked": [...]}` where `blocked` is the
+    sorted list of addresses that would destroy (delete or replace) a resource whose type is in
+    `protected_types`.
+  io: { input: "plan: dict, protected_types: list[str]", output: "dict" }
+  starter: |
+    def summarize_plan(plan: dict, protected_types: list[str]) -> dict:
+        return {"create": 0, "update": 0, "delete": 0, "replace": 0, "blocked": []}
+  hints:
+    - "Map each actions list to one category; a replace has both delete and create (in either order)."
+    - "Use a set of the actions: {'delete', 'create'} → replace, {'create'} → create, etc."
+    - |
+      acts = set(rc["change"]["actions"])
+      kind = "replace" if {"create", "delete"} <= acts else "create" if acts == {"create"} else ...
+      if kind in ("delete", "replace") and rc["type"] in protected: blocked.append(rc["address"])
+  solution:
+    code: |
+      def summarize_plan(plan: dict, protected_types: list[str]) -> dict:
+          summary = {"create": 0, "update": 0, "delete": 0, "replace": 0, "blocked": []}
+          protected = set(protected_types)
+          for rc in plan.get("resource_changes", []):
+              actions = set(rc.get("change", {}).get("actions", []))
+              if {"create", "delete"} <= actions:
+                  kind = "replace"
+              elif actions in ({"create"}, {"update"}, {"delete"}):
+                  kind = next(iter(actions))
+              else:
+                  continue
+              summary[kind] += 1
+              if kind in ("delete", "replace") and rc.get("type") in protected:
+                  summary["blocked"].append(rc["address"])
+          summary["blocked"].sort()
+          return summary
+    explanation: Treating actions as a set makes create-before-destroy and destroy-before-create replacements look the same, which is what matters for risk.
+    time: O(n log n)
+    space: O(n)
+    alternatives: ["OPA/Conftest policies over the plan JSON in CI"]
+    edge_cases: ["no-op and read actions are ignored", "Replace in either order", "No resource_changes key"]
+    production: ["Fail the pipeline when blocked is non-empty and require an explicit override", "Also check prevent_destroy lifecycle rules in the code"]
+  examples:
+    - args:
+        - resource_changes:
+            - { address: "aws_s3_bucket.logs", type: "aws_s3_bucket", change: { actions: ["create"] } }
+            - { address: "aws_db_instance.main", type: "aws_db_instance", change: { actions: ["delete", "create"] } }
+            - { address: "aws_iam_role.ci", type: "aws_iam_role", change: { actions: ["update"] } }
+            - { address: "aws_instance.old", type: "aws_instance", change: { actions: ["delete"] } }
+            - { address: "aws_vpc.main", type: "aws_vpc", change: { actions: ["no-op"] } }
+        - ["aws_db_instance", "aws_s3_bucket"]
+      expected: { create: 1, update: 1, delete: 1, replace: 1, blocked: ["aws_db_instance.main"] }
+  hidden:
+    - { args: [{}, []] }
+    - { args: [{ resource_changes: [{ address: "b.x", type: "t", change: { actions: ["create", "delete"] } }, { address: "a.y", type: "t", change: { actions: ["delete"] } }] }, ["t"]] }
+    - { args: [{ resource_changes: [{ address: "r", type: "t", change: { actions: ["read"] } }] }, ["t"]] }

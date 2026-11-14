@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 640" width="900" height="640" role="img" aria-labelledby="k8s-tools-prometheus-flow-title k8s-tools-prometheus-flow-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="k8s-tools-prometheus-flow-title">How Prometheus discovers, scrapes, stores and alerts on Kubernetes metrics</title>
+<desc id="k8s-tools-prometheus-flow-desc">Targets expose metrics over HTTP: the kubelet and cAdvisor for nodes and containers, applications on their own /metrics endpoint, and exporters such as kube-state-metrics for object state like restarts. kubernetes_sd_configs asks the API for nodes, pods or EndpointSlices and relabel rules pick the targets; the optional Prometheus Operator turns ServiceMonitor and PodMonitor objects into that scrape configuration. Prometheus pulls every target on its scrape interval, stores samples in its local TSDB, evaluates recording and alerting rules, and can remote_write to long-term storage. Alertmanager groups and routes alerts to people; Grafana queries PromQL for dashboards. Logs and traces travel through separate systems such as Loki and Jaeger.</desc>
+<rect width="900" height="640" fill="#ffffff"/>
+<defs>
+<marker id="k8s-tools-prometheus-flow-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+<marker id="k8s-tools-prometheus-flow-write" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b45309"/></marker>
+<marker id="k8s-tools-prometheus-flow-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#be123c"/></marker>
+<marker id="k8s-tools-prometheus-flow-reject" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b91c1c"/></marker>
+<marker id="k8s-tools-prometheus-flow-dashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+<marker id="k8s-tools-prometheus-flow-life" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#cbd5e1"/></marker>
+</defs>
+<rect x="15" y="12" width="870" height="104" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="28" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Targets: anything that serves /metrics</text>
+<rect x="15" y="142" width="870" height="104" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="158" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Discovery</text>
+<rect x="15" y="262" width="870" height="114" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="278" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Prometheus server</text>
+<rect x="15" y="392" width="870" height="104" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="408" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Consumers</text>
+<rect x="15" y="512" width="870" height="96" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="528" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Not metrics: separate pipelines</text>
+<polyline points="165.0,106 165,128 450,128 450.0,286" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#k8s-tools-prometheus-flow-sync)"/>
+<polyline points="735.0,106 735,128 450,128 450.0,286" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#k8s-tools-prometheus-flow-sync)"/>
+<polyline points="450.0,106 450.0,286" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#k8s-tools-prometheus-flow-sync)"/>
+<polyline points="470,222.0 430,222.0" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#k8s-tools-prometheus-flow-dashed)"/>
+<polyline points="230.0,236 230.0,286" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#k8s-tools-prometheus-flow-sync)"/>
+<polyline points="165.0,366 165.0,416" fill="none" stroke="#be123c" stroke-width="2.2" marker-end="url(#k8s-tools-prometheus-flow-async)"/>
+<polyline points="450.0,416 450.0,366" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#k8s-tools-prometheus-flow-sync)"/>
+<polyline points="735.0,366 735.0,416" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#k8s-tools-prometheus-flow-write)"/>
+<rect x="30" y="36" width="270" height="70" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="165.0" y="62.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">kubelet and cAdvisor</text>
+<text x="165.0" y="78.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">node and container metrics</text>
+<text x="165.0" y="94.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">CPU, memory, filesystem</text>
+<rect x="315" y="36" width="270" height="70" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="450.0" y="62.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">Applications</text>
+<text x="450.0" y="78.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">their own /metrics endpoint</text>
+<text x="450.0" y="94.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">HTTP rate, errors, latency</text>
+<rect x="600" y="36" width="270" height="70" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="735.0" y="62.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">Exporters</text>
+<text x="735.0" y="78.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">kube-state-metrics, node-exporter</text>
+<text x="735.0" y="94.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">object state: restarts, replicas</text>
+<rect x="30" y="166" width="400" height="70" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="230.0" y="192.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">kubernetes_sd_configs</text>
+<text x="230.0" y="208.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">roles: node, pod, endpointslice ...</text>
+<text x="230.0" y="224.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">relabel_configs keep or drop targets</text>
+<rect x="470" y="166" width="400" height="70" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="670.0" y="192.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">Prometheus Operator (optional)</text>
+<text x="670.0" y="208.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">ServiceMonitor, PodMonitor, PrometheusRule</text>
+<text x="670.0" y="224.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">generates scrape config and rule files</text>
+<rect x="30" y="286" width="840" height="80" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="450.0" y="309.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">Prometheus</text>
+<text x="450.0" y="325.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">pulls each target every scrape_interval and writes samples to a local TSDB on a volume</text>
+<text x="450.0" y="341.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">recording rules precompute expensive PromQL; alerting rules fire when an expression holds</text>
+<text x="450.0" y="357.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">retention by time or size; remote_write ships samples to long-term storage</text>
+<rect x="30" y="416" width="270" height="70" rx="7" fill="#fff1f2" stroke="#be123c" stroke-width="1.4"/>
+<text x="165.0" y="442.0" text-anchor="middle" font-size="14" font-weight="600" fill="#4c0519">Alertmanager</text>
+<text x="165.0" y="458.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">group, inhibit, silence</text>
+<text x="165.0" y="474.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">routes to Slack, PagerDuty, mail</text>
+<rect x="315" y="416" width="270" height="70" rx="7" fill="#f8fafc" stroke="#334155" stroke-width="1.4"/>
+<text x="450.0" y="442.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Grafana</text>
+<text x="450.0" y="458.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">dashboards over PromQL</text>
+<text x="450.0" y="474.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">also reads Loki and Jaeger</text>
+<rect x="600" y="416" width="270" height="70" rx="7" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+<text x="735.0" y="442.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Long-term storage</text>
+<text x="735.0" y="458.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Thanos, Mimir, managed services</text>
+<text x="735.0" y="474.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">fed by remote_write</text>
+<rect x="30" y="536" width="400" height="62" rx="7" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="6 4"/>
+<text x="230.0" y="566.0" text-anchor="middle" font-size="14" font-weight="600" fill="#475569">Logs: Loki, Elasticsearch</text>
+<text x="230.0" y="582.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">what happened, line by line</text>
+<rect x="470" y="536" width="400" height="62" rx="7" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="6 4"/>
+<text x="670.0" y="566.0" text-anchor="middle" font-size="14" font-weight="600" fill="#475569">Traces: Jaeger, Tempo</text>
+<text x="670.0" y="582.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">where one request spent its time</text>
+<rect x="459.8" y="110.1" width="120.3" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="520.0" y="122.1" text-anchor="middle" font-size="12" fill="#0f172a">scrape (HTTP pull)</text>
+<rect x="239.7" y="252.5" width="76.6" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="278.0" y="264.5" text-anchor="middle" font-size="12" fill="#0f172a">target list</text>
+<rect x="172.3" y="382.5" width="45.4" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="195.0" y="394.5" text-anchor="middle" font-size="12" fill="#0f172a">alerts</text>
+<rect x="459.3" y="382.5" width="45.4" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="482.0" y="394.5" text-anchor="middle" font-size="12" fill="#0f172a">PromQL</text>
+<rect x="743.6" y="382.5" width="82.9" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="785.0" y="394.5" text-anchor="middle" font-size="12" fill="#0f172a">remote_write</text>
+</svg>

@@ -1,0 +1,28 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: shop-web
+  namespace: shop
+  labels:
+    release: monitoring
+spec:
+  groups:
+    - name: shop-web
+      rules:
+        - record: job:http_server_requests:rate5m
+          expr: sum by (job) (rate(http_server_requests_total[5m]))
+        - alert: ShopWebHighErrorRatio
+          expr: |
+            sum(rate(http_server_requests_total{job="shop-web", status="5xx"}[5m]))
+              / sum(rate(http_server_requests_total{job="shop-web"}[5m])) > 0.05
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "More than 5% of shop-web requests fail"
+        - alert: ContainerRestarting
+          expr: increase(kube_pod_container_status_restarts_total{namespace="shop"}[15m]) > 2
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.pod }}/{{ $labels.container }} restarted {{ $value | humanize }} times in 15 min"

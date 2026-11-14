@@ -1,0 +1,484 @@
+---
+title: "How I Run Dependabot Across Five Repositories: Config, Security and FAQ"
+slug: dependabot-setup-five-repositories
+description: "The real dependabot.yml files behind jithendar.com, MOKS, RoboShop AI and my infra repos: grouping, cooldowns, ignores, security updates and an FAQ."
+seoTitle: "Dependabot Configuration Guide: Groups, Cooldown, Security Updates and FAQ"
+seoDescription: "Real dependabot.yml files from five repositories: grouping, cooldowns, ignore rules, security alerts and updates, CI safety, and answers to common questions."
+author: jithendar-dharmapuri
+category: devops-sre
+tags: [Dependabot, GitHub, Supply Chain Security, Dependency Management, GitHub Actions, CI/CD, Terraform, Docker, Helm]
+contentType: tutorial
+status: review
+related:
+  - blog/github-actions-authenticate-minikube
+  - blog/learning-terraform-real-project-tools-repository
+sources:
+  - title: "Dependabot options reference (dependabot.yml)"
+    url: https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+    publisher: GitHub
+  - title: "About Dependabot alerts"
+    url: https://docs.github.com/en/code-security/dependabot/dependabot-alerts/about-dependabot-alerts
+    publisher: GitHub
+  - title: "About Dependabot security updates"
+    url: https://docs.github.com/en/code-security/dependabot/dependabot-security-updates/about-dependabot-security-updates
+    publisher: GitHub
+  - title: "Automating Dependabot with GitHub Actions"
+    url: https://docs.github.com/en/code-security/dependabot/working-with-dependabot/automating-dependabot-with-github-actions
+    publisher: GitHub
+  - title: "Managing pull requests for dependency updates"
+    url: https://docs.github.com/en/code-security/dependabot/working-with-dependabot/managing-pull-requests-for-dependency-updates
+    publisher: GitHub
+---
+<Todo>(1) Every number and setting here was read from the five repositories and the GitHub API on 9 November 2026. Re-check the PR and alert counts in section 1 before publishing, because they change every Monday. (2) Section 10 says no repository requires status checks on its default branch, and that MOKS and RoboShop AI pin actions by tag instead of by commit SHA. Fix those or keep them as stated; the text must match whatever you choose. (3) tools still has an open Helm PR (#4) from before its Helm entry moved to the miniKube repository. Close it, or say why it stays open. (4) Add your own commentary, confirm the AI-assistance line against the AI use policy, then set status and publishedAt.</Todo>
+
+I keep five public repositories on GitHub: this site (`jithendar.com`), the MOKS SRE agent (`moks`), the RoboShop AI microservices demo (`roboshop-ai`), the AWS infrastructure (`tools`) and my home Kubernetes cluster (`miniKube`). Together they use npm, pip, Gradle, Go modules, Docker images, Helm charts, Terraform providers and GitHub Actions. I don't have time to read changelogs for all of that, so Dependabot does the watching.
+
+This article shows how that works today: the actual `dependabot.yml` files, why each rule is there, what Dependabot does for security, where it breaks things, and an FAQ at the end.
+
+## 1. What I have running
+
+| Repository | Ecosystems Dependabot updates | Dependabot PRs merged | Alerts fixed |
+|---|---|---|---|
+| `jithendar.com` | npm, pip, Terraform, Docker (Dockerfiles and Kubernetes manifests), GitHub Actions | 15 | 3 |
+| `moks` | pip (backend, reranker), npm, Docker, Helm, Terraform, GitHub Actions | 13 | 0 |
+| `roboshop-ai` | npm, pip, Gradle, Go modules, Docker, GitHub Actions | 43 | 18 |
+| `tools` | Terraform, GitHub Actions | 3 | 0 |
+| `miniKube` | Docker, Helm, Terraform, GitHub Actions | 1 | 0 |
+
+The counts come from `gh pr list --author app/dependabot` and the Dependabot alerts API on 9 November 2026. All five repositories have three settings turned on under **Settings → Code security**:
+
+- **Dependency graph**: GitHub reads the manifests and lock files.
+- **Dependabot alerts**: GitHub tells me when a package I use has a published advisory.
+- **Dependabot security updates**: Dependabot opens a PR that moves the package to a fixed version.
+
+The fourth feature, **version updates**, is what `.github/dependabot.yml` controls. That file is most of this article.
+
+## 2. The three Dependabot features
+
+People often treat "Dependabot" as one thing. It is three, and they behave differently.
+
+| Feature | Triggered by | Needs `dependabot.yml`? | What you get |
+|---|---|---|---|
+| Alerts | A new advisory in the GitHub Advisory Database that matches your dependency graph | No | An alert in the Security tab (and a notification) |
+| Security updates | An alert that has a fixed version | No (but it reads your config for labels, prefix, groups etc.) | A PR that bumps only the vulnerable package |
+| Version updates | Your schedule | Yes | PRs that keep everything current, vulnerable or not |
+
+![How a dependency update travels through my repositories. Two things start Dependabot. A new advisory in the GitHub Advisory Database that matches the dependency graph raises a Dependabot alert; if a fixed version is reachable, Dependabot opens a security update PR for that one package, with no cooldown and no grouping, and if the parent package pins the vulnerable range, the fix is made by hand with npm overrides or the alert is dismissed with a reason. The weekly schedule, Monday 06:00 New York time, starts a version update run that reads .github/dependabot.yml, skips releases younger than the 3-day cooldown and versions matched by ignore rules, and opens grouped PRs: family groups such as opentelemetry and next-react first, then one minor and patch group per directory, with each major in its own PR. Every PR runs CI on its branch with a read-only GITHUB_TOKEN and no repository secrets; forks are skipped. A red PR gets an ignore rule and @dependabot recreate. A green PR is reviewed by a person, because there is no auto-merge, and merging to master deploys: jithendar.com and MOKS build an image, Argo CD syncs miniKube, and tools runs terraform apply.](/images/dependabot/dependabot-flow.svg)
+
+The bottom row matters most. In my repositories **merging a Dependabot PR is a deploy**: a new image is built for jithendar.com and MOKS, Argo CD syncs miniKube, and `terraform apply` runs for tools. Section 9 covers what that means for review.
+
+## 3. The shape of every config file
+
+All my files start with a header comment that says what CI runs on a Dependabot PR and what merging does. Here is the header from `jithendar.com`:
+
+```yaml
+# Dependabot version updates. Pull requests run the `check` job in ci-jithendar-com.yml (lint,
+# typecheck, test, build, render manifests). Merging to master releases an image; ./deploy.sh still
+# has to be run to roll it out.
+#
+# Minor and patch updates are grouped to keep the PR count down; majors arrive one PR each.
+# Security updates are not grouped and are not held back by the cooldown.
+
+version: 2
+```
+
+Every `updates:` entry then follows the same pattern. This is the pip entry for the practice executor:
+
+```yaml
+updates:
+  - package-ecosystem: pip
+    directory: /executor
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/New_York
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: "deps(executor)"
+    labels:
+      - dependencies
+      - python
+    groups:
+      executor-minor-patch:
+        update-types:
+          - minor
+          - patch
+```
+
+The choices I made in every repository:
+
+- **Weekly, Monday 06:00 New York time.** All the PRs land together, before I start work, and I review them in one sitting. Daily updates produced more noise than value. RoboShop AI still runs on 09:00 `Asia/Kolkata`, from when it was set up.
+- **A commit prefix per directory** (`deps(www)`, `deps(backend)`, `deps(terraform)`, `deps(ci)`). The git log then shows at a glance which part of the repository changed.
+- **Labels per ecosystem** (`npm`, `python`, `docker`, `terraform`, `github-actions`), so I can filter the PR list.
+- **A cooldown of 3 days** on package ecosystems (section 5).
+- **Groups for minor and patch updates**; majors arrive one per PR (section 4).
+
+One thing to watch: combining a prefix that already has a scope with `include: scope` doubles it. My npm PRs are titled `deps(www)(deps): bump …`, because `include: scope` appends `(deps)` or `(deps-dev)` after the prefix. It is harmless, but if you want clean Conventional Commits, use either a scoped prefix or `include: scope`, not both.
+
+## 4. Groups: fewer PRs, but only the right ones together
+
+Without groups, Dependabot opens one PR per package. On the site's Next.js app that would be twenty or more PRs every week. With groups, PR #22 in `jithendar.com` was a single `bump the npm-minor-patch group in /www with 23 updates`.
+
+I use two kinds of group.
+
+**Catch-all by update type.** Every minor and patch bump goes into one PR; a major version gets its own PR, so I can read its changelog.
+
+```yaml
+groups:
+  npm-minor-patch:
+    update-types:
+      - minor
+      - patch
+```
+
+**Packages that must move together.** These groups are listed *before* the catch-all, because a dependency goes into the first group it matches.
+
+```yaml
+groups:
+  tiptap:
+    patterns:
+      - "@tiptap/*"
+  aws-sdk:
+    patterns:
+      - "@aws-sdk/*"
+  next-react:
+    patterns:
+      - next
+      - eslint-config-next
+      - react
+      - react-dom
+      - "@types/react"
+      - "@types/react-dom"
+  # @vercel/otel pins the OpenTelemetry SDK, and the SDK pins @opentelemetry/api to a narrow
+  # range; moving them separately breaks `npm ci` with ERESOLVE (api 1.10.0, 2026-10-30).
+  opentelemetry:
+    patterns:
+      - "@opentelemetry/*"
+      - "@vercel/otel"
+  npm-minor-patch:
+    update-types:
+      - minor
+      - patch
+```
+
+The `opentelemetry` group exists because of a real failure. When `@opentelemetry/api` 1.10.0 came out, Dependabot bumped it on its own, while the SDK that `@vercel/otel` pins still required a lower version, and `npm ci` failed with `ERESOLVE`. Grouping alone doesn't fully fix that (section 6 has the matching `ignore` rule), but it stops half of a family moving without the other half.
+
+MOKS uses the same idea for its Python backend, and each group says why it exists:
+
+```yaml
+groups:
+  # FastAPI pins a narrow Starlette range; uvicorn is tested with both.
+  web-framework:
+    patterns: [fastapi, starlette, "uvicorn*"]
+  # The SDK, exporter and instrumentation packages are released in lockstep.
+  opentelemetry:
+    patterns: ["opentelemetry-*"]
+  database:
+    patterns: ["SQLAlchemy*", sqlalchemy, alembic, asyncpg]
+  pydantic:
+    patterns: [pydantic, pydantic-settings, pydantic-core]
+  aws:
+    patterns: [boto3, botocore]
+  python-minor-patch:
+    update-types: [minor, patch]
+```
+
+GitHub Actions get a single group with `patterns: ["*"]`, so every action bump in a week arrives as one `deps(ci)` PR.
+
+**Groups do not apply to security updates by default.** A group without `applies-to` covers version updates only, so a security fix always arrives as its own small PR. I want that: a security PR should be easy to review and quick to merge, without waiting for 22 unrelated bumps.
+
+## 5. Cooldown: let new releases settle first
+
+```yaml
+cooldown:
+  default-days: 3
+```
+
+With a cooldown, Dependabot doesn't propose a version until it has been public for that many days. Three days is enough for most broken releases to be found and fixed by a patch, and for most hijacked packages to be found and removed from the registry, before they reach my lock file. Several npm supply-chain attacks were caught within hours, so even a short cooldown helps a lot.
+
+Two details:
+
+- The cooldown applies to **version updates only**. Security updates ignore it, which is what you want.
+- I don't set a cooldown on the Docker entries in `jithendar.com` or on GitHub Actions. Actions are pinned by commit SHA in that repository, and base images there come from official images I rebuild weekly anyway. You could argue for a cooldown there too; I may add one.
+
+## 6. Ignore rules: what Dependabot must never do alone
+
+Most of my config is `ignore` rules, and each one has a comment saying why it is there and when to remove it. An ignore without a reason gets forgotten and stays forever.
+
+**Stateful data stores.** A major PostgreSQL, Redis, MongoDB or RabbitMQ version can't just be rolled out by changing an image tag:
+
+```yaml
+ignore:
+  # Major PostgreSQL upgrades need pg_upgrade or a dump/restore of the data volume.
+  - dependency-name: postgres
+    update-types: ["version-update:semver-major"]
+  # MongoDB feature versions upgrade one step at a time and change the on-disk format.
+  - dependency-name: mongo
+    update-types:
+      - version-update:semver-major
+      - version-update:semver-minor
+  # RabbitMQ needs every feature flag enabled before a major upgrade.
+  - dependency-name: rabbitmq
+    update-types:
+      - version-update:semver-major
+```
+
+**Runtimes that must move with CI.** The Python image tag and `setup-python` in the workflows have to change together, because Python minor versions change the wheel ABI. So Dependabot doesn't touch Python majors or minors in the Dockerfiles; I bump them by hand. The same applies to Node majors and `@types/node`, which track `www/.nvmrc`.
+
+**Known incompatibilities, with an exit condition.**
+
+```yaml
+ignore:
+  # SDK 2.x (required by @vercel/otel 2.x) accepts api <1.10. Remove once @vercel/otel supports
+  # the 3.x SDK, then bump @vercel/otel, the SDK packages and the api together.
+  - dependency-name: "@opentelemetry/api"
+    versions: [">=1.10.0"]
+  # typescript-eslint (via eslint-config-next) supports TypeScript <6.1 only; 7.0 breaks `npm run lint`
+  # (2026-10-30). Remove once typescript-eslint supports TS 7.
+  - dependency-name: typescript
+    versions: [">=6.1.0"]
+```
+
+**A lesson from a merged PR.** In MOKS, PR #26 grouped nine reranker updates and moved `mpmath` to 1.4.1. But `sympy` 1.14.0, pulled in by `torch`, requires `mpmath<1.4`, and the install broke. Now there is a rule:
+
+```yaml
+ignore:
+  - dependency-name: torch
+  # sympy 1.14.0 (pulled in by torch) requires mpmath<1.4; PR #26 moved it to 1.4.1 and broke the install.
+  - dependency-name: mpmath
+    versions: [">=1.4"]
+```
+
+`torch` itself is ignored completely, because I install the `+cpu` build from the PyTorch CPU index. A plain PyPI bump would pull the CUDA build, which is several gigabytes bigger.
+
+**Images Dependabot must not own.** The site's own image is built by CI and pinned by `./deploy.sh`, so the Kubernetes entry ignores it:
+
+```yaml
+ignore:
+  # The app image is built by CI and pinned by ./deploy.sh, not by Dependabot.
+  - dependency-name: "*/jithendar-com"
+```
+
+**Deliberately broken images.** In MOKS, `lab/crewai-demo` isn't listed at all: its broken image tag is the fault the demo asks the agent to investigate. Dependabot would "fix" the demo.
+
+## 7. Infrastructure: Docker, Helm, Terraform and Actions
+
+Dependabot isn't only for application packages. Half my entries update infrastructure.
+
+**Kubernetes manifests.** The `docker` ecosystem also reads `image:` lines in plain Kubernetes YAML. It reads only the listed directory, not its subdirectories, so in miniKube I list each directory explicitly with `directories:`:
+
+```yaml
+- package-ecosystem: docker
+  directories:
+    - /deploy/minikube/ecr-refresh
+    - /deploy/minikube/harbor/manifests
+    - /deploy/minikube/harbor/examples
+```
+
+**Helm charts.** The `helm` ecosystem updates images in a chart's `values.yaml`. It can't read templated YAML, so in my local observability charts the image strings live in `values.yaml`, not in `templates/`, on purpose.
+
+**Terraform.** Dependabot updates provider versions and the `.terraform.lock.hcl` file. One entry can cover several root modules:
+
+```yaml
+- package-ecosystem: terraform
+  directories:
+    - /infra
+    - /infra/bootstrap
+```
+
+That's why PRs #20 and #21 in `jithendar.com` both moved `hashicorp/aws` from 6.71.0 to 6.72.0, one per directory.
+
+**GitHub Actions.** In `jithendar.com` every action is pinned to a full commit SHA with the version in a comment. Dependabot updates both:
+
+```yaml
+- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+```
+
+A tag like `v7` can be moved to different code by whoever controls the action. A SHA can't. Dependabot takes away the usual downside of SHA pinning, which is that nobody updates the SHAs.
+
+**What Dependabot can't see.** Each header lists what I still bump by hand, so nobody assumes it's covered:
+
+```yaml
+# Not covered, because Dependabot cannot read them; bump these by hand: Helm chart versions in
+# deploy/minikube/applications/*.yaml and the helm_release blocks in minikube-infrastructure/*.tf,
+# scripts/argocd/ and deploy/minikube/deploy-*.sh, terraform_version in the workflows, the Harbor
+# images (custom tags in deploy/minikube/harbor/values.yaml, built by build-harbor-images.yml), and
+# the Vault image ...
+```
+
+Argo CD `Application` chart versions, `helm_release` in Terraform, versions in shell scripts, `terraform_version` in workflows and checksummed `ARG` versions in Dockerfiles are all invisible to Dependabot. If you rely on it, write this list down.
+
+## 8. Security: alerts, security updates and transitive fixes
+
+### What happened this week
+
+On 9 November 2026 `jithendar.com` had three Dependabot alerts, all medium severity and all in **development** dependencies:
+
+| Alert | Package | Advisory | Pulled in by |
+|---|---|---|---|
+| 1 | `esbuild` | GHSA-67mh-4wv8-2f99: any website can send requests to the dev server and read the response | `drizzle-kit` → `@esbuild-kit/core-utils` |
+| 2 | `postcss-selector-parser` | GHSA-rj75-hqrm-r3gf: quadratic parsing allows CPU exhaustion | `@tailwindcss/typography` |
+| 3 | `minimatch` | GHSA-g3hv-75wg-m249: denial of service via globparts amplification | `eslint`, `typescript-eslint` |
+
+Dependabot couldn't open security PRs for these. They are **transitive** dependencies, and their parents pin the vulnerable range, so no version of the parent that Dependabot could pick contained the fix. This is common, and it's where you have to step in.
+
+I fixed them with npm `overrides` in `www/package.json`:
+
+```json
+"overrides": {
+  "@esbuild-kit/core-utils": {
+    "esbuild": "^0.25.12"
+  },
+  "@tailwindcss/typography": {
+    "postcss-selector-parser": "^6.1.6"
+  },
+  "minimatch@>=7.0.0 <11.0.1": "^11.0.5"
+}
+```
+
+All three alerts closed as fixed once that reached `master`. An override is a debt, so the config file records how to pay it back:
+
+```yaml
+# www/package.json "overrides" force patched transitive dev packages that their parents still pin
+# (2026-11-09; alerts 1-3) ... Drop each override once its parent ships the fix
+# (`npm ls <name>` without the override shows when).
+```
+
+### How I triage an alert
+
+1. **Is the package used at runtime?** Alerts show the scope (`runtime` or `development`). A dev-only CPU exhaustion in a CSS parser is low risk for a static build; a runtime one in the web server is not.
+2. **Is the vulnerable code reachable?** The esbuild advisory concerns the development server. I don't run it in production, but I do run it on my laptop.
+3. **Is there a fixed version I can reach?** If the security PR exists, review and merge it. If not, use an override (npm), a constraint (pip), or update the parent by hand.
+4. **Can't fix it yet?** Dismiss the alert with a reason (*tolerable risk*, *vulnerable code not used*, …) and a comment. A dismissed alert with a reason is documentation; an open alert that everyone ignores teaches people to ignore alerts.
+
+RoboShop AI had 18 alerts, all closed as fixed now, including `undici` in the root lock file, `pymongo` in the AI gateway, and `redis` and `httpclient` in an archived `legacy/` directory. Its config only lists active manifests: *"Maintain active manifests using explicit paths; archived legacy/ and reference-only sources are excluded."*
+
+## 9. Keeping Dependabot itself safe
+
+A tool that pushes code to your repository every week is part of your supply chain too. These are the controls I rely on.
+
+**Dependabot PRs get no repository secrets.** Workflows triggered by Dependabot run with a read-only `GITHUB_TOKEN` and can only read *Dependabot* secrets, which are stored separately from Actions secrets. I store no Dependabot secrets in any of these repositories. My workflows are written so that doesn't matter: the RoboShop AI image workflow says so in a comment.
+
+```yaml
+# Only the default branch uses them; Dependabot branches get no repository secrets.
+```
+
+**PR jobs only run for branches of the same repository.** Dependabot's branches live in the repository, so they still get CI. Forks don't:
+
+```yaml
+check:
+  # Pull requests from forks never run CI here (nothing in it needs them). Branches of this repository,
+  # including Dependabot's, still run.
+  if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+```
+
+**Nothing applies from a Dependabot branch.** In `tools`, the Terraform apply workflow only runs on pushes to `master`:
+
+```yaml
+push:
+  # Apply from master only: a filter here is what keeps Dependabot and other branches from applying
+  # unreviewed Terraform. Pull requests are checked by check-aws-infrastructure.yml.
+  branches: [master]
+```
+
+PRs only get `fmt`, `validate` and mocked tests.
+
+**No auto-merge.** `allow_auto_merge` is off in every repository, and no workflow merges Dependabot PRs. Many teams auto-merge patch updates with `dependabot/fetch-metadata`, and that's reasonable when the tests are strong and merging doesn't deploy. In my repositories merging *is* the deploy, so a person reads the diff.
+
+**Stateful images get a warning in the config.** The miniKube header reads (RoboShop AI has a shorter version above its data-store directories):
+
+```yaml
+# Stateful images (postgres, valkey) restart their StatefulSet when merged. mk4's hostpath PVs have no
+# nodeAffinity, so a pod that lands on another node starts on an empty volume: check the node before merging.
+```
+
+That is a cluster weakness, not a Dependabot one, but a routine Dependabot merge is exactly what would trigger it.
+
+**Review the lock file, not only the title.** A group PR titled "23 updates" can add new transitive packages. Before merging I look at the lock file diff for packages I've never seen, and at Dependabot's release notes for anything with a new `postinstall` script or a maintainer change.
+
+## 10. Weak spots I still have
+
+- **No required status checks.** No rule on any default branch requires the CI job to pass before merging. I wait for green checks myself. A ruleset that requires the `check` job would turn that habit into a rule.
+- **Tags instead of SHAs in two repositories.** MOKS and RoboShop AI pin most actions by tag (`actions/checkout@v7`, `@v7.0.1`); only a couple use a SHA. Dependabot updates them anyway, but a moved tag would be picked up without a PR.
+- **Inconsistent configs.** RoboShop AI has no cooldown, no labels and a limit of 5 open PRs; the newer repositories have all three. Its groups use `patterns: ["*"]` with `update-types`, which works, but has no family groups like `opentelemetry`.
+- **Stale PRs.** `tools` still has an open Helm PR from before that entry moved to the miniKube repository.
+- **Hand-bumped versions drift.** Everything in the "not covered" lists depends on me remembering. A scheduled check that compares them against the latest releases would close that gap.
+
+## 11. FAQ
+
+### Is Dependabot free?
+
+Yes. Alerts, security updates and version updates are free for public and private repositories on GitHub.com. Dependabot runs on GitHub's infrastructure, but the CI it triggers uses your normal Actions minutes or runners.
+
+### Do I need `dependabot.yml` for security updates?
+
+You don't. Turning on Dependabot security updates in the repository settings is enough. If a `dependabot.yml` exists, security PRs take its labels, commit prefix and other settings for the matching ecosystem and directory.
+
+### Why didn't Dependabot open a PR for my alert?
+
+Usually one of these: there is no fixed version yet; the vulnerable package is transitive and its parent pins a vulnerable range (my three alerts this week); the fix needs a major version that your manifest doesn't allow; or the update fails to resolve. The alert page shows the error. You can fix it by hand, as in section 8.
+
+### How do I stop getting so many PRs?
+
+Use `groups` for minor and patch updates, a weekly schedule, and `open-pull-requests-limit`. Use `ignore` for the things you really will do by hand.
+
+### Will grouping hide a broken update?
+
+It can. If one of 23 packages breaks the build, the whole group fails. When that happens, I find the culprit in the CI log, add an `ignore` for that version with a comment, and comment `@dependabot recreate` on the PR to rebuild the group without it.
+
+### What are the useful PR comment commands?
+
+The ones I use: `@dependabot rebase`, `@dependabot recreate` (throws away manual edits), `@dependabot ignore this major version`, `@dependabot ignore this minor version`, `@dependabot ignore this dependency`, and on group PRs `@dependabot ignore <dependency name>`. `@dependabot show <dependency name> ignore conditions` lists the ignores Dependabot has stored from comments. Ignores made with comments live in Dependabot, not in your file, so I prefer to write them in `dependabot.yml` where they're reviewed and visible.
+
+### What is `versioning-strategy: increase`?
+
+For npm it means Dependabot raises the lower bound in `package.json` (for example `^2.1.0` → `^2.2.0`), not only the lock file. My `package.json` then always shows the version that is actually tested.
+
+### Does Dependabot update Kubernetes manifests and Helm charts?
+
+Partly. The `docker` ecosystem updates `image:` lines in plain YAML in the listed directories. The `helm` ecosystem updates images in a chart's `values.yaml`. Neither updates the chart version in an Argo CD `Application`, a Terraform `helm_release`, or anything rendered from templates.
+
+### Can Dependabot use my secrets in a PR?
+
+Not repository or organization Actions secrets. A workflow run triggered by Dependabot only sees Dependabot secrets and a read-only `GITHUB_TOKEN`. If a PR job needs a credential (a private registry, for example), store it as a Dependabot secret, and keep its permissions as small as possible.
+
+### Should I auto-merge Dependabot PRs?
+
+Only if your tests would catch a broken update, and merging doesn't deploy straight to production without another check. If both are true, auto-merging patch updates with `dependabot/fetch-metadata` and `gh pr merge --auto` is a fine way to save time. Keep a person on majors and on anything that touches data.
+
+### Dependabot or Renovate?
+
+Renovate can do more: regex managers for versions in scripts and workflows, richer scheduling, and dashboard issues. Dependabot is built in, needs nothing installed, and is tied to the alerts in GitHub's Security tab. For five personal repositories, Dependabot plus a written "not covered" list is enough for me. If the hand-bumped lists in section 7 keep growing, Renovate's regex managers are the obvious next step.
+
+## 12. Recap
+
+- Dependabot is three features: **alerts**, **security updates** and **version updates**. Turn on the first two in settings, and configure the third in `.github/dependabot.yml`.
+- **Group** minor and patch updates, plus families that must move together. Leave majors and security fixes as separate PRs.
+- A **cooldown** of a few days keeps brand-new and possibly hijacked releases out of your lock file.
+- Every **ignore** needs a reason and an exit condition in a comment.
+- **Transitive** vulnerabilities often need an override; record when to remove it.
+- **Know what merging does.** If it deploys, review like it deploys, and keep secrets and `apply` away from PR branches.
+- Write down **what Dependabot can't see**.
+
+### Checklist
+
+- [ ] Turn on the dependency graph, Dependabot alerts and Dependabot security updates.
+- [ ] Add `.github/dependabot.yml` with one entry per ecosystem and directory (use `directories:` for several).
+- [ ] Set a weekly schedule with a time zone, a commit prefix and labels.
+- [ ] Add a `minor`/`patch` group, and family groups before it.
+- [ ] Add `cooldown: default-days: 3` to package ecosystems.
+- [ ] Ignore majors for databases and runtimes that need a migration or must move with CI; comment each rule.
+- [ ] Pin GitHub Actions by commit SHA and let Dependabot update them.
+- [ ] Make sure PR workflows get no deploy credentials and nothing applies from non-default branches.
+- [ ] Require CI to pass before merging.
+- [ ] List the versions Dependabot can't read, and bump them on a schedule.
+
+## Code
+
+- moks-cms (jithendar.com): [github.com/mrjithendar/moks-cms](https://github.com/mrjithendar/moks-cms) (`.github/dependabot.yml`)
+- MOKS: [github.com/mrjithendar/moks](https://github.com/mrjithendar/moks)
+- RoboShop AI: [github.com/mrjithendar/roboshop-ai](https://github.com/mrjithendar/roboshop-ai)
+- tools: [github.com/mrjithendar/tools](https://github.com/mrjithendar/tools)
+- miniKube: [github.com/mrjithendar/miniKube](https://github.com/mrjithendar/miniKube)

@@ -1,0 +1,337 @@
+---
+title: "AWS VPC Explained Without the Jargon: A Guided Tour of a Real Network"
+slug: aws-vpc-explained-guided-tour
+description: "Every AWS VPC feature explained in plain language, with draw.io diagrams of a real multi-zone network: subnets, gateways, routes, firewalls, endpoints and logs."
+seoTitle: "AWS VPC Explained Simply: Subnets, NAT, Routes and Security"
+seoDescription: "A plain-language tour of a real AWS VPC: what each feature does, why it is there and what it costs, with 13 diagrams. No networking background needed."
+author: jithendar-dharmapuri
+category: aws-cloud
+tags: [AWS, VPC, Networking, NAT Gateway, Subnets, Security Groups, VPC Endpoints, VPC Peering, Flow Logs, Terraform, Amazon EKS]
+contentType: tutorial
+status: review
+featuredImage:
+  src: /images/aws-vpc/12-request-journey.png
+  alt: "A customer's request travelling through the roboshop production VPC: from the internet through the internet gateway to a load balancer in the public subnet, on to the shop app in the private subnet and the orders database in the data subnet. The app reaches a payment provider outbound through a NAT gateway and saves receipts to S3 through a free gateway endpoint."
+  width: 1830
+  height: 943
+related: [blog/roboshop-ai-eks-system-design, blog/deploy-roboshop-ai-amazon-eks, blog/learning-terraform-real-project-tools-repository]
+---
+<Todo>Draft for editorial review, written from the Terraform in github.com/mrjithendar/aws-vpc (dev.tfvars and prod.tfvars) on 2026-11-12. Before publishing: (1) confirm the aws-vpc repository is public, or remove the two links to it; (2) say whether dev and prod are currently applied in your account, and if so add a "checked against the live account on <date>" line under the introduction; (3) the prices quoted are the ones in the repo's comments (us-east-1): re-check them against the AWS pricing pages on the day you publish; (4) the draw.io sources are in aws-vpc/docs/diagrams and need committing there.</Todo>
+
+Ask ten engineers what a VPC is and you will get ten answers full of words like CIDR, NAT and route propagation. Those words are accurate, but they hide something simple. A VPC is a private building for your software. It has rooms, doors, corridors, signposts, guards and a visitor log. Once you can picture the building, every AWS networking feature becomes an ordinary thing you already understand.
+
+This article is a guided tour of one real building: the network that runs [RoboShop](https://github.com/mrjithendar/aws-vpc), a demo online shop, in Amazon's `us-east-1` region. Every number, name and diagram below comes from its Terraform code, so nothing here is a textbook example. You do not need any networking background. Engineers will find the exact settings in each section too.
+
+::toc
+
+## The one-minute version
+
+If you read nothing else, read this table. The rest of the article explains each row.
+
+| VPC feature | Think of it as | What it does for the shop |
+| --- | --- | --- |
+| **VPC** | A private building | Keeps the shop's servers apart from everyone else on AWS |
+| **Region** | The city | `us-east-1`, Northern Virginia |
+| **Availability Zone** | Separate blocks of the city | Copies of the shop in two or three places, so one outage can't close it |
+| **CIDR block** | The building's range of room numbers | 65,536 private addresses, `10.10.0.0` to `10.10.255.255` in production |
+| **Subnet** | A room with its own rules | Four kinds: public, private, data and intra |
+| **Internet gateway** | The front door | The only way between the building and the internet |
+| **NAT gateway** | The outgoing post room | Lets servers send requests out without letting strangers in |
+| **Route table** | Signposts in the corridors | Tells traffic from each room which exit to use |
+| **Security group** | A bouncer at each door | Lets in only the visitors on its list |
+| **Network ACL** | A guard at the street gate | Checks everyone going in or out of a whole room |
+| **VPC endpoint** | A private tunnel to AWS services | Reaches S3, DynamoDB and others without going outside |
+| **VPC peering** | A covered bridge to the building next door | Connects the shop to the network where Jenkins runs |
+| **Flow logs** | The visitor logbook | Records every connection, allowed or refused |
+
+## The building we are touring
+
+RoboShop runs in two copies of the same network, built from the same code with different settings:
+
+- **Dev**, for testing, at `10.0.0.0/16`, spread over two zones and built to be cheap.
+- **Prod**, for real customers, at `10.10.0.0/16`, spread over three zones and built to survive failures.
+
+Most diagrams show prod. Where dev differs, the section says so.
+
+## What a VPC is
+
+AWS is a very large city of computers shared by millions of customers. When you sign up, you don't get your own data centre. You get space on shared machines. A **Virtual Private Cloud** is how you get privacy in a shared city: a walled building that only you can see into. Your servers live inside it. Other customers' servers live in their own buildings. By default there is no path between them at all.
+
+![The roboshop production VPC inside the AWS us-east-1 region. Inside the VPC are the shop app on EKS, an RDS database, an ElastiCache cache, a load balancer, a NAT gateway and flow logs. Customers and the public internet reach the VPC only through the internet gateway, which connects to the load balancer. Next to it, someone else's VPC with address range 172.31.0.0/16 holds their servers, with no path between the two.](/images/aws-vpc/01-what-is-a-vpc.svg)
+
+Two things to notice in the picture:
+
+1. **There is only one door from the internet**, the internet gateway, and it opens onto the load balancer, not onto the app or the database.
+2. **The neighbour's building is completely separate.** Nothing travels between the two unless someone builds a bridge on purpose (you will see one later).
+
+The VPC also comes with a built-in phone book. With DNS support and DNS hostnames switched on, servers can find each other and AWS services by name instead of by number. Several AWS features, including private endpoints, need this, so the code turns both on.
+
+## Regions and Availability Zones
+
+A **Region** is a city where AWS has data centres. This VPC lives in `us-east-1`, in Northern Virginia. A VPC always belongs to exactly one region.
+
+Inside each region are several **Availability Zones**. Each zone is one or more data centres with its own power, cooling and network links, kilometres away from the other zones. They are close enough to talk to each other in about a millisecond, and far enough apart that a fire, flood or power cut in one does not reach the others.
+
+![The us-east-1 region with four Availability Zones. use1-az1 and use1-az2 are used by both dev and prod. use1-az4 is used by prod only. use1-az3 is greyed out and skipped because it is capacity-constrained and lacks newer machine types. A note explains why several zones are used, and why zones are chosen by ID instead of by name.](/images/aws-vpc/02-region-and-zones.svg)
+
+The rule is simple: **put a copy of everything in more than one zone.** Prod uses three zones, so it can lose a whole zone and keep serving customers. Dev uses two, which is enough to test that the shop behaves correctly across zones.
+
+Two small decisions in this setup are worth knowing about:
+
+- **Zones are chosen by ID, not by name.** AWS gives zones friendly names like `us-east-1a`, but it shuffles those names differently for every AWS account. My `us-east-1a` might be your `us-east-1c`. The ID `use1-az1` means the same physical place for everyone, so the code uses IDs.
+- **One zone is skipped on purpose.** `use1-az3` is known to be short of capacity and lacks some newer machine types. Picking it would mean occasional "no capacity" errors when the shop tries to grow.
+
+## The address plan
+
+Every device in the building needs an address, the way every room needs a number. Inside a VPC these are private IP addresses that only mean something inside the building, a bit like extension numbers on an office phone system.
+
+The VPC's whole range is written as `10.10.0.0/16`. This notation is called **CIDR**, and you only need one idea to read it: the number after the slash says how many digits of the address are fixed. A `/16` fixes the first two numbers (`10.10`) and leaves the last two free, which gives 256 × 256 = **65,536 addresses**. A smaller range has a bigger number after the slash. A `/24` fixes three numbers and leaves 256 addresses. A `/20` sits between the two at 4,096.
+
+The building is then divided into rooms, called subnets, and each kind of room gets its own block of numbers:
+
+![The 10.10.0.0/16 address range drawn to scale as a bar of 256 blocks, one per value of the third number. Public uses blocks 0 to 3, data 10 to 13, intra 20 to 23, private 32 to 95, and blocks 96 to 255 are spare, about 62 percent kept for growth. Cards below give each tier's ranges in prod: public 10.10.0.0 to 10.10.2.255 with 251 usable addresses each, data 10.10.10.0 to 10.10.12.255, intra 10.10.20.0 to 10.10.22.255, and private 10.10.32.0 to 10.10.79.255 with 4,091 usable addresses each.](/images/aws-vpc/03-address-plan.svg)
+
+Three choices make this plan good, and they are easy to get wrong:
+
+1. **The private rooms are much bigger.** On Kubernetes, every running copy of the app gets its own address, so the app rooms fill up fastest. Each private subnet gets 4,096 addresses. The others get 256.
+2. **Each kind of room has its own fixed stretch of numbers**, with room for a fourth zone. Adding a zone later slots into the gap already reserved for it, instead of colliding with another tier and forcing a rebuild.
+3. **Most of the range is left empty.** About 62% of the addresses are unused, ready for whatever the shop needs next year.
+
+:::callout{type="info" title="Why 251 and not 256?"}
+AWS keeps five addresses in every subnet for itself: the network address, the VPC router, the DNS server, one held for future use, and the broadcast address. A `/24` therefore gives you 251 usable addresses, and a `/20` gives 4,091.
+:::
+
+Prod and dev use different ranges (`10.10.x.x` and `10.0.x.x`). That matters as soon as you want to connect networks, because two buildings with the same room numbers can't be joined without confusion.
+
+## Subnets: four kinds of room
+
+A **subnet** is a slice of the VPC's addresses that lives in exactly one zone. Subnets are where the rules live. What a subnet can reach is decided by which signposts and guards it is given. Here the network has four kinds of subnet, one of each in every zone:
+
+![The roboshop production VPC with three Availability Zone columns, use1-az1, use1-az2 and use1-az4, and four rows of subnets. Public subnets 10.10.0.0/24, 10.10.1.0/24 and 10.10.2.0/24 hold a load balancer and a NAT gateway each. Private subnets 10.10.32.0/20, 10.10.48.0/20 and 10.10.64.0/20 hold Kubernetes nodes and app servers. Data subnets 10.10.10.0/24 to 10.10.12.0/24 hold RDS and ElastiCache. Intra subnets 10.10.20.0/24 to 10.10.22.0/24 hold the EKS control-plane network cards.](/images/aws-vpc/04-subnet-tiers.svg)
+
+**Public: the shop window.** This is the only room that faces the street. Just two things live here: load balancers, which take in customer traffic and share it out, and NAT gateways, the outgoing post room. No application code runs in a public subnet. Servers placed here also don't get a public address automatically. Anything that needs one has to ask for it explicitly, so nobody exposes a server to the internet by accident.
+
+**Private: the back office.** The shop's application runs here, on Amazon EKS (Kubernetes). These servers can send requests out to the internet through the post room, but nobody on the internet can start a conversation with them.
+
+**Data: the vault.** Databases (RDS) and caches (ElastiCache) live here. The vault has no route to the internet at all, in either direction. Only things inside the building, or across the bridge to the Jenkins network, can reach it.
+
+**Intra: the staff-only corridor.** Kubernetes has a control plane, the "manager" that AWS runs for you, and it connects into your VPC through network cards placed here. Nothing in this room ever needs the internet.
+
+Why bother with four kinds instead of one big room? Because each one has a single job, the rules for each one can be strict and simple. And if something does go wrong in one room, such as a bug in the app, the damage it can do is limited by the walls around it.
+
+The subnets also carry labels that Kubernetes reads. Public subnets are marked "put internet-facing load balancers here", and private subnets "put internal load balancers here". In prod the private subnets are also marked as belonging to the `roboshop-prod` cluster, so Kubernetes and its node autoscaler know where to place new machines.
+
+## The internet gateway: the front door
+
+The **internet gateway** is the building's one door to the internet. AWS runs it for you. It doesn't fill up, it doesn't fail on its own, and it costs nothing by itself.
+
+![Customers connect through the internet gateway to a load balancer in the public subnet, along a route labelled 0.0.0.0/0 to IGW. The load balancer forwards inside the VPC to the shop app in the private subnet. A red dashed line from the internet gateway to the private subnet is marked no route. Notes explain that the gateway is a two-way door, that only the public subnet's route table uses it, and that the private subnet has no such route.](/images/aws-vpc/05-internet-gateway.svg)
+
+A door alone doesn't decide who uses it. What makes a subnet "public" is one signpost in its route table: *"anything for the internet, go via the internet gateway."* The public subnets have that signpost. The private, data and intra subnets don't. So even if someone on the internet knew the private address of an app server, there is simply no road from the door to that room.
+
+Customers therefore only ever talk to the load balancer. The load balancer, inside the building, passes their requests on to the app.
+
+## The NAT gateway: the outgoing post room
+
+The app servers sit in the back office with no road to the front door, yet they still need to reach the outside world: to download software updates, pull container images, or call a payment provider. That is the job of the **NAT gateway**.
+
+Think of it as the post room. Staff hand their outgoing letters to the post room, which sends them from the building's own return address and passes the replies back to the right person. People outside only ever see the post room's address. They can reply to a letter, but they can't send something to a member of staff out of the blue.
+
+Each NAT gateway sits in a public subnet and has a fixed public address (an Elastic IP), so outside services always see the same sender.
+
+![Two VPCs side by side. Dev has one shared NAT gateway in use1-az1: the shop app in use1-az1 uses it directly, and the shop app in use1-az2 crosses zones to reach it. Prod has a NAT gateway in each of its three zones, use1-az1, use1-az2 and use1-az4, and each zone's shop app uses its own. All NAT gateways send traffic out through the internet gateway to the internet. Notes say dev saves about $32 a month per extra zone, and prod survives a single zone outage.](/images/aws-vpc/06-nat-gateways.svg)
+
+Here dev and prod make different choices, and the difference is a good example of trading money for safety:
+
+- **Dev shares one NAT gateway.** Each NAT gateway costs roughly $32 a month before any traffic, so sharing saves that much for each extra zone. The risk is that if the zone holding the NAT has a bad day, the whole dev environment loses its way out. For a test environment, that's acceptable.
+- **Prod has one NAT gateway per zone.** Each zone's servers use the post room in their own zone. If one zone fails, the other two still have a working exit.
+
+NAT gateways also charge for every gigabyte they handle (about $0.045 per GB in `us-east-1`). That fee is the reason for the endpoints described further down.
+
+## Route tables: signposts in the corridors
+
+Every subnet is attached to a **route table**, a short list of signposts. Each signpost says *"traffic for these addresses, go this way."* When a server sends something, the VPC reads the signposts for that server's subnet and picks the most specific one that matches.
+
+![Four route tables. public-rt, shared by all public subnets: 10.10.0.0/16 to local, 0.0.0.0/0 to the internet gateway. private-rt, one per zone: local, 0.0.0.0/0 to the NAT gateway in the same zone, 172.31.0.0/16 to the peering link, and S3 and DynamoDB to the gateway endpoint. data-rt: local and 172.31.0.0/16 to the peering link only, with no internet and no S3. intra-rt: local and S3 and DynamoDB to the gateway endpoint. Arrows connect each row to the internet gateway, NAT gateway, peering link and gateway endpoint.](/images/aws-vpc/07-route-tables.svg)
+
+Read the four tables and you can predict exactly what each room can reach:
+
+| Route table | What its signposts allow |
+| --- | --- |
+| **public-rt** (one, shared) | Anywhere in the building, plus the internet through the front door |
+| **private-rt** (one per zone) | Anywhere in the building, the internet through *its own zone's* NAT, the Jenkins network over the bridge, and S3 and DynamoDB through the private tunnel |
+| **data-rt** (one, shared) | Anywhere in the building and the Jenkins network. Nothing else. |
+| **intra-rt** (one, shared) | Anywhere in the building, plus S3 and DynamoDB through the private tunnel |
+
+Every table has a `local` signpost, meaning "anywhere inside this VPC". AWS adds it automatically and it can't be removed, which is why every room can always reach every other room *by road*. Whether it is *allowed in* is a separate question, answered by the guards in the next section.
+
+Prod has a separate private route table for each zone because each one points at a different NAT gateway. That per-zone signposting is what keeps a zone's traffic in its own zone.
+
+One detail in the code is worth copying: every signpost is a separate Terraform resource instead of a list inside the table. That way the peering and endpoint signposts, and any future ones, can be added without Terraform deleting each other's work on every run.
+
+## Security groups and network ACLs: two kinds of guard
+
+Roads decide where traffic *can* go. Guards decide whether it is *let in*. AWS gives you two kinds of guard, and this network uses both.
+
+![Inside the roboshop VPC, the shop app sits in security group app-sg in the private subnet, and the orders database sits in security group db-sg in the data subnet. A green arrow from the app to the database is labelled allowed. db-sg allows port 5432 from app-sg only. A network ACL guards the whole data subnet. A red dashed arrow from someone on the internet to the network ACL is labelled turned away, not from 10.10.0.0/16 or 172.31.0.0/16. Notes describe the default security group with all rules removed, and the different jobs of the two layers.](/images/aws-vpc/08-security-layers.svg)
+
+**A security group is a bouncer at one door.** It is attached to a single resource, such as one database or one app server, and holds a guest list: *"let in traffic on port 5432 from anything wearing the app-sg badge."* Badges are the clever part. The rule doesn't name addresses, which change all the time on Kubernetes. It names the group, so any server carrying the app's badge gets in, and anything else doesn't. Security groups also remember who they let in, so the replies flow back out without needing a rule of their own. Engineers call this *stateful*.
+
+**A network ACL is a guard at the street gate of a whole room.** It checks every packet going in *and* coming out, every time, with no memory. Engineers call this *stateless*. This network gives the data tier its own ACL with a very short list: traffic is allowed only to and from the VPC itself (`10.10.0.0/16`) and the peered Jenkins network (`172.31.0.0/16`). Everything else is refused at the gate.
+
+Why both? Because people make mistakes. If someone one day writes a careless security group rule that opens a database to "everyone", the data tier's gate guard still refuses anyone from outside the two trusted networks. Two independent layers mean a single mistake doesn't become a breach.
+
+Two more guard rules in the code:
+
+- **The default security group is disabled.** Every VPC comes with a ready-made security group that resources fall into if nobody chooses one. This code takes it over, removes every rule and renames it `DO-NOT-USE`. Anything accidentally placed in it can't talk to anything, which turns a silent mistake into an obvious one. This matches a common security benchmark (CIS, and AWS Security Hub control EC2.2).
+- **The default network ACL is managed in code.** It still allows everything, since the security groups do the fine-grained work, but because Terraform owns it, anyone who changes it by hand shows up as a difference in the next plan.
+
+## VPC endpoints: private tunnels to AWS services
+
+Many AWS services, such as S3 for files or ECR for container images, don't live inside your VPC. They live in AWS's own part of the city. Without help, the app would reach them the long way round: out through the post room (and its per-gigabyte fee), onto the public internet, and back into AWS. **VPC endpoints** are private tunnels that skip all of that.
+
+![The roboshop-prod VPC and AWS services outside it. The shop app in the private subnet reaches S3 and DynamoDB through a free gateway endpoint, and reaches ECR, STS, CloudWatch Logs and the EC2 and ELB APIs through interface endpoint network cards in the private subnet, HTTPS only. A grey dashed line to the NAT gateway in the public subnet, at $0.045 per GB, is labelled the long, paid way round. The data subnet's database has no endpoint on purpose.](/images/aws-vpc/09-endpoints.svg)
+
+There are two kinds, and this network uses both:
+
+**Gateway endpoints are free.** They exist only for S3 and DynamoDB, and they work as an extra signpost in the route table: *"for S3, take this tunnel."* This network always creates both and attaches them to the private and intra route tables. There is no reason not to: they cost nothing and save NAT fees on what is often the largest stream of traffic.
+
+**Interface endpoints are paid, and optional.** They put a small network card for a service (ECR, STS and so on) directly inside your private subnets, with a security group that only accepts encrypted HTTPS from inside the VPC. Each costs about $7.30 a month per zone, plus a small fee per gigabyte. They are worth it when a lot of traffic would otherwise cross the NAT. So:
+
+- **Dev has none.** Its traffic is small, and the monthly fee would outweigh the savings.
+- **Prod has six**: the two ECR endpoints for pulling container images, STS for credentials, CloudWatch Logs, and the EC2 and Elastic Load Balancing APIs. These are what an EKS cluster with private nodes needs to start machines and pull images without the internet. With "private DNS" switched on, the app doesn't need to change at all. Its usual service addresses quietly resolve to the tunnel.
+
+Notice what is **not** connected: the data tier. It has no endpoint and no NAT. The vault has no way out of the building, even to AWS's own services, so a compromised database server has nowhere to send stolen data.
+
+## VPC peering: a bridge to the building next door
+
+The shop's code is built and deployed by Jenkins, which runs in a different VPC: the account's *default* VPC, at `172.31.0.0/16`. Jenkins needs to reach the shop's private servers, and the shop sometimes needs to reach tooling in the Jenkins network. **VPC peering** is a private bridge between two buildings.
+
+![The roboshop-dev VPC at 10.0.0.0/16, holding the shop app and database, connected through a VPC peering link to the default VPC at 172.31.0.0/16, which holds Jenkins. Cards show the signpost added on each side: 172.31.0.0/16 to the peering link in the private and data route tables, and 10.0.0.0/16 to the peering link in every route table of the default VPC. Notes explain the overlap check and that peering is not transitive.](/images/aws-vpc/10-peering.svg)
+
+A bridge needs signposts at both ends, or traffic crosses and can't find its way home. The code adds them on both sides:
+
+- **On the shop's side**, the private and data route tables get *"for 172.31.x.x, take the bridge."* The public and intra rooms don't, because nothing in them needs Jenkins.
+- **On the Jenkins side**, every route table gets the return signpost *"for 10.0.x.x, take the bridge."*
+
+Name lookups are also allowed across the bridge, so Jenkins can use a database's normal hostname and get its private address back, instead of a public one.
+
+Two limits of peering are built into the design:
+
+:::callout{type="warning" title="Overlapping addresses can't be bridged"}
+If both buildings used the same room numbers, a signpost saying "for 10.0.x.x, take the bridge" would be ambiguous. The Terraform code compares the two address ranges before doing anything, and stops the plan with a clear error if they overlap. Without that check, AWS would reject the bridge partway through the build.
+:::
+
+**Peering doesn't pass through.** If building A is bridged to B, and B to C, A still can't reach C. With two or three networks, that is fine. Beyond that, the usual tool is a Transit Gateway, a central hub every network connects to. The code is written so a hub's signposts could be added later without rework.
+
+## Flow logs: the visitor logbook
+
+The last feature watches everything the others do. **VPC Flow Logs** record a line for every connection that touches a network card in the VPC: who talked to whom, on which port, how much was sent, and whether it was allowed or refused.
+
+![Every network card in the roboshop VPC, including the shop app, load balancer, NAT gateway and database, is recorded by VPC Flow Logs, which captures all traffic, accepted and rejected, every 60 seconds. Logs are written as Parquet in hourly folders to a dedicated S3 bucket, which can be queried with Amazon Athena. A card lists the bucket's protections: encrypted at rest, refuses unencrypted connections, can never be made public, only the AWS log service may write, and logs are deleted after 30 days in dev or 365 days in prod. Another card shows one log line, 10.10.33.14 to 10.10.10.25 port 5432, 18 packets, ACCEPT, translated as the shop app talked to the database and it was allowed.](/images/aws-vpc/11-flow-logs.svg)
+
+Logs are what you reach for when something strange happens. Why can't the app reach the database? (Look for `REJECT` lines.) Is anything trying to reach the vault from outside? Which service is pushing so much traffic through the NAT gateway? This network captures:
+
+- **All traffic**, both allowed and refused, gathered into one-minute batches.
+- **Extra detail that matters on Kubernetes.** Behind a NAT gateway or a pod network, the address you see is often not the real sender. The log format adds the original source and destination addresses, the zone, the direction and the AWS service involved, so you can trace a line back to the actual pod.
+- **A storage format built for questions.** Logs land in S3 as Parquet files in hourly folders. Amazon Athena can query them with ordinary SQL, scanning only the hours you ask about.
+
+A logbook is only useful if nobody can tamper with it or leak it, so the bucket is locked down: it is encrypted, it refuses any connection that isn't encrypted, it can never be made public, only the AWS log delivery service from this same account may write to it, and old logs are deleted automatically, after 30 days in dev and 365 days in prod.
+
+## IPv6, ready when needed
+
+Everything above uses IPv4, the familiar `10.10.0.0` style of address. The code can also switch on **IPv6**, the newer and much larger address system, with a single setting. AWS then gives the VPC its own block of IPv6 addresses, and the public and private subnets get both kinds.
+
+IPv6 addresses are all public, so the post-room trick works differently: the private subnets use an **egress-only internet gateway**, a door that opens outward only. It's off today because nothing in the shop needs it, but turning it on is a one-line change rather than a redesign.
+
+## Putting it together: one request's journey
+
+Now follow a single customer through the building. Each number below matches a badge in the diagram.
+
+![A customer's request through the roboshop-prod VPC in seven numbered steps: 1, the customer reaches the internet gateway; 2, the gateway passes the request to the load balancer in the public subnet; 3, the load balancer forwards to the shop app in the private subnet; 4, the app reads the orders database in the data subnet; 5, the app sends a request out through the NAT gateway; 6, the NAT gateway sends it via the internet gateway to the payment provider; 7, the app saves a receipt to S3 through the gateway endpoint.](/images/aws-vpc/12-request-journey.svg)
+
+1. **A customer opens the shop.** Their request crosses the internet and arrives at the only door, the internet gateway.
+2. **The front door hands it to the load balancer** in a public subnet, the only room that faces the street.
+3. **The load balancer picks a healthy copy of the app** in a private subnet. If one zone is down, it simply uses the copies in the others.
+4. **The app reads the customer's order** from the database in the data tier. The database's bouncer checks the app's badge, and the data room's gate guard confirms the traffic comes from inside the building.
+5. **The app needs to charge a card**, so it sends a request to the NAT gateway in its own zone.
+6. **The NAT gateway sends it out** through the internet gateway to the payment provider, and carries the reply back. The payment provider never learns the app server's private address.
+7. **The app saves a receipt to S3** through the gateway endpoint. It never leaves AWS's private network and pays no NAT fee.
+
+At no point could anyone on the internet start a conversation with the app or the database. Every step either goes through a door designed for it, or doesn't happen.
+
+## The full blueprint
+
+Here is the whole building on one page, with every room, door, signpost and guard. It's the reference diagram from the repository, and the one to keep open when reading the Terraform.
+
+![The complete roboshop VPC architecture in us-east-1: a /16 VPC with public, private, data and intra subnets across Availability Zones, an internet gateway, NAT gateways, a load balancer, EKS nodes, RDS and ElastiCache, gateway and interface VPC endpoints, flow logs to S3, and a peering connection to the default VPC where Jenkins runs. Side panels list the subnet plan and every route table.](/images/aws-vpc/aws-vpc-architecture.svg)
+
+## Dev and prod side by side
+
+The same code builds both environments. Only a handful of settings differ, and each difference is a deliberate trade between cost and resilience.
+
+| Setting | Dev | Prod | Why they differ |
+| --- | --- | --- | --- |
+| Address range | `10.0.0.0/16` | `10.10.0.0/16` | Different ranges, so the two could be connected one day |
+| Zones | 2 (`use1-az1`, `use1-az2`) | 3 (adds `use1-az4`) | Prod must survive losing a whole zone |
+| NAT gateways | 1, shared | 1 per zone | Dev saves money, prod keeps each zone independent |
+| Interface endpoints | None | ECR (2), STS, Logs, EC2, ELB | Only worth the monthly fee at prod's traffic |
+| Peering to Jenkins | Yes | Yes | Both are deployed by Jenkins |
+| Kubernetes cluster tags | None | `roboshop-prod` | Prod's EKS cluster finds its subnets by these tags |
+| Flow log retention | 30 days | 365 days | Prod keeps a year of history for investigations |
+
+## How the building is built and kept honest
+
+None of this was clicked together in the AWS console. The whole network is written as Terraform code in the [aws-vpc repository](https://github.com/mrjithendar/aws-vpc), and a few habits keep it trustworthy:
+
+- **Tests run without touching AWS.** A test suite runs against a simulated AWS. It checks the number of NAT gateways in each mode, that peering signposts exist on both sides, that no subnet ever hands out public addresses automatically, that the address tiers never overlap even with four zones, and that an overlapping peer range is refused.
+- **Every change is previewed.** A pull request produces a *plan*, a list of exactly what would change, for both dev and prod, and posts it for review. After approval, the pipeline applies that saved plan and nothing else. If anything changed in between, Terraform stops instead of applying something nobody reviewed.
+- **No stored passwords.** The pipelines (GitHub Actions, GitLab CI or Jenkins) get short-lived AWS credentials when they run. Planning uses a read-only role. Only the apply step can change anything, and prod requires a human approval first.
+- **Drift is caught every night.** A nightly check compares the real network with the code and raises an alarm if someone changed something by hand.
+
+## Mistakes this design avoids
+
+If you are building your own VPC, these are the traps this one sidesteps:
+
+- **One flat subnet for everything.** It works, until a bug in the app can reach the database from anywhere. Separate rooms keep the damage small.
+- **Databases with a route to the internet.** The data tier here has no internet route, no NAT and no endpoint.
+- **Public addresses handed out automatically.** That one setting is how many accidental exposures start. It's off everywhere.
+- **A single NAT gateway in production.** Cheap, until its zone goes down and every zone loses its way out.
+- **Paying NAT fees for S3 traffic.** The free gateway endpoint takes one line of code.
+- **Address ranges that collide.** Overlapping ranges block peering and mergers forever. Each environment here has its own range, and the code checks before connecting.
+- **Using zone names instead of IDs.** Names differ between accounts. IDs don't.
+- **No record of traffic.** Without flow logs, "what happened?" has no answer.
+
+## Glossary
+
+**Availability Zone (AZ).** One or more data centres in a region, with independent power and networking.
+
+**CIDR.** A way of writing an address range. The number after the slash is how many bits are fixed. A smaller number means a bigger range.
+
+**Elastic IP.** A fixed public IPv4 address you own until you release it. Each NAT gateway has one.
+
+**Egress-only internet gateway.** The IPv6 version of a one-way exit: outbound connections only.
+
+**Gateway endpoint.** A free route-table entry that sends S3 or DynamoDB traffic over AWS's private network.
+
+**Interface endpoint.** A paid network card inside your subnet that connects privately to an AWS service. Built on AWS PrivateLink.
+
+**Internet gateway (IGW).** The VPC's two-way door to the internet.
+
+**NAT gateway.** Lets servers in private subnets start connections to the internet without being reachable from it.
+
+**Network ACL.** A stateless allow or deny list that applies to a whole subnet.
+
+**Route table.** The list of signposts that decides where traffic from a subnet goes next.
+
+**Security group.** A stateful allow list attached to individual resources.
+
+**Subnet.** A slice of the VPC's addresses in one Availability Zone, with its own routing and rules.
+
+**VPC peering.** A private connection between two VPCs. It does not pass traffic on to third networks.
+
+**VPC Flow Logs.** Records of the connections passing through network cards in a VPC.
+
+## Use the diagrams yourself
+
+All thirteen diagrams were drawn in draw.io with the official AWS icon set, and their source files are in the [aws-vpc repository](https://github.com/mrjithendar/aws-vpc) under `sites/jithendar.com/docs/diagrams/`. Open them at [app.diagrams.net](https://app.diagrams.net) or in the draw.io extension for VS Code, change the names and ranges, and use them to explain your own network.

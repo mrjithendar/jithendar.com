@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 600" width="900" height="600" role="img" aria-labelledby="k8s-tools-service-mesh-title k8s-tools-service-mesh-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="k8s-tools-service-mesh-title">Control plane and data plane in Istio sidecar mode, Istio ambient mode and Linkerd</title>
+<desc id="k8s-tools-service-mesh-desc">Istio&#x27;s control plane, istiod, issues workload certificates and pushes routing and policy configuration to proxies over xDS. In sidecar mode every pod gets an Envoy container that handles mTLS and layer 7 routing. In ambient mode a ztunnel DaemonSet on each node handles mTLS and layer 4 policy for enrolled namespaces, and optional waypoint proxies, one Envoy Deployment per namespace or service account, add layer 7 features. Linkerd&#x27;s control plane has destination, identity and proxy-injector components, and every meshed pod gets the Rust linkerd2-proxy sidecar. In all three, application traffic flows proxy to proxy, and the control plane is not in the request path.</desc>
+<rect width="900" height="600" fill="#ffffff"/>
+<defs>
+<marker id="k8s-tools-service-mesh-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+<marker id="k8s-tools-service-mesh-write" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b45309"/></marker>
+<marker id="k8s-tools-service-mesh-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#be123c"/></marker>
+<marker id="k8s-tools-service-mesh-reject" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b91c1c"/></marker>
+<marker id="k8s-tools-service-mesh-dashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+<marker id="k8s-tools-service-mesh-life" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#cbd5e1"/></marker>
+</defs>
+<rect x="15" y="12" width="870" height="120" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="28" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Control plane: certificates and configuration, not in the request path</text>
+<rect x="15" y="156" width="870" height="300" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="877" y="449" text-anchor="end" font-size="12" font-weight="600" fill="#475569">Data plane: where requests flow</text>
+<rect x="15" y="472" width="870" height="116" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="488" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Telemetry</text>
+<polyline points="155.0,276 155.0,356" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#k8s-tools-service-mesh-sync)"/>
+<polyline points="735.0,276 735.0,356" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#k8s-tools-service-mesh-sync)"/>
+<polyline points="375.0,260 375.0,282" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#k8s-tools-service-mesh-sync)"/>
+<polyline points="445.0,346 445.0,366" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#k8s-tools-service-mesh-sync)"/>
+<polyline points="515.0,282 515.0,260" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#k8s-tools-service-mesh-dashed)"/>
+<polyline points="155.0,120 155.0,196" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#k8s-tools-service-mesh-dashed)"/>
+<polyline points="545.0,120 545,150 590,150 590,314 575,314.0" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#k8s-tools-service-mesh-dashed)"/>
+<polyline points="735.0,120 735.0,196" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#k8s-tools-service-mesh-dashed)"/>
+<rect x="30" y="40" width="545" height="80" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="302.5" y="63.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">istiod (Istio)</text>
+<text x="302.5" y="79.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">CA: signs workload certificates (SPIFFE identities)</text>
+<text x="302.5" y="95.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">xDS: pushes routes, AuthorizationPolicy, telemetry config</text>
+<text x="302.5" y="111.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">watches Services, Gateway API and Istio CRDs</text>
+<rect x="600" y="40" width="270" height="80" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="735.0" y="63.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">Linkerd control plane</text>
+<text x="735.0" y="79.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">identity: issues certificates</text>
+<text x="735.0" y="95.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">destination: endpoints, policy</text>
+<text x="735.0" y="111.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">proxy-injector: adds sidecar</text>
+<rect x="30" y="196" width="250" height="80" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="155.0" y="227.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">Pod A</text>
+<text x="155.0" y="243.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">app container</text>
+<text x="155.0" y="259.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">+ Envoy sidecar (L4 + L7)</text>
+<rect x="30" y="356" width="250" height="80" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="155.0" y="387.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">Pod B</text>
+<text x="155.0" y="403.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">app container</text>
+<text x="155.0" y="419.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">+ Envoy sidecar (L4 + L7)</text>
+<rect x="315" y="196" width="120" height="64" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="375.0" y="227.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">Pod A</text>
+<text x="375.0" y="243.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">app only</text>
+<rect x="455" y="196" width="120" height="64" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="515.0" y="227.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">Pod B</text>
+<text x="515.0" y="243.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">app only</text>
+<rect x="315" y="282" width="260" height="64" rx="7" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.4"/>
+<text x="445.0" y="313.0" text-anchor="middle" font-size="14" font-weight="600" fill="#134e4a">ztunnel per node</text>
+<text x="445.0" y="329.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">mTLS + L4 policy (Rust)</text>
+<rect x="315" y="366" width="260" height="72" rx="7" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.4"/>
+<text x="445.0" y="393.0" text-anchor="middle" font-size="14" font-weight="600" fill="#134e4a">waypoint (optional)</text>
+<text x="445.0" y="409.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Envoy per namespace or</text>
+<text x="445.0" y="425.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">service account: L7 rules</text>
+<rect x="600" y="196" width="270" height="80" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="735.0" y="227.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">Pod A</text>
+<text x="735.0" y="243.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">app container</text>
+<text x="735.0" y="259.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">+ linkerd2-proxy (Rust)</text>
+<rect x="600" y="356" width="270" height="80" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="735.0" y="387.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">Pod B</text>
+<text x="735.0" y="403.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">app container</text>
+<text x="735.0" y="419.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">+ linkerd2-proxy (Rust)</text>
+<rect x="30" y="496" width="400" height="80" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="230.0" y="527.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">Prometheus</text>
+<text x="230.0" y="543.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">scrapes proxy metrics: request rate,</text>
+<text x="230.0" y="559.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">errors, latency per service pair</text>
+<rect x="470" y="496" width="400" height="80" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="670.0" y="527.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">Tracing backend</text>
+<text x="670.0" y="543.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">proxies emit spans; apps must forward</text>
+<text x="670.0" y="559.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">trace headers to join them</text>
+<rect x="164.5" y="307.5" width="33.0" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="181.0" y="319.5" text-anchor="middle" font-size="12" fill="#0f172a">mTLS</text>
+<rect x="744.5" y="307.5" width="33.0" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="761.0" y="319.5" text-anchor="middle" font-size="12" fill="#0f172a">mTLS</text>
+<rect x="455.4" y="347.5" width="39.2" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="475.0" y="359.5" text-anchor="middle" font-size="12" fill="#0f172a">HBONE</text>
+<rect x="162.7" y="149.5" width="76.6" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="201.0" y="161.5" text-anchor="middle" font-size="12" fill="#0f172a">xDS + certs</text>
+<text x="30" y="185" font-size="13" font-weight="600" fill="#475569">Istio sidecar mode</text>
+<text x="315" y="185" font-size="13" font-weight="600" fill="#475569">Istio ambient mode</text>
+<text x="600" y="185" font-size="13" font-weight="600" fill="#475569">Linkerd</text>
+</svg>

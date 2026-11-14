@@ -1,0 +1,21 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: report-api
+  namespace: shop
+spec:
+  scaleTargetRef:
+    name: report-api
+  minReplicaCount: 0
+  maxReplicaCount: 6
+  triggers:
+    - type: cron
+      metadata:
+        timezone: Asia/Kolkata
+        start: 0 8 * * 1-5
+        end: 0 20 * * 1-5
+        desiredReplicas: "2"
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "70"

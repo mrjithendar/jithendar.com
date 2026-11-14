@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 380" width="720" height="380" role="img" aria-labelledby="08-handlers-title 08-handlers-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="08-handlers-title">Restart only when something changed</title>
+<desc id="08-handlers-desc">A task copies the nginx settings and notifies the handler named Reload nginx. If the file was already the same, nothing happens. If it changed, the handler waits until the end of the play, checks the whole configuration with nginx -t, and only then reloads nginx. A broken file stops the run before it reaches the live website.</desc>
+<rect width="720" height="380" fill="#ffffff"/>
+<defs>
+<marker id="08-handlers-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+<marker id="08-handlers-write" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b45309"/></marker>
+<marker id="08-handlers-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#be123c"/></marker>
+<marker id="08-handlers-reject" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b91c1c"/></marker>
+<marker id="08-handlers-dashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+<marker id="08-handlers-life" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#cbd5e1"/></marker>
+</defs>
+<polyline points="225,66.0 255,66.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#08-handlers-sync)"/>
+<polyline points="465,66.0 495,66.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#08-handlers-sync)"/>
+<polyline points="360.0,102 360.0,160" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#08-handlers-sync)"/>
+<polyline points="360.0,232 360.0,270" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#08-handlers-sync)"/>
+<polyline points="465,306.0 495,306.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#08-handlers-sync)"/>
+<polyline points="255,306.0 225,306.0" fill="none" stroke="#b91c1c" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#08-handlers-reject)"/>
+<rect x="15" y="30" width="210" height="72" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="120.0" y="57.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">Task: copy settings</text>
+<text x="120.0" y="73.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">template: roboshop.conf</text>
+<text x="120.0" y="89.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">notify: Reload nginx</text>
+<rect x="255" y="30" width="210" height="72" rx="7" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+<text x="360.0" y="57.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Did the file change?</text>
+<text x="360.0" y="73.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Ansible compares it</text>
+<text x="360.0" y="89.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">with what is there</text>
+<rect x="495" y="30" width="210" height="72" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="600.0" y="57.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">No: nothing to do</text>
+<text x="600.0" y="73.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">nginx keeps running,</text>
+<text x="600.0" y="89.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">no restart, no blip</text>
+<rect x="255" y="160" width="210" height="72" rx="7" fill="#fff1f2" stroke="#be123c" stroke-width="1.4"/>
+<text x="360.0" y="187.0" text-anchor="middle" font-size="14" font-weight="600" fill="#4c0519">Yes: handler queued</text>
+<text x="360.0" y="203.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">waits until every task</text>
+<text x="360.0" y="219.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">in the play is done</text>
+<rect x="255" y="270" width="210" height="72" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="360.0" y="297.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">Check: nginx -t</text>
+<text x="360.0" y="313.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">is the whole config valid?</text>
+<text x="360.0" y="329.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">if not, stop here</text>
+<rect x="495" y="270" width="210" height="72" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="600.0" y="297.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">Reload nginx</text>
+<text x="600.0" y="313.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">new settings live,</text>
+<text x="600.0" y="329.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">visitors not cut off</text>
+<rect x="15" y="270" width="210" height="72" rx="7" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.4"/>
+<text x="120.0" y="297.0" text-anchor="middle" font-size="14" font-weight="600" fill="#7f1d1d">Run stops</text>
+<text x="120.0" y="313.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">the live site keeps</text>
+<text x="120.0" y="329.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">the old, working config</text>
+<rect x="469.8" y="43.5" width="20.5" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="480.0" y="55.5" text-anchor="middle" font-size="12" fill="#0f172a">no</text>
+<rect x="346.6" y="122.5" width="26.7" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="360.0" y="134.5" text-anchor="middle" font-size="12" fill="#0f172a">yes</text>
+<rect x="460.4" y="283.5" width="39.2" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="480.0" y="295.5" text-anchor="middle" font-size="12" fill="#0f172a">valid</text>
+<rect x="217.3" y="283.5" width="45.4" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="240.0" y="295.5" text-anchor="middle" font-size="12" fill="#0f172a">broken</text>
+</svg>

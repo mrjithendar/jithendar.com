@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 750" width="900" height="750" role="img" aria-labelledby="dependabot-flow-title dependabot-flow-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="dependabot-flow-title">How a dependency update travels from GitHub to a running system in my repositories</title>
+<desc id="dependabot-flow-desc">Two things start Dependabot. A new advisory in the GitHub Advisory Database that matches the dependency graph raises a Dependabot alert. If a fixed version is reachable, Dependabot opens a security update PR for that one package, with no cooldown and no grouping; if the parent package pins the vulnerable range, the fix is made by hand with npm overrides or the alert is dismissed with a reason. The weekly schedule, Monday 06:00 New York time, starts a version update run that reads .github/dependabot.yml, skips releases younger than the 3-day cooldown and versions matched by ignore rules, and opens grouped PRs: family groups first, then one minor and patch group per directory, with each major version in its own PR. Every PR runs CI on its branch with a read-only token and no repository secrets. A failing PR gets an ignore rule and @dependabot recreate. A passing PR is reviewed by a person, because there is no auto-merge, and merging to master deploys: jithendar.com and MOKS release an image, Argo CD syncs miniKube, and tools applies Terraform.</desc>
+<rect width="900" height="750" fill="#ffffff"/>
+<defs>
+<marker id="dependabot-flow-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+<marker id="dependabot-flow-write" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b45309"/></marker>
+<marker id="dependabot-flow-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#be123c"/></marker>
+<marker id="dependabot-flow-reject" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b91c1c"/></marker>
+<marker id="dependabot-flow-dashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+<marker id="dependabot-flow-life" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#cbd5e1"/></marker>
+</defs>
+<rect x="15" y="12" width="870" height="108" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="28" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Triggers</text>
+<rect x="15" y="140" width="870" height="226" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="156" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Dependabot</text>
+<rect x="15" y="386" width="870" height="212" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="877" y="591" text-anchor="end" font-size="12" font-weight="600" fill="#475569">Pull request on a Dependabot branch</text>
+<rect x="15" y="618" width="870" height="116" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="877" y="727" text-anchor="end" font-size="12" font-weight="600" fill="#475569">Merge to master is a deploy</text>
+<polyline points="165.0,112 165.0,164" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#dependabot-flow-sync)"/>
+<polyline points="558.0,112 558.0,164" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#dependabot-flow-sync)"/>
+<polyline points="735.0,112 735.0,164" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#dependabot-flow-dashed)"/>
+<polyline points="130.0,240 130.0,262" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#dependabot-flow-sync)"/>
+<polyline points="345.0,240 345.0,262" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#dependabot-flow-dashed)"/>
+<polyline points="665.0,240 665.0,262" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#dependabot-flow-sync)"/>
+<polyline points="130.0,354 130.0,410" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#dependabot-flow-sync)"/>
+<polyline points="345.0,354 345.0,410" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#dependabot-flow-dashed)"/>
+<polyline points="665.0,354 665.0,410" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#dependabot-flow-sync)"/>
+<polyline points="310.0,486 310.0,506" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#dependabot-flow-sync)"/>
+<polyline points="737.5,486 737.5,506" fill="none" stroke="#b91c1c" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#dependabot-flow-reject)"/>
+<polyline points="870,544.0 880,544 880,308 870,308.0" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#dependabot-flow-dashed)"/>
+<polyline points="130.0,582 130.0,642" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#dependabot-flow-write)"/>
+<polyline points="343.0,582 343.0,642" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#dependabot-flow-write)"/>
+<polyline points="500.0,582 500,608 556,608 556.0,642" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#dependabot-flow-write)"/>
+<polyline points="575.0,582 575,608 770,608 770.0,642" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#dependabot-flow-write)"/>
+<rect x="30" y="36" width="270" height="76" rx="7" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+<text x="165.0" y="65.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">GitHub Advisory Database</text>
+<text x="165.0" y="81.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">new advisory for a package</text>
+<text x="165.0" y="97.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">in the dependency graph</text>
+<rect x="315" y="36" width="270" height="76" rx="7" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+<text x="450.0" y="65.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Weekly schedule</text>
+<text x="450.0" y="81.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Monday 06:00 America/New_York</text>
+<text x="450.0" y="97.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">RoboShop AI: 09:00 Asia/Kolkata</text>
+<rect x="600" y="36" width="270" height="76" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="735.0" y="65.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">.github/dependabot.yml</text>
+<text x="735.0" y="81.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">one entry per ecosystem + directory</text>
+<text x="735.0" y="97.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">groups, cooldown, ignore, labels</text>
+<rect x="30" y="164" width="415" height="76" rx="7" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.4"/>
+<text x="237.5" y="193.0" text-anchor="middle" font-size="14" font-weight="600" fill="#7f1d1d">Dependabot alert</text>
+<text x="237.5" y="209.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Security tab: severity, runtime or development scope</text>
+<text x="237.5" y="225.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">settings: alerts + security updates on in all five repos</text>
+<rect x="460" y="164" width="410" height="76" rx="7" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+<text x="665.0" y="193.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e1b4b">Version update run</text>
+<text x="665.0" y="209.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">cooldown: skip releases younger than 3 days</text>
+<text x="665.0" y="225.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">ignore: database majors, runtimes, known breaks</text>
+<rect x="30" y="262" width="200" height="92" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="130.0" y="291.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">Security update PR</text>
+<text x="130.0" y="307.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">one package, own PR</text>
+<text x="130.0" y="323.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">no cooldown, not grouped</text>
+<text x="130.0" y="339.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">same labels and prefix</text>
+<rect x="245" y="262" width="200" height="92" rx="7" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="6 4"/>
+<text x="345.0" y="291.0" text-anchor="middle" font-size="14" font-weight="600" fill="#475569">No reachable fix</text>
+<text x="345.0" y="307.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">parent pins the bad range</text>
+<text x="345.0" y="323.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">npm overrides by hand</text>
+<text x="345.0" y="339.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">or dismiss with a reason</text>
+<rect x="460" y="262" width="410" height="92" rx="7" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+<text x="665.0" y="291.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e1b4b">Grouped version update PRs</text>
+<text x="665.0" y="307.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">family groups first: opentelemetry, next-react</text>
+<text x="665.0" y="323.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">then one minor + patch group per directory</text>
+<text x="665.0" y="339.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">majors arrive one PR each</text>
+<rect x="30" y="410" width="840" height="76" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="450.0" y="439.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">CI on the Dependabot branch</text>
+<text x="450.0" y="455.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">lint, typecheck, test, build · terraform fmt + validate · Helm and manifest checks</text>
+<text x="450.0" y="471.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">read-only GITHUB_TOKEN, no repository secrets · pull requests from forks are skipped</text>
+<rect x="30" y="506" width="560" height="76" rx="7" fill="#f8fafc" stroke="#334155" stroke-width="1.4"/>
+<text x="310.0" y="535.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Human review (no auto-merge)</text>
+<text x="310.0" y="551.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">lock-file diff, release notes, new transitive packages</text>
+<text x="310.0" y="567.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">stateful images: check the node before merging</text>
+<rect x="605" y="506" width="265" height="76" rx="7" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.4"/>
+<text x="737.5" y="535.0" text-anchor="middle" font-size="14" font-weight="600" fill="#7f1d1d">CI fails</text>
+<text x="737.5" y="551.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">add an ignore rule with a reason</text>
+<text x="737.5" y="567.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">then @dependabot recreate</text>
+<rect x="30" y="642" width="200" height="76" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="130.0" y="671.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">jithendar.com</text>
+<text x="130.0" y="687.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">image built and pushed</text>
+<text x="130.0" y="703.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">./deploy.sh rolls it out</text>
+<rect x="243" y="642" width="200" height="76" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="343.0" y="671.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">moks</text>
+<text x="343.0" y="687.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">image built and pushed</text>
+<text x="343.0" y="703.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">MOKS pods restarted</text>
+<rect x="456" y="642" width="200" height="76" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="556.0" y="671.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">miniKube</text>
+<text x="556.0" y="687.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Argo CD auto-sync (selfHeal)</text>
+<text x="556.0" y="703.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Terraform apply on push</text>
+<rect x="670" y="642" width="200" height="76" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="770.0" y="671.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">tools</text>
+<text x="770.0" y="687.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">push to master only</text>
+<text x="770.0" y="703.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">terraform apply runs</text>
+<rect x="173.2" y="129.5" width="51.7" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="199.0" y="141.5" text-anchor="middle" font-size="12" fill="#0f172a">matches</text>
+<rect x="561.3" y="129.5" width="45.4" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="584.0" y="141.5" text-anchor="middle" font-size="12" fill="#0f172a">starts</text>
+<rect x="739.4" y="129.5" width="39.2" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="759.0" y="141.5" text-anchor="middle" font-size="12" fill="#0f172a">reads</text>
+<rect x="131.6" y="242.5" width="132.8" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="198.0" y="254.5" text-anchor="middle" font-size="12" fill="#0f172a">fixed version exists</text>
+<rect x="352.9" y="373.5" width="64.2" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="385.0" y="385.5" text-anchor="middle" font-size="12" fill="#0f172a">manual PR</text>
+<rect x="314.4" y="487.5" width="39.2" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="334.0" y="499.5" text-anchor="middle" font-size="12" fill="#0f172a">green</text>
+<rect x="742.1" y="487.5" width="26.7" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="755.5" y="499.5" text-anchor="middle" font-size="12" fill="#0f172a">red</text>
+<rect x="136.4" y="603.5" width="39.2" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="156.0" y="615.5" text-anchor="middle" font-size="12" fill="#0f172a">merge</text>
+</svg>

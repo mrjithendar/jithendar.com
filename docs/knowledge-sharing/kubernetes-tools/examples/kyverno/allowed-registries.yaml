@@ -1,0 +1,24 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: allowed-image-registries
+spec:
+  validationActions: [Audit]
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  variables:
+    - name: allContainers
+      expression: >-
+        object.spec.containers
+        + (has(object.spec.initContainers) ? object.spec.initContainers : [])
+  validations:
+    - expression: >-
+        variables.allContainers.all(c,
+          c.image.startsWith('registry.jithendar.com/') || c.image.startsWith('registry.k8s.io/'))
+      messageExpression: >-
+        'images must come from registry.jithendar.com or registry.k8s.io, found: '
+        + variables.allContainers.map(c, c.image).join(', ')

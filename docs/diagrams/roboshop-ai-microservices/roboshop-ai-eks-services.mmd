@@ -1,0 +1,14 @@
+%% Editable equivalent of public/images/roboshop-ai/roboshop-ai-eks-services.svg (checked 2026-11-01).
+flowchart TD
+  browser["Browser"] --> nlb["Network Load Balancer<br/>TCP 443 and 80, IP targets"]
+  nlb --> gw["Istio ingress gateway<br/>ends TLS, strips /roboshop"]
+  gw --> web["web<br/>NGINX + static storefront"]
+  web --> aigw["ai-gateway<br/>public API, sessions, JSON ledger, outbox"]
+  mcp["mcp-server<br/>private, port-forward only"] --> aigw
+  moks["moks<br/>not deployed on EKS"]:::missing
+  aigw --> user["user-service"] & catalogue["catalogue-service"] & cart["cart-service"]
+  aigw --> payment["payment-service"] & shipping["shipping-service"] & currency["currency-service"]
+  aigw -. "outbox" .-> rabbit["RabbitMQ"]
+  rabbit -.-> shipping
+  rabbit -.-> bridge["kafka-bridge"]
+  classDef missing stroke-dasharray: 6 4;

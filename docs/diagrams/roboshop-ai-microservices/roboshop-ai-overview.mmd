@@ -1,0 +1,77 @@
+%%{init: {"theme": "base", "flowchart": {"curve": "basis", "nodeSpacing": 28, "rankSpacing": 46, "padding": 10}, "themeVariables": {"fontFamily": "arial, sans-serif", "fontSize": "15px", "primaryTextColor": "#0f172a", "lineColor": "#475569", "clusterBkg": "#ffffff", "clusterBorder": "#cbd5e1", "edgeLabelBackground": "#ffffff"}}}%%
+%% RoboShop AI: service map (Figure 1). Editable equivalent of roboshop-ai-overview.svg,
+%% which build_diagrams.py lays out by hand for small screens. Keep the two in sync.
+%% Evidence: services/web/nginx/snippets/routes.conf, services/ai-gateway/server.py,
+%% tools minikube/roboshop/roboshop-config-configmap.yaml (service URLs).
+%% Solid = synchronous HTTP, thick red = asynchronous event, dashed border = optional.
+flowchart TB
+  subgraph clients["Clients"]
+    direction LR
+    browser["<b>Browser</b><br/>storefront pages + Moks widget"]
+    mcpc["<b>MCP client</b><br/>stdio or private /mcp"]
+  end
+
+  subgraph edge["Edge"]
+    direction LR
+    traefik["<b>Traefik ingress</b><br/>TLS, strips /roboshop"]
+    web["<b>web</b> (NGINX)<br/>storefront + proxy"]
+  end
+
+  subgraph entry["Entry and orchestration"]
+    moks["<b>moks</b> · Python<br/>AI agent, LangGraph engine"]
+    gw["<b>ai-gateway</b> · Python<br/>public API, sessions,<br/>ledger, outbox"]
+    mcp["<b>mcp-server</b> · Python<br/>private MCP tools"]
+    llm["<b>Bedrock or Ollama</b><br/>chosen by super admin"]
+  end
+
+  subgraph domain["Domain services"]
+    user["<b>user-service</b> · Python<br/>MongoDB: users"]
+    cat["<b>catalogue-service</b> · Node.js<br/>MongoDB: products"]
+    cart["<b>cart-service</b> · Python<br/>Redis"]
+    pay["<b>payment-service</b> · Node.js<br/>Razorpay"]
+    ship["<b>shipping-service</b> · Java<br/>PostgreSQL"]
+    cur["<b>currency-service</b> · Go<br/>ECB feed"]
+  end
+
+  subgraph events["Events"]
+    direction LR
+    rabbit{{"<b>RabbitMQ</b><br/>roboshop.orders"}}
+    bridge["<b>kafka-bridge</b><br/>→ Kafka"]
+  end
+
+  browser --> traefik
+  traefik --> web
+  web -->|"/api/*"| gw
+  web -->|"/moks/*"| moks
+  web -->|"/api/currency/rates"| cur
+  mcpc --> mcp
+  mcp -->|"caller's session"| gw
+  gw -->|"/internal/chat"| moks
+  moks -->|"model call"| llm
+  gw --> user
+  gw --> cat
+  gw --> cart
+  gw --> pay
+  gw --> ship
+  gw --> cur
+  gw ==>|"order.paid"| rabbit
+  rabbit ==> ship
+  rabbit ==> bridge
+
+  classDef client fill:#f8fafc,stroke:#334155,stroke-width:1.5px,color:#0f172a
+  classDef edgeNode fill:#eef2ff,stroke:#4338ca,stroke-width:1.5px,color:#1e1b4b
+  classDef svc fill:#ecfdf5,stroke:#047857,stroke-width:1.5px,color:#064e3b
+  classDef ai fill:#f5f3ff,stroke:#6d28d9,stroke-width:1.5px,color:#2e1065
+  classDef bus fill:#fff1f2,stroke:#be123c,stroke-width:1.5px,color:#4c0519
+  classDef external fill:#f1f5f9,stroke:#64748b,stroke-width:1.5px,color:#0f172a
+  classDef optional stroke-dasharray:6 4
+
+  class browser,mcpc client
+  class traefik,web edgeNode
+  class gw,user,cat,cart,pay,ship,cur,bridge svc
+  class moks,mcp ai
+  class rabbit bus
+  class llm external
+  class moks,llm,cur optional
+
+  linkStyle 15,16,17 stroke:#be123c,stroke-width:3px

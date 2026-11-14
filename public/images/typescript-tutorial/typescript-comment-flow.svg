@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 728" width="620" height="728" role="img" aria-labelledby="typescript-comment-flow-title typescript-comment-flow-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="typescript-comment-flow-title">Posting a comment on jithendar.com, end to end</title>
+<desc id="typescript-comment-flow-desc">In the browser, the Composer client component holds the text as string state and calls onSubmit, typed ComposerSubmit. Discussion.tsx calls the server action postCommentAction directly. On the server, postCommentAction reads the user from the session cookie through signedIn, then calls submitComment, which checks again at runtime: cleanBody, isUuid and a database read, assertOpen and the client-key pattern. Drizzle inserts the row into PostgreSQL, whose unique index and foreign keys add their own rules. The result returns as a CommentResult discriminated union.</desc>
+<rect width="620" height="728" fill="#ffffff"/>
+<defs>
+<marker id="typescript-comment-flow-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+<marker id="typescript-comment-flow-write" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b45309"/></marker>
+<marker id="typescript-comment-flow-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#be123c"/></marker>
+<marker id="typescript-comment-flow-reject" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b91c1c"/></marker>
+<marker id="typescript-comment-flow-dashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+<marker id="typescript-comment-flow-life" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#cbd5e1"/></marker>
+</defs>
+<rect x="15" y="12" width="590" height="196" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="28" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Browser: client components</text>
+<rect x="15" y="220" width="590" height="364" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="236" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Server: Next.js</text>
+<rect x="15" y="596" width="590" height="120" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="597" y="709" text-anchor="end" font-size="12" font-weight="600" fill="#475569">Database</text>
+<polyline points="300,75.0 320,75.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#typescript-comment-flow-sync)"/>
+<polyline points="455.0,110 455.04,248" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#typescript-comment-flow-sync)"/>
+<polyline points="310.0,318 310.0,346" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#typescript-comment-flow-sync)"/>
+<polyline points="310.0,458 310.0,486" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#typescript-comment-flow-write)"/>
+<polyline points="310.0,556 310.0,618" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#typescript-comment-flow-write)"/>
+<polyline points="120.16,248 180.0,198" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#typescript-comment-flow-dashed)"/>
+<rect x="30" y="40" width="270" height="70" rx="7" fill="#f8fafc" stroke="#334155" stroke-width="1.4"/>
+<text x="165.0" y="66.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Composer.tsx</text>
+<text x="165.0" y="82.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">body: useState(initial), a string</text>
+<text x="165.0" y="98.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">onSubmit: ComposerSubmit</text>
+<rect x="320" y="40" width="270" height="70" rx="7" fill="#f8fafc" stroke="#334155" stroke-width="1.4"/>
+<text x="455.0" y="66.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Discussion.tsx</text>
+<text x="455.0" y="82.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">post(body, clientKey, parentId)</text>
+<text x="455.0" y="98.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">reads r.id only when r.ok</text>
+<rect x="30" y="128" width="300" height="70" rx="7" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="6 4"/>
+<text x="180.0" y="154.0" text-anchor="middle" font-size="14" font-weight="600" fill="#475569">CommentResult (compile time)</text>
+<text x="180.0" y="170.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">{ ok: true, id, status, thread }</text>
+<text x="180.0" y="186.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">| { ok: false, error }</text>
+<rect x="30" y="248" width="560" height="70" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="310.0" y="274.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">postCommentAction  (_actions/comments.ts, &quot;use server&quot;)</text>
+<text x="310.0" y="290.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">signedIn(): the user comes from the session cookie, never from the arguments</text>
+<text x="310.0" y="306.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">return type inferred, and step 2 relies on it</text>
+<rect x="30" y="346" width="560" height="112" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="310.0" y="377.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">submitComment(input: SubmitInput)  (lib/comments.ts)</text>
+<text x="310.0" y="393.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">runtime checks: cleanBody(body: unknown) for type and length</text>
+<text x="310.0" y="409.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">isUuid and a database read: the post exists, is published, not deleted</text>
+<text x="310.0" y="425.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">assertOpen: discussion not closed or locked; client key /^[A-Za-z0-9_-]{8,64}$/</text>
+<text x="310.0" y="441.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">status from the user&#x27;s role on the server</text>
+<rect x="30" y="486" width="560" height="70" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="310.0" y="512.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">Drizzle insert  (db/schema.ts)</text>
+<text x="310.0" y="528.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">.notNull() columns are string, the rest string | null</text>
+<text x="310.0" y="544.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">a missing required column does not compile</text>
+<rect x="30" y="618" width="560" height="62" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="310.0" y="648.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">PostgreSQL table comment</text>
+<text x="310.0" y="664.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">unique index on user and client key; foreign keys keep a reply on its parent&#x27;s post</text>
+<rect x="281.0" y="54.5" width="57.9" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="310.0" y="66.5" text-anchor="middle" font-size="12" fill="#0f172a">onSubmit</text>
+<rect x="324.9" y="170.5" width="120.3" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="385.0" y="182.5" text-anchor="middle" font-size="12" fill="#0f172a">server action call</text>
+<rect x="317.3" y="578.5" width="45.4" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="340.0" y="590.5" text-anchor="middle" font-size="12" fill="#0f172a">insert</text>
+<rect x="153.4" y="214.5" width="45.4" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="176.1" y="226.5" text-anchor="middle" font-size="12" fill="#0f172a">result</text>
+</svg>

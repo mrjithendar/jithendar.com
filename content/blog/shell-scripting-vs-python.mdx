@@ -1,0 +1,2705 @@
+---
+title: "Shell Scripting vs Python: What They Have in Common, How They Differ, and When to Use Each"
+slug: shell-scripting-vs-python
+description: "Shell scripting vs Python, side by side: runnable Bash and Python examples for files, JSON, APIs, errors and DevOps automation, with real scripts from my repos."
+seoTitle: "Bash vs Python: Shell Scripting vs Python for DevOps Automation"
+seoDescription: "Shell scripting vs Python, side by side: runnable Bash and Python examples for files, JSON, APIs, errors and DevOps automation, with real scripts from my repos."
+author: jithendar-dharmapuri
+category: devops-sre
+tags: [Bash, Python, Shell Scripting, Automation, DevOps, CI/CD]
+contentType: tutorial
+status: review
+related:
+  - blog/python-tutorial-beginners-real-projects
+  - blog/python-vs-typescript
+  - blog/github-actions-authenticate-minikube
+sources:
+  - title: "Bash Reference Manual: The Set Builtin (errexit, nounset, pipefail)"
+    url: https://www.gnu.org/software/bash/manual/html_node/The-Set-Builtin.html
+    publisher: GNU Project
+  - title: "Bash Reference Manual: Bash POSIX Mode"
+    url: https://www.gnu.org/software/bash/manual/html_node/Bash-POSIX-Mode.html
+    publisher: GNU Project
+  - title: "Bash Reference Manual: Shell Expansions"
+    url: https://www.gnu.org/software/bash/manual/html_node/Shell-Expansions.html
+    publisher: GNU Project
+  - title: "Bash NEWS (features added in bash-4.0, 4.3 and 4.4)"
+    url: https://tiswww.case.edu/php/chet/bash/NEWS
+    publisher: Chet Ramey
+  - title: "POSIX.1-2024 Shell Command Language"
+    url: https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html
+    publisher: The Open Group
+  - title: "POSIX.1-2024 echo utility (application usage)"
+    url: https://pubs.opengroup.org/onlinepubs/9799919799/utilities/echo.html
+    publisher: The Open Group
+  - title: "Debian Policy Manual: Scripts (/bin/sh requirements)"
+    url: https://www.debian.org/doc/debian-policy/ch-files.html
+    publisher: Debian
+  - title: "Use zsh as the default shell on your Mac"
+    url: https://support.apple.com/en-us/102360
+    publisher: Apple
+  - title: "About Alpine Linux"
+    url: https://www.alpinelinux.org/about/
+    publisher: Alpine Linux
+  - title: "subprocess: Subprocess management"
+    url: https://docs.python.org/3/library/subprocess.html
+    publisher: Python Software Foundation
+  - title: "signal: Set handlers for asynchronous events"
+    url: https://docs.python.org/3/library/signal.html
+    publisher: Python Software Foundation
+  - title: "tempfile: Generate temporary files and directories"
+    url: https://docs.python.org/3/library/tempfile.html
+    publisher: Python Software Foundation
+  - title: "csv: CSV File Reading and Writing"
+    url: https://docs.python.org/3/library/csv.html
+    publisher: Python Software Foundation
+  - title: "json: JSON encoder and decoder"
+    url: https://docs.python.org/3/library/json.html
+    publisher: Python Software Foundation
+  - title: "venv: Creation of virtual environments"
+    url: https://docs.python.org/3/library/venv.html
+    publisher: Python Software Foundation
+  - title: "urllib.request: Extensible library for opening URLs"
+    url: https://docs.python.org/3/library/urllib.request.html
+    publisher: Python Software Foundation
+  - title: "curl man page (--fail, --max-time, --retry, --write-out)"
+    url: https://curl.se/docs/manpage.html
+    publisher: curl
+  - title: "jq manual"
+    url: https://jqlang.org/manual/
+    publisher: jq
+  - title: "ShellCheck SC2086: Double quote to prevent globbing and word splitting"
+    url: https://www.shellcheck.net/wiki/SC2086
+    publisher: ShellCheck
+  - title: "Using the pagination options in the AWS CLI"
+    url: https://docs.aws.amazon.com/cli/latest/userguide/cli-usage-pagination.html
+    publisher: Amazon Web Services
+  - title: "Boto3: Retries"
+    url: https://docs.aws.amazon.com/boto3/latest/guide/retries.html
+    publisher: Amazon Web Services
+  - title: "jithendar.com source at commit f12f8cc"
+    url: https://github.com/mrjithendar/moks-cms/tree/f12f8cc90dbcd3b22d3c8f27544d0e973dad0843
+    publisher: GitHub
+  - title: "MOKS source at commit 74a097d"
+    url: https://github.com/mrjithendar/moks/tree/74a097da3346732b430d7feb070bbab562095fb7
+    publisher: GitHub
+  - title: "RoboShop AI source at commit c81e85a"
+    url: https://github.com/mrjithendar/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b
+    publisher: GitHub
+  - title: "tools source at commit 387bd30"
+    url: https://github.com/mrjithendar/tools/tree/387bd306d38b6e63d569ecae5121826e2e08d633
+    publisher: GitHub
+---
+## Shell scripting vs Python: the short answer
+
+A **shell script** is a file of terminal commands run top to bottom, and shell scripting is mostly **orchestration**: starting programs, connecting their input and output, and reacting to whether they succeeded. **Python** can start programs too, but does most of its work inside the interpreter: parsing data, holding it in lists and dictionaries, calling APIs, and logic you can test. Both are real languages that deserve the same care; shell glues programs together, Python works with data once you have it.
+
+In my repositories Bash runs deployments, smoke tests and secret setup, a POSIX `sh` script starts RoboShop AI's NGINX container, and Python renders and validates Argo CD catalogues, decrypts backups and tests the shell scripts. This article does not pick a winner; it shows, with runnable examples, where each makes a task easier to get right.
+
+### Which shell do we mean?
+
+"Shell scripting" covers several languages, and the differences matter:
+
+| Shell | Where you meet it | Notes |
+| --- | --- | --- |
+| POSIX `sh` | The `/bin/sh` of most systems | A standard, minimal language. No arrays, no `[[ ... ]]`. |
+| Bash | Default `bash` on most Linux distributions; many CI images | A superset of POSIX `sh` with arrays, `[[ ... ]]`, `pipefail` and more. |
+| dash | `/bin/sh` on Debian and Ubuntu | A small, fast POSIX shell with few extensions. |
+| BusyBox `ash` | `/bin/sh` in Alpine-based container images | Alpine is "built around musl libc and busybox". |
+| zsh | Default interactive shell on macOS since 10.15 | Rarely used for automation scripts in these repositories. |
+
+**This article uses Bash** unless a block is marked `sh`. Note that **`/bin/sh` is not necessarily Bash**: it is dash on Debian and Ubuntu, BusyBox in Alpine, and Bash 3.2 in POSIX mode on macOS ("When invoked as `sh`, Bash enters POSIX mode"). Debian's policy tells authors to name the shell explicitly, such as `#!/bin/bash`, when they need more than POSIX.
+
+### Shell language versus external programs
+
+Keep two layers apart: **shell language features** (variables, `if`, `case`, functions, redirection, pipes, builtins such as `cd`, `read`, `printf`) and **external programs** (`curl`, `jq`, `find`, `awk`, `grep`, `sed`, `kubectl`, `aws`), each with its own options, versions and bugs. A five-line script can depend on five programs. Python splits likewise into the **standard library** and **third-party packages** (PyYAML, `requests`, Boto3); the examples here use only the standard library unless stated.
+
+## What do shell scripts and Python have in common?
+
+Both are interpreted, read a file top to bottom, and share the building blocks:
+
+| Concept | Bash | Python |
+| --- | --- | --- |
+| Variables | `name="web"` (no spaces around `=`) | `name = "web"` |
+| Conditions | `if [[ ... ]]; then ... fi` | `if ...:` with an indented block |
+| Loops | `for x in a b c; do ... done`, `while` | `for x in items:`, `while` |
+| Functions | `name() { ...; }`, arguments in `$1`, `$2` | `def name(arg):` |
+| Input | `read -r line`, arguments in `"$@"` | `input()`, `sys.argv`, `sys.stdin` |
+| Output | `echo`, `printf`, redirection with `>` | `print()`, `open(..., "w")` |
+| Files and directories | `mkdir -p`, `find`, globs such as `*.txt` | `pathlib.Path`, `glob`, `os.walk` |
+| Environment variables | `"$HOME"`, `"${VAR:-default}"` | `os.environ.get("VAR", "default")` |
+| External commands | Just type the command | `subprocess.run([...])` |
+| Failure signal | Exit status: `0` is success, anything else is failure | Exceptions, and an exit status via `sys.exit()` |
+| Reuse | Functions, `source`d library files | Functions, modules, packages |
+
+The last two rows are where they differ most.
+
+## How to run the examples
+
+Every example ran on a Mac with Bash 5.2.26, dash as strict POSIX `sh`, Python 3.11.9, jq 1.7.1 and curl 8.7.1, with `LC_ALL=C` for byte-order sorting. A script in the site's repository (`sites/jithendar.com/docs/knowledge-sharing/shell-vs-python/verify_examples.py`) reruns them all, with ShellCheck. Run this setup once in an empty folder; it creates awkward file names (a space, a leading hyphen, a literal `*`, a hidden file):
+
+*Setup for the examples.*
+
+```bash
+# setup.sh
+# Builds the practice folder used by every example. Run it once, in an empty directory.
+set -eu
+mkdir -p notes sample/docs sample/img build
+printf 'alpha\n  indented  \nback\\slash\n\nlast line without newline' > notes/plain.txt
+printf 'first line\n' > 'notes/release notes.txt'
+printf 'dash\n' > notes/-n.txt
+printf 'star\n' > 'notes/*.txt'
+printf 'hidden\n' > notes/.hidden.txt
+cat > services.json <<'EOF'
+{
+  "services": [
+    {"name": "web", "port": 8080, "healthy": true},
+    {"name": "api gateway", "port": 3000, "healthy": false},
+    {"name": "worker", "port": null, "healthy": true}
+  ]
+}
+EOF
+cat > inventory.csv <<'EOF'
+name,owner,notes
+web,platform,"serves /, /admin"
+api,"Smith, J.",gateway
+EOF
+printf 'GET /api/products 200\nGET /api/cart 500\nPOST /api/cart 200\nGET /health 200\nGET /api/orders 503\n' > access.log
+printf 'hello\n' > sample/README.md
+printf '# guide\n' > 'sample/docs/user guide.md'
+printf 'abc' > sample/docs/notes.TXT
+printf 'PNG' > sample/img/logo.png
+printf 'x' > sample/Makefile
+```
+
+```bash
+mkdir shell-vs-python && cd shell-vs-python
+# save the block above as setup.sh, then:
+bash setup.sh
+```
+
+Each example names its file in the first comment and ends with `# Run:`, `# Output:`, `# Stderr:` and, when non-zero, `# Exit status:`. **Standalone comparison example** means written for this article; **Actual repository code** is copied unchanged at the commit in the sources; **Simplified from repository code** says what was removed. The API examples need a local server, introduced in that section.
+
+## Running your first script
+
+### Shebangs, permissions and how the interpreter is chosen
+
+A **shebang** (`#!` plus an interpreter path) tells the OS what runs `./greet.sh`; `#!/usr/bin/env bash` finds `bash` on `PATH`, useful on macOS where `/bin/bash` is 3.2.
+
+*Standalone comparison example.*
+
+```bash
+#!/usr/bin/env bash
+# greet.sh
+names=("Ada" "Grace")
+printf 'Hello, %s\n' "${names[@]}"
+# Run: chmod +x greet.sh && ./greet.sh
+# Output:
+# Hello, Ada
+# Hello, Grace
+# Run: bash greet.sh
+# Output:
+# Hello, Ada
+# Hello, Grace
+# Run: sh greet.sh
+# Exit status: 2
+# Stderr:
+# greet.sh: 3: Syntax error: "(" unexpected
+```
+
+```python
+#!/usr/bin/env python3
+# greet.py
+names = ["Ada", "Grace"]
+for name in names:
+    print(f"Hello, {name}")
+# Run: chmod +x greet.py && ./greet.py
+# Output:
+# Hello, Ada
+# Hello, Grace
+# Run: python3 greet.py
+# Output:
+# Hello, Ada
+# Hello, Grace
+```
+
+`./greet.sh` needs `chmod +x` and uses the shebang; `bash greet.sh` and `sh greet.sh` ignore it, and a strict POSIX `sh` rejects the array on line 3. The `.sh` extension selects nothing. `deploy.sh` in the Moks CMS repository guarded against being run by the wrong shell:
+
+*Actual repository code.* Repository: moks-cms (then named jithendar.com), commit `95c4f82`. File: `deploy.sh`, lines 8–11. The script has since been replaced by a workflow.
+
+```bash
+# Started as `sh deploy.sh`? Re-run under full bash (macOS sh is bash in POSIX mode).
+if [ -z "${BASH_VERSION:-}" ] || case ":${SHELLOPTS:-}:" in *:posix:*) true ;; *) false ;; esac; then
+  exec bash "$0" "$@"
+fi
+```
+
+The test is plain POSIX so it works in any shell; if the shell is not Bash (or is Bash in POSIX mode), `exec bash "$0" "$@"` reruns the file under Bash with the same arguments.
+
+### Python interpreters and virtual environments
+
+`python3 script.py` uses the first `python3` on `PATH`. Third-party packages belong in a **virtual environment**, a private folder of packages:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate          # or call .venv/bin/python directly
+python -m pip install PyYAML  # only when a script needs it
+```
+
+The examples need none; my repositories do (PyYAML for the tools validators, `cryptography` for MOKS's `decrypt-backup.py`).
+
+### Working directories and relative paths
+
+A relative path resolves against the **current working directory**, not the script's folder, so scripts that need their own files compute their location:
+
+*Standalone comparison example.*
+
+```bash
+# where.sh
+here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f services.json ]]; then
+  echo "services.json is in the current directory"
+else
+  echo "services.json is not in the current directory"
+fi
+[[ -f "$here/services.json" ]] && echo "services.json is next to the script"
+# Run: bash where.sh
+# Output:
+# services.json is in the current directory
+# services.json is next to the script
+# Run: cd notes && bash ../where.sh
+# Output:
+# services.json is not in the current directory
+# services.json is next to the script
+```
+
+```python
+# where.py
+from pathlib import Path
+
+here = Path(__file__).resolve().parent
+if Path("services.json").is_file():
+    print("services.json is in the current directory")
+else:
+    print("services.json is not in the current directory")
+if (here / "services.json").is_file():
+    print("services.json is next to the script")
+# Run: python3 where.py
+# Output:
+# services.json is in the current directory
+# services.json is next to the script
+# Run: cd notes && python3 ../where.py
+# Output:
+# services.json is not in the current directory
+# services.json is next to the script
+```
+
+`BASH_SOURCE[0]` and `__file__` name the current file. `deploy.sh` runs `cd "$(dirname -- "${BASH_SOURCE[0]}")"` so its `kubectl apply -k` works from any directory, and the tools helpers find the repository root from the Python file's path:
+
+*Actual repository code.* Repository: tools. File: `scripts/lib/repos.py`, lines 15–18.
+
+```python
+ROOT = Path(__file__).resolve().parents[2]          # tools.git checkout
+TOOLS = ROOT
+APP = Path(os.environ.get('ROBOSHOP_AI_DIR', TOOLS.parent / 'roboshop-ai')).resolve()
+SITE = Path(os.environ.get('JITHENDAR_COM_DIR', TOOLS.parent / 'jithendar.com')).resolve()
+```
+
+`parents[2]` walks up from `scripts/lib/`; sibling checkouts default to folders next to tools, each overridable by an environment variable.
+
+## Side-by-side examples
+
+Each pair does the same job; where behaviour genuinely differs, so do the outputs.
+
+### Printing output
+
+*Standalone comparison example.*
+
+```bash
+# hello.sh
+echo "Hello, automation"
+printf '%s has %d files\n' "notes" 5
+# Run: bash hello.sh
+# Output:
+# Hello, automation
+# notes has 5 files
+```
+
+```python
+# hello.py
+print("Hello, automation")
+print("%s has %d files" % ("notes", 5))
+# Run: python3 hello.py
+# Output:
+# Hello, automation
+# notes has 5 files
+```
+
+`printf` takes a format string (`%s`, `%d`, `\n`) and is predictable; POSIX says "new applications are encouraged to use printf instead of echo", because `echo` handles backslashes and `-n` differently across systems. `print()` behaves the same everywhere.
+
+### Variables and string formatting
+
+*Standalone comparison example.*
+
+```bash
+# vars.sh
+service="api gateway"
+port=3000
+url="http://localhost:${port}/health"
+file="backup-2026.tar.gz"
+echo "Checking ${service} at ${url}"
+echo "Length of name: ${#service}"
+echo "Without .gz: ${file%.gz}"
+echo "Extension: ${file##*.}"
+echo "Upper case: ${service^^}"
+# Run: bash vars.sh
+# Output:
+# Checking api gateway at http://localhost:3000/health
+# Length of name: 11
+# Without .gz: backup-2026.tar
+# Extension: gz
+# Upper case: API GATEWAY
+```
+
+```python
+# vars.py
+service = "api gateway"
+port = 3000
+url = f"http://localhost:{port}/health"
+file = "backup-2026.tar.gz"
+print(f"Checking {service} at {url}")
+print(f"Length of name: {len(service)}")
+print(f"Without .gz: {file.removesuffix('.gz')}")
+print(f"Extension: {file.rsplit('.', 1)[-1]}")
+print(f"Upper case: {service.upper()}")
+# Run: python3 vars.py
+# Output:
+# Checking api gateway at http://localhost:3000/health
+# Length of name: 11
+# Without .gz: backup-2026.tar
+# Extension: gz
+# Upper case: API GATEWAY
+```
+
+**No spaces around `=`** (`port = 3000` runs a command called `port`). `${port}` braces mark where a name ends; `${#service}` is the length; `${file%.gz}` and `${file##*.}` strip a suffix and the longest dotted prefix; `${service^^}` (Bash 4.0+, so not macOS's 3.2) upper-cases. Every Bash value is a string, while Python distinguishes `3000` from `"3000"`.
+
+### Reading user input
+
+*Standalone comparison example.*
+
+```bash
+# ask.sh
+read -r -p "Environment name: " env_name
+echo "You chose: $env_name"
+# Run: printf 'staging\n' | bash ask.sh
+# Output:
+# You chose: staging
+```
+
+```python
+# ask.py
+env_name = input("Environment name: ")
+print(f"You chose: {env_name}")
+# Run: printf 'staging\n' | python3 ask.py
+# Output:
+# Environment name: You chose: staging
+```
+
+Bash's `read -p` prompts on stderr and only from a terminal; Python's `input()` prompts on stdout even when piped. Automation should take arguments or environment variables instead of prompting.
+
+### Command-line arguments
+
+*Standalone comparison example.*
+
+```bash
+# args.sh
+echo "Script name: $0"
+echo "Argument count: $#"
+echo "First argument: ${1:-(none)}"
+for arg in "$@"; do
+  printf 'Argument: [%s]\n' "$arg"
+done
+# Run: bash args.sh "two words" '*.txt' -n
+# Output:
+# Script name: args.sh
+# Argument count: 3
+# First argument: two words
+# Argument: [two words]
+# Argument: [*.txt]
+# Argument: [-n]
+```
+
+```python
+# args.py
+import sys
+
+print(f"Script name: {sys.argv[0]}")
+args = sys.argv[1:]
+print(f"Argument count: {len(args)}")
+print(f"First argument: {args[0] if args else '(none)'}")
+for arg in args:
+    print(f"Argument: [{arg}]")
+# Run: python3 args.py "two words" '*.txt' -n
+# Output:
+# Script name: args.py
+# Argument count: 3
+# First argument: two words
+# Argument: [two words]
+# Argument: [*.txt]
+# Argument: [-n]
+```
+
+`$0`, `$#` and `$1` are the name, count and first argument; `"$@"` keeps every argument as one word. Your interactive shell removed the quotes before either script started. For real tools, `argparse` gives `--help` and typed options; Bash's `getopts` handles short options only.
+
+### Environment variables and defaults
+
+*Standalone comparison example.*
+
+```bash
+# env.sh
+log_level="${LOG_LEVEL:-info}"
+app_name="${APP_NAME:?APP_NAME must be set}"
+echo "Starting ${app_name} with log level ${log_level}"
+# Run: APP_NAME=shop bash env.sh
+# Output:
+# Starting shop with log level info
+# Run: APP_NAME=shop LOG_LEVEL= bash env.sh
+# Output:
+# Starting shop with log level info
+# Run: bash env.sh
+# Exit status: 1
+# Stderr:
+# env.sh: line 3: APP_NAME: APP_NAME must be set
+```
+
+```python
+# env.py
+import os
+import sys
+
+log_level = os.environ.get("LOG_LEVEL") or "info"
+app_name = os.environ.get("APP_NAME")
+if not app_name:
+    sys.exit("APP_NAME must be set")
+print(f"Starting {app_name} with log level {log_level}")
+# Run: APP_NAME=shop python3 env.py
+# Output:
+# Starting shop with log level info
+# Run: APP_NAME=shop LOG_LEVEL= python3 env.py
+# Output:
+# Starting shop with log level info
+# Run: python3 env.py
+# Exit status: 1
+# Stderr:
+# APP_NAME must be set
+```
+
+`${LOG_LEVEL:-info}` replaces unset **or empty** values (without the colon, empty stays). `${APP_NAME:?message}` stops the script, with an unstandardised status (Bash 5.2: `1` in a file, `127` in `bash -c`; dash: `2`), so use `if` and `exit` when callers check codes. `NAME=value command` scopes a variable to one command. Python's `.get()` keeps empty strings, hence `or "info"`. My smoke test defaults its arguments the same way:
+
+*Actual repository code.* Repository: jithendar.com. File: `scripts/smoke.sh`, lines 6–8.
+
+```bash
+ORIGIN="${1:-https://jithendar.com}"
+EXPECTED_VERSION="${2:-}"
+HOST="${ORIGIN#https://}"
+```
+
+`${2:-}` looks pointless but lets "no version" pass under `set -u`; `${ORIGIN#https://}` strips the scheme.
+
+### Conditions and comparisons
+
+*Standalone comparison example.*
+
+```bash
+# compare.sh
+count="$1"
+if [[ ! "$count" =~ ^[0-9]+$ ]]; then
+  echo "not a whole number: $count" >&2
+  exit 2
+fi
+if (( 10#$count > 10 )); then
+  echo "$count: many"
+elif (( 10#$count == 0 )); then
+  echo "$count: none"
+else
+  echo "$count: a few"
+fi
+[[ -f notes/plain.txt ]] && echo "notes/plain.txt is a regular file"
+# Run: bash compare.sh 15
+# Output:
+# 15: many
+# notes/plain.txt is a regular file
+# Run: bash compare.sh 0
+# Output:
+# 0: none
+# notes/plain.txt is a regular file
+# Run: bash compare.sh abc
+# Exit status: 2
+# Stderr:
+# not a whole number: abc
+```
+
+```python
+# compare.py
+import re
+import sys
+from pathlib import Path
+
+text = sys.argv[1]
+if not re.fullmatch(r"[0-9]+", text):
+    print(f"not a whole number: {text}", file=sys.stderr)
+    sys.exit(2)
+count = int(text)
+if count > 10:
+    print(f"{text}: many")
+elif count == 0:
+    print(f"{text}: none")
+else:
+    print(f"{text}: a few")
+if Path("notes/plain.txt").is_file():
+    print("notes/plain.txt is a regular file")
+# Run: python3 compare.py 15
+# Output:
+# 15: many
+# notes/plain.txt is a regular file
+# Run: python3 compare.py abc
+# Exit status: 2
+# Stderr:
+# not a whole number: abc
+```
+
+Bash has three tests. **`[[ ... ]]`** (Bash only) does not split unquoted variables and supports patterns, `=~` and `&&`. **`[ ... ]`** is the POSIX `test` command, so quote everything and use `-eq`, `-gt` for numbers. **`(( ... ))`** is arithmetic, where `>` is numeric, unlike `[[ 10 > 9 ]]`, a string comparison that is false. `10#$count` stops `08` being read as octal, `>&2` writes to stderr, and since `(( ))` treats `abc` as a variable worth `0`, validate first; Python's `int("abc")` raises. The POSIX `sh` version:
+
+*Standalone comparison example.*
+
+```sh
+# compare-posix.sh
+count="$1"
+case "$count" in
+  ''|*[!0-9]*) echo "not a whole number: $count" >&2; exit 2 ;;
+esac
+if [ "$count" -gt 10 ]; then
+  echo "$count: many"
+else
+  echo "$count: ten or fewer"
+fi
+# Run: sh compare-posix.sh 15
+# Output:
+# 15: many
+# Run: sh compare-posix.sh 1x
+# Exit status: 2
+# Stderr:
+# not a whole number: 1x
+```
+
+`case` matches globs: `''` is empty and `*[!0-9]*` contains a non-digit. RoboShop's entrypoint validates settings this way (see the real examples).
+
+### Loops
+
+*Standalone comparison example.*
+
+```bash
+# loops.sh
+for service in web api worker; do
+  echo "deploy $service"
+done
+attempt=1
+while (( attempt <= 3 )); do
+  echo "attempt $attempt"
+  attempt=$((attempt + 1))
+done
+# Run: bash loops.sh
+# Output:
+# deploy web
+# deploy api
+# deploy worker
+# attempt 1
+# attempt 2
+# attempt 3
+```
+
+```python
+# loops.py
+for service in ["web", "api", "worker"]:
+    print(f"deploy {service}")
+attempt = 1
+while attempt <= 3:
+    print(f"attempt {attempt}")
+    attempt += 1
+# Run: python3 loops.py
+# Output:
+# deploy web
+# deploy api
+# deploy worker
+# attempt 1
+# attempt 2
+# attempt 3
+```
+
+`do ... done` marks the body; `$((attempt + 1))` is POSIX **arithmetic expansion**.
+
+### Functions
+
+*Standalone comparison example.*
+
+```bash
+# functions.sh
+greet() {
+  local name="$1"
+  printf 'Hello, %s\n' "$name"
+}
+is_port() {
+  [[ "$1" =~ ^[0-9]+$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 ))
+}
+message="$(greet "Ada")"
+echo "$message"
+for candidate in 8080 08 70000 abc; do
+  if is_port "$candidate"; then
+    echo "$candidate is a valid port"
+  else
+    echo "$candidate is not a valid port"
+  fi
+done
+# Run: bash functions.sh
+# Output:
+# Hello, Ada
+# 8080 is a valid port
+# 08 is a valid port
+# 70000 is not a valid port
+# abc is not a valid port
+```
+
+```python
+# functions.py
+def greet(name: str) -> str:
+    return f"Hello, {name}"
+
+
+def is_port(value: str) -> bool:
+    return value.isascii() and value.isdigit() and 1 <= int(value) <= 65535
+
+
+message = greet("Ada")
+print(message)
+for candidate in ["8080", "08", "70000", "abc"]:
+    if is_port(candidate):
+        print(f"{candidate} is a valid port")
+    else:
+        print(f"{candidate} is not a valid port")
+# Run: python3 functions.py
+# Output:
+# Hello, Ada
+# 8080 is a valid port
+# 08 is a valid port
+# 70000 is not a valid port
+# abc is not a valid port
+```
+
+The biggest conceptual difference: **a shell function does not return a value.** It has an **exit status** (0 to 255, so `if is_port ...` asks whether it succeeded) and **output**, captured with `$(...)` **command substitution**. Python's `return` hands back any object. `local` scopes a Bash variable (not POSIX, though dash and BusyBox support it); otherwise everything is global.
+
+### Collections: Bash arrays versus Python lists and dictionaries
+
+*Standalone comparison example.*
+
+```bash
+# arrays.sh
+services=("web" "api gateway" "worker")
+echo "count: ${#services[@]}"
+echo "first: ${services[0]}"
+declare -A ports=([web]=8080 ["api gateway"]=3000)
+for s in "${services[@]}"; do
+  echo "$s -> ${ports[$s]:-none}"
+done
+services+=("cron")
+echo "last: ${services[-1]}"
+# Run: bash arrays.sh
+# Output:
+# count: 3
+# first: web
+# web -> 8080
+# api gateway -> 3000
+# worker -> none
+# last: cron
+```
+
+```python
+# arrays.py
+services = ["web", "api gateway", "worker"]
+print(f"count: {len(services)}")
+print(f"first: {services[0]}")
+ports = {"web": 8080, "api gateway": 3000}
+for s in services:
+    print(f"{s} -> {ports.get(s, 'none')}")
+services.append("cron")
+print(f"last: {services[-1]}")
+# Run: python3 arrays.py
+# Output:
+# count: 3
+# first: web
+# web -> 8080
+# api gateway -> 3000
+# worker -> none
+# last: cron
+```
+
+`"${services[@]}"` expands each element as one word. `declare -A` (Bash 4.0) makes an **associative array**, with undefined key order; it and negative subscripts (4.2) fail in macOS's Bash 3.2. POSIX `sh` has only the positional parameters (`set -- a b c`). The real limit is nesting: Bash arrays hold only strings, while Python lists of dictionaries match API JSON.
+
+### Reading files line by line
+
+*Standalone comparison example.*
+
+```bash
+# lines.sh
+n=0
+while IFS= read -r line || [[ -n "$line" ]]; do
+  n=$((n + 1))
+  printf '%d: [%s]\n' "$n" "$line"
+done < notes/plain.txt
+# Run: bash lines.sh
+# Output:
+# 1: [alpha]
+# 2: [  indented  ]
+# 3: [back\slash]
+# 4: []
+# 5: [last line without newline]
+```
+
+```python
+# lines.py
+with open("notes/plain.txt", encoding="utf-8") as f:
+    for n, line in enumerate(f, start=1):
+        print(f"{n}: [{line.removesuffix(chr(10))}]")
+# Run: python3 lines.py
+# Output:
+# 1: [alpha]
+# 2: [  indented  ]
+# 3: [back\slash]
+# 4: []
+# 5: [last line without newline]
+```
+
+`<` **redirects** the file into the loop, `IFS= read -r line` reads each line exactly (see quoting), and `|| [[ -n "$line" ]]` keeps a last line without a newline. Python's lines include their newline (`chr(10)`), and Python translates `\r\n` while Bash keeps the `\r`.
+
+### Creating directories
+
+*Standalone comparison example.*
+
+```bash
+# mkdir.sh
+dir="build/reports/2026 Q4"
+mkdir -p -- "$dir"
+mkdir -p -- "$dir"
+[[ -d "$dir" ]] && echo "ready: $dir"
+# Run: bash mkdir.sh
+# Output:
+# ready: build/reports/2026 Q4
+```
+
+```python
+# mkdir.py
+from pathlib import Path
+
+directory = Path("build/reports/2026 Q4")
+directory.mkdir(parents=True, exist_ok=True)
+directory.mkdir(parents=True, exist_ok=True)
+if directory.is_dir():
+    print(f"ready: {directory}")
+# Run: python3 mkdir.py
+# Output:
+# ready: build/reports/2026 Q4
+```
+
+Both run twice on purpose: `mkdir -p` and `parents=True, exist_ok=True` are safe to rerun, and `--` ends options so a name starting with `-` stays a name.
+
+### Finding and filtering files
+
+*Standalone comparison example.*
+
+```bash
+# find.sh
+find notes -type f -name '*.txt' | sort
+echo "--- shell glob:"
+for f in notes/*.txt; do
+  printf '%s\n' "$f"
+done
+# Run: bash find.sh
+# Output:
+# notes/*.txt
+# notes/-n.txt
+# notes/.hidden.txt
+# notes/plain.txt
+# notes/release notes.txt
+# --- shell glob:
+# notes/*.txt
+# notes/-n.txt
+# notes/plain.txt
+# notes/release notes.txt
+```
+
+```python
+# find.py
+import glob
+from pathlib import Path
+
+for path in sorted(Path("notes").rglob("*.txt")):
+    if path.is_file():
+        print(path)
+print("--- glob module:")
+for name in sorted(glob.glob("notes/*.txt")):
+    print(name)
+# Run: python3 find.py
+# Output:
+# notes/*.txt
+# notes/-n.txt
+# notes/.hidden.txt
+# notes/plain.txt
+# notes/release notes.txt
+# --- glob module:
+# notes/*.txt
+# notes/-n.txt
+# notes/plain.txt
+# notes/release notes.txt
+```
+
+`find` filters with tests such as `-type f` and `-name`, with the pattern single-quoted so the shell does not expand it first. Hidden files differ: Bash globs and Python's `glob` skip them, while `find` and (on 3.11.9) `pathlib`'s `rglob()` include them. Names can contain newlines, so `find -print0` is the robust form (used in the rewrite later).
+
+### Checking whether a command exists
+
+*Standalone comparison example.*
+
+```bash
+# need.sh
+for tool in sh jq no-such-tool; do
+  if command -v "$tool" >/dev/null 2>&1; then
+    echo "found: $tool"
+  else
+    echo "missing: $tool"
+  fi
+done
+# Run: bash need.sh
+# Output:
+# found: sh
+# found: jq
+# missing: no-such-tool
+```
+
+```python
+# need.py
+import shutil
+
+for tool in ["sh", "jq", "no-such-tool"]:
+    if shutil.which(tool):
+        print(f"found: {tool}")
+    else:
+        print(f"missing: {tool}")
+# Run: python3 need.py
+# Output:
+# found: sh
+# found: jq
+# missing: no-such-tool
+```
+
+`command -v` is the POSIX check (`which` varies between systems), `>/dev/null 2>&1` discards both streams, and `shutil.which()` searches `PATH` from Python.
+
+### Running an external command
+
+*Standalone comparison example.*
+
+```bash
+# grep.sh
+for pattern in alpha zzz; do
+  if count="$(grep -c -- "$pattern" notes/plain.txt)"; then
+    echo "$pattern: $count matching line(s)"
+  else
+    status=$?
+    echo "$pattern: grep exited $status and printed $count"
+  fi
+done
+grep -c -- alpha missing.txt 2>/dev/null || echo "missing.txt: grep exited $?"
+# Run: bash grep.sh
+# Output:
+# alpha: 1 matching line(s)
+# zzz: grep exited 1 and printed 0
+# missing.txt: grep exited 2
+```
+
+```python
+# grep.py
+import subprocess
+
+for pattern in ["alpha", "zzz"]:
+    result = subprocess.run(["grep", "-c", "--", pattern, "notes/plain.txt"], capture_output=True, text=True)
+    count = result.stdout.strip()
+    if result.returncode == 0:
+        print(f"{pattern}: {count} matching line(s)")
+    else:
+        print(f"{pattern}: grep exited {result.returncode} and printed {count}")
+result = subprocess.run(["grep", "-c", "--", "alpha", "missing.txt"], capture_output=True, text=True)
+if result.returncode != 0:
+    print(f"missing.txt: grep exited {result.returncode}")
+# Run: python3 grep.py
+# Output:
+# alpha: 1 matching line(s)
+# zzz: grep exited 1 and printed 0
+# missing.txt: grep exited 2
+```
+
+`$?` and `returncode` hold the last exit status. **`grep` uses 1 for "no match" and 2 for a real error**, so non-zero is not always failure; decide which codes are acceptable.
+
+### Writing results to a file
+
+*Standalone comparison example.*
+
+```bash
+# write.sh
+count=$(find notes -type f | wc -l)
+{
+  echo "Report for notes"
+  echo "Files: $((count))"
+} > build/report.txt
+echo "Generated by the report step" >> build/report.txt
+cat build/report.txt
+# Run: bash write.sh
+# Output:
+# Report for notes
+# Files: 5
+# Generated by the report step
+```
+
+```python
+# write.py
+from pathlib import Path
+
+count = sum(1 for p in Path("notes").rglob("*") if p.is_file())
+report = Path("build/report.txt")
+report.write_text(f"Report for notes\nFiles: {count}\n", encoding="utf-8")
+with report.open("a", encoding="utf-8") as f:
+    f.write("Generated by the report step\n")
+print(report.read_text(encoding="utf-8"), end="")
+# Run: python3 write.py
+# Output:
+# Report for notes
+# Files: 5
+# Generated by the report step
+```
+
+`>` **truncates** and `>>` appends; `{ ...; }` groups commands under one redirection; `$((count))` strips the padding BSD `wc` adds.
+
+### Parsing JSON
+
+*Standalone comparison example.*
+
+```bash
+# json.sh
+jq -r '.services[] | select(.healthy) | "\(.name): \(.port // "no port")"' services.json
+# Run: bash json.sh
+# Output:
+# web: 8080
+# worker: no port
+```
+
+```python
+# json_demo.py
+import json
+
+with open("services.json", encoding="utf-8") as f:
+    data = json.load(f)
+for service in data["services"]:
+    if service["healthy"]:
+        port = service["port"] if service["port"] is not None else "no port"
+        print(f"{service['name']}: {port}")
+# Run: python3 json_demo.py
+# Output:
+# web: 8080
+# worker: no port
+```
+
+Bash cannot parse JSON; **jq** is a separate program with its own language (`.services[]`, `select(...)`, `\(...)` interpolation, `//` defaults, `-r` raw output). Python's `json` gives ordinary dictionaries and lists (the file is `json_demo.py` because `json.py` would shadow the module).
+
+### Calling an HTTP API
+
+The minimal shape, against the local mock server from the APIs section:
+
+*Standalone comparison example.*
+
+```bash
+# status.sh
+curl -sS --fail --max-time 5 http://127.0.0.1:8765/v1/status | jq -r '.status'
+# Run: bash status.sh
+# Output:
+# ok
+```
+
+```python
+# status.py
+import json
+import urllib.request
+
+with urllib.request.urlopen("http://127.0.0.1:8765/v1/status", timeout=5) as response:
+    print(json.load(response)["status"])
+# Run: python3 status.py
+# Output:
+# ok
+```
+
+`-sS` hides progress but shows errors, `--fail` makes HTTP errors non-zero, and `--max-time 5` and `timeout=5` cap the request. **Always set a timeout**, or a stuck connection holds the CI job.
+
+## Shell quoting and expansion
+
+Most shell bugs live here. Before running a command, Bash expands variables and command substitutions, then **splits** unquoted results on whitespace, then **globs** unquoted `*`, `?` and `[...]`. Quotes switch off the last two.
+
+### Single quotes, double quotes and command substitution
+
+*Standalone comparison example.*
+
+```bash
+# quotes.sh
+name="world"
+echo 'Single quotes keep $name literal'   # ShellCheck warns
+echo "Double quotes expand: hello $name"
+echo "Escapes inside double quotes: \$name \"quoted\""
+echo 'It'\''s one argument'
+echo "Command substitution: $(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')"
+# Run: bash quotes.sh
+# Output:
+# Single quotes keep $name literal
+# Double quotes expand: hello world
+# Escapes inside double quotes: $name "quoted"
+# It's one argument
+# Command substitution: WORLD
+```
+
+```python
+# quotes.py
+name = "world"
+print("Plain strings keep $name literal")
+print(f"f-strings expand: hello {name}")
+print('Quotes inside: $name "quoted"')
+print("It's one argument")
+print(f"Upper case: {name.upper()}")
+# Run: python3 quotes.py
+# Output:
+# Plain strings keep $name literal
+# f-strings expand: hello world
+# Quotes inside: $name "quoted"
+# It's one argument
+# Upper case: WORLD
+```
+
+**Single quotes** are fully literal (hence `'It'\''s'`). **Double quotes** expand `$name`, `$(...)` and `$((...))` but stop splitting and globbing. **`$(...)`** substitutes a command's output minus trailing newlines (backticks nest badly). ShellCheck flags line 3, intentionally here: a lint warning is a question, not a verdict. Python strings expand nothing outside f-strings.
+
+### Word splitting and globbing
+
+*Standalone comparison example.*
+
+```bash
+# split.sh
+cd notes || exit 1
+file="release notes.txt"
+pattern="*.txt"
+printf '[%s]\n' $file   # ShellCheck warns
+printf '[%s]\n' "$file"
+printf '[%s]\n' $pattern   # ShellCheck warns
+printf '[%s]\n' "$pattern"
+# Run: bash split.sh
+# Output:
+# [release]
+# [notes.txt]
+# [release notes.txt]
+# [*.txt]
+# [-n.txt]
+# [plain.txt]
+# [release notes.txt]
+# [*.txt]
+```
+
+```python
+# split.py
+import glob
+import os
+
+os.chdir("notes")
+file = "release notes.txt"
+pattern = "*.txt"
+print(file.split())
+print(f"[{file}]")
+print(sorted(glob.glob(pattern)))
+print(f"[{pattern}]")
+# Run: python3 split.py
+# Output:
+# ['release', 'notes.txt']
+# [release notes.txt]
+# ['*.txt', '-n.txt', 'plain.txt', 'release notes.txt']
+# [*.txt]
+```
+
+Unquoted, `$file` became **two** arguments and `$pattern` a file list; `rm $file` would have deleted `release` and `notes.txt`. ShellCheck's SC2086: "Double quote to prevent globbing and word splitting." Python splits or globs only when asked, which removes this class of bugs but not all.
+
+### Preserving arguments with `"$@"`
+
+*Standalone comparison example.*
+
+```bash
+# preserve.sh
+show() { printf '  <%s>\n' "$@"; }
+echo 'With "$@":'
+show "$@"
+echo 'With $* unquoted:'
+show $*   # ShellCheck warns
+echo 'With "$*":'
+show "$*"
+# Run: bash preserve.sh "two words" "*.txt"
+# Output:
+# With "$@":
+#   <two words>
+#   <*.txt>
+# With $* unquoted:
+#   <two>
+#   <words>
+#   <*.txt>
+# With "$*":
+#   <two words *.txt>
+```
+
+Only `"$@"` forwards arguments exactly; `$*` splits and globs them and `"$*"` joins them. `deploy.sh` and the tools ownership check both forward with `"$@"`.
+
+### Reading lines safely with `IFS= read -r`
+
+*Standalone comparison example.*
+
+```bash
+# read.sh
+echo 'Plain read:'
+while read line; do printf '  [%s]\n' "$line"; done < notes/plain.txt   # ShellCheck warns
+echo 'IFS= read -r:'
+while IFS= read -r line; do printf '  [%s]\n' "$line"; done < notes/plain.txt
+# Run: bash read.sh
+# Output:
+# Plain read:
+#   [alpha]
+#   [indented]
+#   [backslash]
+#   []
+# IFS= read -r:
+#   [alpha]
+#   [  indented  ]
+#   [back\slash]
+#   []
+```
+
+An empty `IFS` stops `read` trimming spaces, and `-r` keeps backslashes. Both loops also dropped the unterminated last line, which `|| [[ -n "$line" ]]` fixes.
+
+### Leading hyphens, and where `--` helps
+
+*Standalone comparison example.*
+
+```bash
+# hyphen.sh
+cd notes || exit 1
+name="-n.txt"
+cat "$name" 2>/dev/null || echo "cat read $name as options (exit $?)"
+cat -- "$name"
+cat "./$name"
+# Run: bash hyphen.sh
+# Output:
+# cat read -n.txt as options (exit 1)
+# dash
+# dash
+```
+
+```python
+# hyphen.py
+import subprocess
+
+name = "-n.txt"
+result = subprocess.run(["cat", name], cwd="notes", capture_output=True, text=True)
+if result.returncode != 0:
+    print(f"cat read {name} as options (exit {result.returncode})")
+result = subprocess.run(["cat", "--", name], cwd="notes", capture_output=True, text=True, check=True)
+print(result.stdout, end="")
+# Run: python3 hyphen.py
+# Output:
+# cat read -n.txt as options (exit 1)
+# dash
+```
+
+This fails **in both languages** with correct quoting: `cat` reads `-n.txt` as options. It is not shell injection, and an argument list does not prevent it. Put `--` before names (a per-tool convention) or prefix `./`.
+
+### Why parsing `ls` output is unreliable
+
+*Standalone comparison example.*
+
+```bash
+# ls-parse.sh
+echo "Parsing ls (wrong):"
+for f in $(ls notes); do printf '  [%s]\n' "$f"; done   # ShellCheck warns
+echo "Using a glob (right):"
+for f in notes/*; do printf '  [%s]\n' "${f#notes/}"; done
+# Run: bash ls-parse.sh
+# Output:
+# Parsing ls (wrong):
+#   [*.txt]
+#   [-n.txt]
+#   [plain.txt]
+#   [release]
+#   [notes.txt]
+# Using a glob (right):
+#   [*.txt]
+#   [-n.txt]
+#   [plain.txt]
+#   [release notes.txt]
+```
+
+`ls` output is for people: splitting it broke `release notes.txt` and globbed the literal `*.txt`. A glob, `Path.iterdir()` or `os.scandir()` hands each name over intact.
+
+## Data handling
+
+### Text streams and pipelines
+
+The shell's natural data is a **stream of text lines**, and a **pipeline** of established tools is often the clearest program for line-oriented text.
+
+*Standalone comparison example.*
+
+```bash
+# status-codes.sh
+awk '{ print $3 }' access.log | sort | uniq -c | awk '{ print $2, $1 }'
+# Run: bash status-codes.sh
+# Output:
+# 200 3
+# 500 1
+# 503 1
+```
+
+```python
+# status_codes.py
+from collections import Counter
+
+counts = Counter()
+with open("access.log", encoding="utf-8") as f:
+    for line in f:
+        fields = line.split()
+        if len(fields) == 3:
+            counts[fields[2]] += 1
+for code in sorted(counts):
+    print(code, counts[code])
+# Run: python3 status_codes.py
+# Output:
+# 200 3
+# 500 1
+# 503 1
+```
+
+`awk '{ print $3 }'` prints the third field (awk's `$3`, protected by single quotes), `sort | uniq -c` counts, and the last `awk` swaps columns and drops `uniq`'s platform-specific padding. I would keep this pipeline; Python earns its extra lines once you need to skip malformed lines, group, compute percentages or emit JSON.
+
+### Structured data: JSON with jq versus Python
+
+When the input is JSON, both jq and Python work on structure rather than text:
+
+*Standalone comparison example.*
+
+```bash
+# group.sh
+jq -c '{healthy: [.services[] | select(.healthy) | .name], unhealthy: [.services[] | select(.healthy | not) | .name]}' services.json
+# Run: bash group.sh
+# Output:
+# {"healthy":["web","worker"],"unhealthy":["api gateway"]}
+```
+
+```python
+# group.py
+import json
+
+with open("services.json", encoding="utf-8") as f:
+    services = json.load(f)["services"]
+result = {
+    "healthy": [s["name"] for s in services if s["healthy"]],
+    "unhealthy": [s["name"] for s in services if not s["healthy"]],
+}
+print(json.dumps(result, separators=(",", ":")))
+# Run: python3 group.py
+# Output:
+# {"healthy":["web","worker"],"unhealthy":["api gateway"]}
+```
+
+jq is shorter for a one-off filter; as programs grow, Python offers named variables, testable functions, line-numbered errors and no second language inside quotes. My smoke test reads one JSON field with `sed`:
+
+*Actual repository code.* Repository: jithendar.com. File: `scripts/smoke.sh`, lines 24–25.
+
+```bash
+health="$(curl -sS --max-time 15 "$ORIGIN/api/health")"
+check "health status" '"ok"' "$(sed -nE 's/.*"status":("[^"]*").*/\1/p' <<<"$health")"
+```
+
+`<<<` is a Bash **here-string**. This works because the health endpoint returns compact JSON of a known shape, and it avoids depending on jq, but it breaks on a space after the colon, an earlier nested `status` or pretty-printing: fewer dependencies, more assumptions.
+
+### CSV: why splitting on commas is unreliable
+
+*Standalone comparison example.*
+
+```bash
+# csv-cut.sh
+cut -d, -f2 inventory.csv
+# Run: bash csv-cut.sh
+# Output:
+# owner
+# platform
+# "Smith
+```
+
+```python
+# csv_owner.py
+import csv
+
+with open("inventory.csv", newline="", encoding="utf-8") as f:
+    for row in csv.DictReader(f):
+        print(row["owner"])
+# Run: python3 csv_owner.py
+# Output:
+# platform
+# Smith, J.
+```
+
+CSV allows quoted commas and newlines, so `cut -d,` split `"Smith, J."` in half. Python's `csv` module follows the quoting rules (open with `newline=""`, or "newlines embedded inside quoted fields will not be interpreted correctly"). `cut` is fine only if you can promise no quotes.
+
+### Prefer structured output over scraping tables
+
+Most infrastructure CLIs print machine-readable output; ask for it instead of parsing human columns:
+
+*Actual repository code.* Repository: tools. File: `scripts/lib/check-argocd-ownership.sh`, lines 4–9.
+
+```bash
+context="${1:?Kubernetes context required}"
+shift
+[[ $# -gt 0 ]] || { echo 'Application names required.' >&2; exit 2; }
+crd="$(kubectl --context "$context" --request-timeout=15s get crd applications.argoproj.io --ignore-not-found -o name)"
+[[ -n "$crd" ]] || exit 0
+existing="$(kubectl --context "$context" --request-timeout=15s get applications "$@" -n argocd --ignore-not-found -o name)"
+```
+
+`-o name` prints one `kind/name` per line, so empty means none; `shift` leaves only application names in `"$@"`. AWS CLI scripts in MOKS and jithendar.com use `--query ... --output text` the same way.
+
+## Errors and exit codes
+
+### Exit status, exceptions and `sys.exit()`
+
+Every program ends with an **exit status**: `0` is success, `1` to `255` failure, and above 128 usually "killed by signal (status − 128)"; `if`, `&&` and `||` act on `$?`. Python's uncaught **exception** prints a traceback and exits `1`; `sys.exit(n)` or `sys.exit("message")` sets the status.
+
+### Standard output versus standard error
+
+Keep results on **stdout** and diagnostics on **stderr** (`>&2`, `print(..., file=sys.stderr)`) so callers can capture one without the other.
+
+*Standalone comparison example.*
+
+```bash
+# readconfig.sh
+file="$1"
+if [[ ! -f "$file" ]]; then
+  echo "error: $file does not exist" >&2
+  exit 2
+fi
+if ! count="$(jq -e '.services | length' "$file" 2>/dev/null)"; then
+  echo "error: $file is not valid JSON" >&2
+  exit 1
+fi
+echo "$count services"
+# Run: bash readconfig.sh services.json
+# Output:
+# 3 services
+# Run: bash readconfig.sh missing.json
+# Exit status: 2
+# Stderr:
+# error: missing.json does not exist
+# Run: bash readconfig.sh inventory.csv
+# Exit status: 1
+# Stderr:
+# error: inventory.csv is not valid JSON
+```
+
+```python
+# readconfig.py
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, encoding="utf-8") as f:
+        config = json.load(f)
+except FileNotFoundError:
+    print(f"error: {path} does not exist", file=sys.stderr)
+    sys.exit(2)
+except json.JSONDecodeError:
+    print(f"error: {path} is not valid JSON", file=sys.stderr)
+    sys.exit(1)
+print(f"{len(config['services'])} services")
+# Run: python3 readconfig.py services.json
+# Output:
+# 3 services
+# Run: python3 readconfig.py missing.json
+# Exit status: 2
+# Stderr:
+# error: missing.json does not exist
+# Run: python3 readconfig.py inventory.csv
+# Exit status: 1
+# Stderr:
+# error: inventory.csv is not valid JSON
+```
+
+Both give expected failures distinct codes. Bash needs jq's `-e` and must discard jq's error text; Python tells "missing" from "malformed" by exception type, with line and column in `JSONDecodeError`. Neither handles a missing `services` key.
+
+### `set -e`, `set -u` and `set -o pipefail`, one at a time
+
+`set -euo pipefail` is three options, each with limits. **`set -e`** exits on failure, except in `if`, `while` and `until` tests, all but the last command of `&&`/`||` lists and pipelines, and `!` commands; and "if a compound command or shell function executes in a context where `-e` is being ignored", nothing inside it is affected:
+
+*Standalone comparison example.*
+
+```bash
+# errexit-if.sh
+set -euo pipefail
+step() {
+  false
+  echo "step kept going after false"
+}
+if step; then
+  echo "step reported success"
+fi
+step
+echo "not reached"
+# Run: bash errexit-if.sh
+# Exit status: 1
+# Output:
+# step kept going after false
+# step reported success
+```
+
+Called from `if`, the function ran past `false`; a function that should fail must check its commands (`false || return 1`). **`set -u`** makes unset variables errors, catching typos such as `$DEPLOY_ENVV`:
+
+*Standalone comparison example.*
+
+```bash
+# nounset.sh
+set -u
+echo "optional: ${MAYBE_SET:-empty}"
+echo "required: $MAYBE_SET"
+echo "not reached"
+# Run: bash nounset.sh
+# Exit status: 1
+# Output:
+# optional: empty
+# Stderr:
+# nounset.sh: line 4: MAYBE_SET: unbound variable
+```
+
+`${MAYBE_SET:-empty}` marks a value that may be missing. **`set -o pipefail`** gives a pipeline the status of its last failing command; it is in POSIX.1-2024, but older `/bin/sh` may lack it.
+
+*Standalone comparison example.*
+
+```bash
+# pipefail.sh
+false | true
+echo "without pipefail: $?"
+set -o pipefail
+false | true
+echo "with pipefail: $?"
+printf 'a\nb\n' | grep zzz | sort >/dev/null
+echo "PIPESTATUS: ${PIPESTATUS[*]}"
+# Run: bash pipefail.sh
+# Output:
+# without pipefail: 0
+# with pipefail: 1
+# PIPESTATUS: 0 1 0
+```
+
+`PIPESTATUS` holds every status from the last pipeline. The catch: under `pipefail`, `grep`'s "no match" fails the pipeline. My smoke test handles it:
+
+*Actual repository code.* Repository: jithendar.com. File: `scripts/smoke.sh`, line 48.
+
+```bash
+check "robots.txt lists sitemap" 1 "$(curl -sS --max-time 15 "$ORIGIN/robots.txt" | grep -c "^Sitemap: $ORIGIN/sitemap.xml$" || true)"
+```
+
+`|| true` lets `check` report a missing line as `0`, at the cost of hiding a failing `curl` the same way. Also, `local var="$(command)"` reports `local`'s status, not the command's; declare first, assign second. `set -euo pipefail` is a safety net, not error handling.
+
+### Capturing output without losing the error
+
+*Standalone comparison example.*
+
+```bash
+# capture.sh
+if ! output="$(grep -c alpha notes/plain.txt missing.txt 2>build/grep.err)"; then
+  echo "grep failed: $(cat build/grep.err)" >&2
+fi
+echo "stdout was: $output"
+# Run: bash capture.sh
+# Output:
+# stdout was: notes/plain.txt:1
+# Stderr:
+# grep failed: grep: missing.txt: No such file or directory
+```
+
+```python
+# capture.py
+import subprocess
+import sys
+
+result = subprocess.run(["grep", "-c", "alpha", "notes/plain.txt", "missing.txt"], capture_output=True, text=True)
+if result.returncode != 0:
+    print(f"grep failed: {result.stderr.strip()}", file=sys.stderr)
+print(f"stdout was: {result.stdout.strip()}")
+# Run: python3 capture.py
+# Output:
+# stdout was: notes/plain.txt:1
+# Stderr:
+# grep failed: grep: missing.txt: No such file or directory
+```
+
+`$(...)` captures stdout only, so stderr goes to a file (`2>&1` would mix them); `capture_output=True` keeps both separately. Here `pipefail` carries a real script's error handling:
+
+*Actual repository code.* Repository: moks. File: `scripts/backup.sh`, lines 5–10.
+
+```bash
+set -euo pipefail
+CONTEXT="${1:-mk4}"; OUT="${2:-.}"
+FILE="$OUT/moks-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
+kubectl --context "$CONTEXT" -n moks exec statefulset/moks-postgres -- \
+  pg_dump -U moks -d moks --no-owner --format=plain | gzip -9 > "$FILE"
+echo "wrote $FILE ($(du -h "$FILE" | cut -f1))"
+```
+
+Without `pipefail`, `gzip`'s success would hide a failing `pg_dump` and print "wrote ..." for a broken backup. It does not remove the partial `.sql.gz`, which nothing cleans up.
+
+## Running external programs safely
+
+### `subprocess.run()` with an argument list
+
+Given a list, `subprocess.run()` starts the program with no shell, one argument per item; it "will not implicitly choose to call a system shell", so metacharacters pass safely. Common options: `check=True` (raise on non-zero), `capture_output=True`, `text=True` (strings, not bytes) and `timeout=` (kill and raise `TimeoutExpired`).
+
+*Standalone comparison example.*
+
+```python
+# run_checked.py
+import subprocess
+
+try:
+    subprocess.run(["grep", "-q", "zzz", "notes/plain.txt"], check=True)
+except subprocess.CalledProcessError as error:
+    print(f"{error.cmd[0]} exited {error.returncode}")
+limit = 1
+try:
+    subprocess.run(["sleep", "5"], timeout=limit)
+except subprocess.TimeoutExpired as error:
+    print(f"{error.cmd[0]} was stopped after {limit} second(s)")
+# Run: python3 run_checked.py
+# Output:
+# grep exited 1
+# sleep was stopped after 1 second(s)
+```
+
+Bash has no per-command timeout; GNU `timeout` exists on Linux but not by default on macOS, so use tool limits such as curl's `--max-time` or kubectl's `--request-timeout`.
+
+### Building argument lists: Bash arrays and Python lists
+
+*Standalone comparison example.*
+
+```bash
+# search.sh
+pattern="$1"
+grep_args=(-c)
+if [[ "${IGNORE_CASE:-}" == 1 ]]; then
+  grep_args+=(-i)
+fi
+grep "${grep_args[@]}" -- "$pattern" "notes/release notes.txt" || (( $? == 1 ))
+# Run: bash search.sh FIRST
+# Output:
+# 0
+# Run: IGNORE_CASE=1 bash search.sh FIRST
+# Output:
+# 1
+```
+
+```python
+# search.py
+import os
+import subprocess
+import sys
+
+pattern = sys.argv[1]
+args = ["grep", "-c"]
+if os.environ.get("IGNORE_CASE") == "1":
+    args.append("-i")
+args += ["--", pattern, "notes/release notes.txt"]
+result = subprocess.run(args, capture_output=True, text=True)
+if result.returncode > 1:
+    sys.exit(result.stderr)
+print(result.stdout, end="")
+# Run: python3 search.py FIRST
+# Output:
+# 0
+# Run: IGNORE_CASE=1 python3 search.py FIRST
+# Output:
+# 1
+```
+
+`"${grep_args[@]}"` is the shell's argument list; a plain string (`args="-c -i"`) relies on splitting and breaks on spaces. `|| (( $? == 1 ))` accepts "no match" but not status 2.
+
+### Why `shell=True` and `eval` change the rules
+
+*Standalone comparison example.*
+
+```bash
+# injection.sh
+name="notes; echo INJECTED"
+printf '%s\n' "$name"
+eval "printf '%s\n' $name"
+# Run: bash injection.sh
+# Output:
+# notes; echo INJECTED
+# notes
+# INJECTED
+```
+
+```python
+# injection.py
+import subprocess
+
+name = "notes; echo INJECTED"
+subprocess.run(["printf", "%s\\n", name], check=True)
+subprocess.run(f"printf '%s\\n' {name}", shell=True, check=True)
+# Run: python3 injection.py
+# Output:
+# notes; echo INJECTED
+# notes
+# INJECTED
+```
+
+The second command in each hands a string to a shell, which obeys the `;` in the value: **shell injection**. `shell=True` runs `/bin/sh -c`, making quoting "the application's responsibility", and `eval` re-parses text as code. Prefer lists and arrays, use `shlex.quote()` if you must build a command line, and remember that `--` and `./` still guard against values read as options.
+
+## APIs and cloud automation
+
+### A local mock API
+
+This standard-library server runs only on your machine, accepts a fake token, pages a list, and fails one endpoint twice before succeeding. Start it in a second terminal with `python3 mock_api.py`.
+
+*Standalone comparison example.*
+
+```python
+# mock_api.py
+"""A local stand-in for a real API. Listens only on 127.0.0.1:8765."""
+import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
+
+TOKEN = "example-token"  # a fake value for local practice only
+PAGES = {1: ["web", "api gateway"], 2: ["worker"]}
+calls = {}
+
+
+class Handler(BaseHTTPRequestHandler):
+    def send_json(self, status, body, headers=()):
+        data = json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        for name, value in headers:
+            self.send_header(name, value)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        url = urlparse(self.path)
+        query = parse_qs(url.query)
+        if url.path == "/v1/status":
+            return self.send_json(200, {"status": "ok"})
+        if self.headers.get("Authorization") != f"Bearer {TOKEN}":
+            return self.send_json(401, {"error": "missing or wrong token"})
+        if url.path == "/v1/services":
+            page = int(query.get("page", ["1"])[0])
+            next_page = page + 1 if page + 1 in PAGES else None
+            return self.send_json(200, {"items": PAGES.get(page, []), "next_page": next_page})
+        if url.path == "/v1/flaky":
+            key = query.get("id", [""])[0]
+            calls[key] = calls.get(key, 0) + 1
+            attempt = (calls[key] - 1) % 3 + 1  # every third call succeeds
+            if attempt < 3:
+                return self.send_json(503, {"error": "try again"}, [("Retry-After", "1")])
+            return self.send_json(200, {"status": "ok", "attempts": attempt})
+        return self.send_json(404, {"error": "not found"})
+
+    def log_message(self, *args):  # keep the terminal quiet
+        pass
+
+
+ThreadingHTTPServer(("127.0.0.1", 8765), Handler).serve_forever()
+```
+
+### Authentication, HTTP errors and pagination
+
+*Standalone comparison example.*
+
+```bash
+# list-services.sh
+set -euo pipefail
+: "${API_TOKEN:?set API_TOKEN}"
+base="${API_URL:-http://127.0.0.1:8765}"
+page=1
+while [[ "$page" != null ]]; do
+  body="$(curl -sS --fail --max-time 5 -H "Authorization: Bearer ${API_TOKEN}" "$base/v1/services?page=$page")"
+  jq -r '.items[]' <<<"$body"
+  page="$(jq -r '.next_page' <<<"$body")"
+done
+# Run: API_TOKEN=example-token bash list-services.sh
+# Output:
+# web
+# api gateway
+# worker
+# Run: API_TOKEN=wrong bash list-services.sh
+# Exit status: 22
+# Stderr:
+# curl: (22) The requested URL returned error: 401
+```
+
+```python
+# list_services.py
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+token = os.environ.get("API_TOKEN")
+if not token:
+    sys.exit("set API_TOKEN")
+base = os.environ.get("API_URL", "http://127.0.0.1:8765")
+page = 1
+while page is not None:
+    request = urllib.request.Request(f"{base}/v1/services?page={page}", headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            body = json.load(response)
+    except urllib.error.HTTPError as error:
+        sys.exit(f"HTTP {error.code} from {error.url}")
+    for name in body["items"]:
+        print(name)
+    page = body["next_page"]
+# Run: API_TOKEN=example-token python3 list_services.py
+# Output:
+# web
+# api gateway
+# worker
+# Run: API_TOKEN=wrong python3 list_services.py
+# Exit status: 1
+# Stderr:
+# HTTP 401 from http://127.0.0.1:8765/v1/services?page=1
+```
+
+- **Credentials** come from an environment variable (a secret store in CI). curl's `-H` exposes the token in the process list on shared machines; the manual's `@file` form avoids it, and Python's headers never appear on a command line.
+- **HTTP errors:** `--fail` maps 400+ to exit 22, but the manual calls it "not fail-safe" around 401 and 407; `urlopen()` raises `HTTPError` with code and URL.
+- **Pagination** loops until no next page; real APIs use tokens, `Link` headers or cursors, so test the last page. **Timeouts** are five seconds in both.
+
+### Rate limits, retries and backoff
+
+APIs signal overload with 429 or 503 and often `Retry-After`. **Backoff** waits longer each time; **jitter** keeps clients from retrying in lockstep.
+
+*Standalone comparison example.*
+
+```bash
+# flaky.sh
+set -euo pipefail
+: "${API_TOKEN:?set API_TOKEN}"
+curl -sS --fail --max-time 5 --retry 3 -H "Authorization: Bearer ${API_TOKEN}" \
+  "http://127.0.0.1:8765/v1/flaky?id=curl-demo" | jq -r '"\(.status) after \(.attempts) attempts"'
+# Run: API_TOKEN=example-token bash flaky.sh
+# Output:
+# ok after 3 attempts
+# Stderr:
+# curl: (22) The requested URL returned error: 503
+# curl: (22) The requested URL returned error: 503
+```
+
+```python
+# flaky.py
+import json
+import os
+import random
+import time
+import urllib.error
+import urllib.request
+
+RETRYABLE = {429, 502, 503, 504}
+
+
+def get_json(url, token, attempts=4):
+    for attempt in range(1, attempts + 1):
+        request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return json.load(response)
+        except urllib.error.HTTPError as error:
+            if error.code not in RETRYABLE or attempt == attempts:
+                raise
+            retry_after = error.headers.get("Retry-After", "")
+            delay = int(retry_after) if retry_after.isdigit() else 2 ** attempt
+            time.sleep(min(delay, 30) + random.uniform(0, 0.25))
+
+
+body = get_json("http://127.0.0.1:8765/v1/flaky?id=python-demo", os.environ["API_TOKEN"])
+print(f"{body['status']} after {body['attempts']} attempts")
+# Run: API_TOKEN=example-token python3 flaky.py
+# Output:
+# ok after 3 attempts
+```
+
+curl's `--retry 3` retries "transient" errors (timeouts and 408, 429, 500, 502, 503, 504, 522, 524) and honours `Retry-After`; curl 8.7.1 still printed both 503s to stderr although the command succeeded. Python spells out the policy, which is more code but testable; it falls back to exponential backoff when `Retry-After` is an HTTP date. **Retry only idempotent operations**: a POST that timed out may have succeeded, so look for idempotency keys before retrying writes, especially with `--retry-all-errors`.
+
+### AWS CLI versus Boto3 in my repositories
+
+Credential scripts use the AWS CLI and ask for exactly the fields they need:
+
+*Actual repository code.* Repository: moks. File: `scripts/create-runtime-key.sh`, line 19.
+
+```bash
+OLD_KEYS="$(aws iam list-access-keys --user-name "$USER_NAME" --query 'AccessKeyMetadata[].AccessKeyId' --output text)"
+```
+
+`--query` is JMESPath and `--output text` prints tab-separated words; the CLI "retrieves all available items" by default, so there is no pagination code. MOKS's backend uses Boto3, where pagination is explicit:
+
+*Actual repository code.* Repository: moks. File: `backend/moks/backup.py`, lines 152–156.
+
+```python
+    def keys(self, prefix: str) -> list[str]:
+        out: list[str] = []
+        for page in self.s3.get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=prefix):
+            out.extend(o["Key"] for o in page.get("Contents", []))
+        return out
+```
+
+A **paginator** yields each page, and `.get("Contents", [])` handles empty pages. Timeouts and retries are set on the client:
+
+*Actual repository code.* Repository: moks. File: `backend/moks/connectors/cloudwatch.py`, lines 62–67.
+
+```python
+    def _client(self, name: str):
+        if name not in self._clients:
+            from botocore.config import Config
+
+            self._clients[name] = self._boto_session().client(name, region_name=self.region,
+                                                              config=Config(connect_timeout=5, read_timeout=20, retries={"max_attempts": 3, "mode": "standard"}))
+```
+
+In a `Config`, `max_attempts` **excludes** the first request (in the config file or `AWS_MAX_ATTEMPTS` it includes it), so this client makes up to four calls; "standard" mode retries throttling and 5xx with backoff, and the default is still "legacy". None of these AWS calls was run for this article.
+
+## Cleanup, signals and temporary files
+
+### `trap` in Bash, `try`/`finally` and context managers in Python
+
+Temporary files should go even when a script fails. Bash's `trap ... EXIT` runs on exit; Python uses `try`/`finally` or a **context manager** (`with`).
+
+*Standalone comparison example.*
+
+```bash
+# cleanup.sh
+set -euo pipefail
+workdir="$(mktemp -d)"
+cleanup() {
+  rm -rf -- "$workdir"
+  echo "removed temporary directory" >&2
+}
+trap cleanup EXIT
+printf 'draft\n' > "$workdir/report.txt"
+echo "wrote a draft in a temporary directory"
+false
+echo "never printed"
+# Run: bash cleanup.sh
+# Exit status: 1
+# Output:
+# wrote a draft in a temporary directory
+# Stderr:
+# removed temporary directory
+```
+
+```python
+# cleanup.py
+import sys
+import tempfile
+from pathlib import Path
+
+try:
+    with tempfile.TemporaryDirectory() as workdir:
+        (Path(workdir) / "report.txt").write_text("draft\n", encoding="utf-8")
+        print("wrote a draft in a temporary directory", flush=True)
+        sys.exit(1)
+finally:
+    print("removed temporary directory", file=sys.stderr)
+# Run: python3 cleanup.py
+# Exit status: 1
+# Stderr:
+# removed temporary directory
+# Output:
+# wrote a draft in a temporary directory
+```
+
+`mktemp -d` makes a private, unpredictable directory, and the `EXIT` trap still runs after `set -e` stops the script. `TemporaryDirectory()` is created "in the most secure manner possible" and removed even on `sys.exit()`; avoid the unsafe `tempfile.mktemp()`. The same pattern protects a secret:
+
+*Actual repository code.* Repository: moks. File: `scripts/create-runtime-key.sh`, lines 25–30.
+
+```bash
+umask 077
+PATCH="$(mktemp)"
+trap 'rm -f "$PATCH"' EXIT
+aws iam create-access-key --user-name "$USER_NAME" --output json \
+  | python3 -c 'import json,sys; k=json.load(sys.stdin)["AccessKey"]; json.dump({"stringData":{"AWS_ACCESS_KEY_ID":k["AccessKeyId"],"AWS_SECRET_ACCESS_KEY":k["SecretAccessKey"]}}, sys.stdout)' > "$PATCH"
+k patch secret moks-secrets --type merge --patch-file "$PATCH" >/dev/null
+```
+
+`umask 077` makes new files owner-only, and the trap deletes the secret file however the script ends.
+
+### Signals
+
+`SIGINT` (Ctrl-C) and `SIGTERM` (what `kill` and Kubernetes send first) can be handled; `SIGKILL` "cannot be caught, blocked, or ignored", and power cuts or OOM kills give no warning. **No cleanup runs after every termination**, so tolerate leftovers.
+
+*Standalone comparison example.*
+
+```bash
+# term.sh
+workdir="$(mktemp -d)"
+trap 'rm -rf -- "$workdir"' EXIT
+trap 'kill "$child" 2>/dev/null; echo "stopping: cleaning up" >&2; exit 143' TERM INT
+sleep 5 &
+child=$!
+wait "$child"
+echo "finished normally"
+# Run: bash term.sh & sleep 1; kill -TERM $!; wait $!; echo "exit status $?"
+# Output:
+# exit status 143
+# Stderr:
+# stopping: cleaning up
+```
+
+```python
+# term.py
+import signal
+import sys
+import tempfile
+import time
+
+
+def stop(signum, frame):
+    raise SystemExit(128 + signum)
+
+
+signal.signal(signal.SIGTERM, stop)
+with tempfile.TemporaryDirectory() as workdir:
+    try:
+        time.sleep(5)
+        print("finished normally")
+    except SystemExit:
+        print("stopping: cleaning up", file=sys.stderr)
+        raise
+# Run: python3 term.py & sleep 1; kill -TERM $!; wait $!; echo "exit status $?"
+# Output:
+# exit status 143
+# Stderr:
+# stopping: cleaning up
+```
+
+**Bash delays traps during a foreground command**, so `sleep 5 &` plus `wait` lets the trap run at once and stop the child. **Python handles only `SIGINT` by default**, so without `signal.signal()` a `SIGTERM` skips `finally` and `with`; the handler raises `SystemExit` instead (handlers run between bytecodes, so long C calls delay them). `143` is 128 + 15 (`SIGTERM`); this is Unix-only.
+
+## Portability and dependencies
+
+### Bash versus POSIX `sh`
+
+A `#!/bin/sh` script must be POSIX; Bash features need a Bash shebang. Bash syntax under a POSIX shell is not always loud:
+
+*Standalone comparison example.*
+
+```sh
+# not-posix.sh
+if [[ -n "x" ]]; then   # ShellCheck warns
+  echo "this line needs Bash"
+fi
+echo "script finished"
+# Run: sh not-posix.sh
+# Output:
+# script finished
+# Stderr:
+# not-posix.sh: 2: [[: not found
+```
+
+dash treated the missing `[[` command as false, skipped the block and exited 0, with only a stderr message; ShellCheck catches this if shebangs are accurate. macOS's `/bin/bash` 3.2 also lacks associative arrays, `mapfile`, `${var,,}` (4.0), negative subscripts (4.2), `wait -n` (4.3) and `inherit_errexit` (4.4).
+
+### Linux versus macOS: GNU versus BSD utilities
+
+Linux usually ships GNU tools and macOS BSD ones, with different options:
+
+| Task | GNU (most Linux) | BSD (macOS) |
+| --- | --- | --- |
+| Edit a file in place | `sed -i 's/a/b/' file` | `sed -i '' 's/a/b/' file` |
+| File size in bytes | `stat -c %s file` | `stat -f %z file` |
+| Date arithmetic | `date -d '1 day ago'` | `date -v-1d` |
+| Run with a time limit | `timeout 5 cmd` | not installed by default |
+
+On a Mac, GNU-style `sed -i 's/a/b/' f` failed with `invalid command code f`. Stick to POSIX options or detect the variant; Python's `os.stat()`, `datetime` and `pathlib` behave the same on both. A POSIX approach that works with both `wc` variants:
+
+*Standalone comparison example.*
+
+```sh
+# size.sh
+size=$(wc -c < "notes/release notes.txt")
+echo "size: $((size)) bytes"
+# Run: sh size.sh
+# Output:
+# size: 11 bytes
+```
+
+```python
+# size.py
+import os
+
+print(f"size: {os.path.getsize('notes/release notes.txt')} bytes")
+# Run: python3 size.py
+# Output:
+# size: 11 bytes
+```
+
+### Python versions and packages
+
+Python is not automatically portable either: my CI runs 3.14 (RoboShop AI) and 3.12 (MOKS), these examples ran on 3.11.9, and a server's system Python may be older than features such as `str.removesuffix()` (3.9).
+
+### Containers and reproducible environments
+
+A container image pins shell, utilities, Python and packages at once: RoboShop's `FROM nginx:1.31-alpine` image always runs its entrypoint under BusyBox `sh` with its own `envsubst` and `nginx`, at the cost of being tested only there.
+
+## Performance and maintainability
+
+### Process startup and repeated commands
+
+Every external command is a new process, cheap once and expensive ten thousand times. Both halves print the same thing:
+
+*Standalone comparison example.*
+
+```bash
+# per-line.sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" | cut -d' ' -f3
+done < access.log
+echo "---"
+cut -d' ' -f3 access.log
+# Run: bash per-line.sh
+# Output:
+# 200
+# 500
+# 200
+# 200
+# 503
+# ---
+# 200
+# 500
+# 200
+# 200
+# 503
+```
+
+The loop starts a `cut` per line; the second form starts one. That cost grows with input size (not benchmarked here). Stream tools such as `awk`, `sort` and `grep` each run as one process, and Python pays its startup once, which suits long-running logic and shared state.
+
+### Readability, testability and the team
+
+More important than speed: can the next person read it (20 lines of commands, yes; 200 lines emulating nested arrays, no), can you test it (Python functions directly, shell scripts as whole programs), can you debug it (`bash -x` versus tracebacks), and what does the team know? Length alone is a weak rule.
+
+## Testing and debugging
+
+### Syntax checks: `bash -n`
+
+`bash -n` (and `dash -n`) parse without running, catching syntax errors but not logic or missing commands. Every cited script passed.
+
+### ShellCheck
+
+ShellCheck knows the quoting, splitting and portability traps above. With 0.11.0, only lines marked `# ShellCheck warns` warned; on the cited repository scripts it gave two expected notes (`SC1091` for `. /etc/os-release`, and `SC2016` for the entrypoint's deliberately single-quoted `envsubst` list). It cannot judge external programs or logic.
+
+### Tracing with `set -x`, and the secrets problem
+
+`set -x` traces every expanded command, Bash's best debugging tool and a common way to leak secrets into CI logs:
+
+*Standalone comparison example.*
+
+```bash
+# trace.sh
+API_TOKEN="example-token"
+set -x
+auth_header="Authorization: Bearer ${API_TOKEN}"
+set +x
+echo "header built (${#auth_header} characters)"
+# Run: bash trace.sh
+# Output:
+# header built (35 characters)
+# Stderr:
+# + auth_header='Authorization: Bearer example-token'
+# + set +x
+```
+
+Use `set +x` around secrets and never trace a credential-handling script globally; CI masking only hides values it knows.
+
+### Testing exit codes, stdout and stderr
+
+My repositories test with `unittest` (RoboShop AI, tools) and pytest (MOKS). A Python test can check a shell script's three outputs as a black box:
+
+*Standalone comparison example.*
+
+```bash
+# port.sh
+port="${1:-}"
+if [[ ! "$port" =~ ^[0-9]+$ ]] || (( 10#$port < 1 || 10#$port > 65535 )); then
+  echo "invalid port: $port" >&2
+  exit 2
+fi
+echo "port $port ok"
+```
+
+```python
+# test_port.py
+import subprocess
+import unittest
+
+
+def run(*args):
+    return subprocess.run(["bash", "port.sh", *args], capture_output=True, text=True)
+
+
+class PortScriptTests(unittest.TestCase):
+    def test_valid_port(self):
+        result = run("8080")
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "port 8080 ok\n", ""))
+
+    def test_out_of_range(self):
+        result = run("70000")
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (2, "", "invalid port: 70000\n"))
+
+    def test_missing_argument(self):
+        self.assertEqual(run().returncode, 2)
+
+
+if __name__ == "__main__":
+    unittest.main()
+# Run: python3 -m unittest -q test_port 2>&1 | tail -n 1
+# Output:
+# OK
+```
+
+It pins the contract: quiet success, status 2 with a stderr message on bad input, and nothing on stdout when failing.
+
+### Mocking external commands and API responses
+
+Fake commands go earlier on `PATH` (as the tools tests do for `require-centos.sh`), and fake APIs are a local server or `unittest.mock`; MOKS's backup store takes an optional `client` for a fake S3. Tests prove only the cases you wrote.
+
+## Real examples from my repositories
+
+Three small, complete examples: a POSIX `sh` entrypoint, a Bash orchestration script, and Python testing shell code. The repositories do not record why each language was chosen, so "why it fits" is my assessment.
+
+### 1. RoboShop's NGINX entrypoint (POSIX `sh`)
+
+**Source:** `services/web/nginx/start.sh` in roboshop-ai. The web image's Dockerfile runs it as `ENTRYPOINT ["/bin/sh", "/etc/nginx/roboshop/start.sh"]`.
+
+**Inputs:** environment variables, each with a default (`NGINX_HTTP_PORT`, `GATEWAY_HOST`, `WEB_ROOT`, `FRONTEND_BASE_PATH` and others), plus the configuration templates in `/etc/nginx/roboshop`. An optional `--test` argument.
+
+**Operations:** validate every setting, render the templates with `envsubst`, check the result with `nginx -t`, then replace itself with NGINX.
+
+*Actual repository code.* Repository: roboshop-ai. File: `services/web/nginx/start.sh`, lines 23–34.
+
+```sh
+# Values are inserted into configuration: reject directive injection.
+for name in "$GATEWAY_HOST" "$NGINX_SERVER_NAME"; do
+    case "$name" in ''|*[!a-zA-Z0-9.-]*) echo 'Invalid hostname' >&2; exit 1;; esac
+done
+case "$WEB_ROOT" in /*) ;; *) echo 'Invalid WEB_ROOT' >&2; exit 1;; esac
+case "$WEB_ROOT" in *[!a-zA-Z0-9/._-]*|*..*) echo 'Invalid WEB_ROOT' >&2; exit 1;; esac
+[ -f "$WEB_ROOT/index.html" ] || { echo "Storefront files missing in $WEB_ROOT" >&2; exit 1; }
+case "$NGINX_RESOLVER" in ''|*[!0-9a-fA-F.:\[\]]*) echo 'Invalid DNS resolver' >&2; exit 1;; esac
+for port in "$GATEWAY_PORT" "$NGINX_HTTP_PORT" "$NGINX_HTTPS_PORT"; do
+    case "$port" in ''|*[!0-9]*) echo 'Invalid port' >&2; exit 1;; esac
+    [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || exit 1
+done
+```
+
+This is injection prevention: the values land in NGINX configuration, where a `;` in a host name could add directives.
+
+*Actual repository code.* Repository: roboshop-ai. File: `services/web/nginx/start.sh`, lines 42–47.
+
+```sh
+mode=http
+if [ "${NGINX_TLS:-false}" = true ]; then mode=https; fi
+envsubst "$vars" < "$NGINX_CONFIG_DIR/servers/$mode.conf" > "$NGINX_RUN_DIR/server.conf"
+nginx -t -c "$NGINX_RUN_DIR/nginx.conf"
+if [ "${1:-}" = --test ]; then exit 0; fi
+exec nginx -c "$NGINX_RUN_DIR/nginx.conf" -g 'daemon off;'
+```
+
+`envsubst "$vars"` substitutes only the named variables, so NGINX's `$uri` survives, and `exec` makes NGINX the main process that receives the stop signal.
+
+**Behaviour:** `set -eu` stops on unset variables and failures, and bad settings exit `1` with a message. Run with `--test` under dash, valid settings passed `nginx -t`, and `FRONTEND_BASE_PATH='/a b'` and `GATEWAY_HOST='x;evil'` were rejected. **Dependencies:** a POSIX shell, `awk`, `envsubst` and `nginx`, all in the base image. **Why it fits (my assessment):** check strings, fill templates, start one program, with nothing added to an image that has "no Node, sources or dev dependencies". **Limitations:** the port check on line 33 exits silently (`NGINX_HTTP_PORT=70000` exited `1` with no message), and `case` patterns are hard to unit-test individually.
+
+### 2. The jithendar.com smoke test (Bash)
+
+**Source:** `scripts/smoke.sh` in the moks-cms repository (then named jithendar.com), which `deploy.sh` called at the end of a deploy.
+
+It takes an optional origin and expected version, and makes about a dozen curl checks: health, key pages, redirects, `robots.txt` and a route owned by another workload.
+
+*Actual repository code.* Repository: jithendar.com. File: `scripts/smoke.sh`, lines 11–22.
+
+```bash
+check() {
+  local name="$1" expected="$2" actual="$3"
+  if [[ "$actual" == "$expected" ]]; then
+    echo "ok   $name"
+  else
+    echo "FAIL $name: expected '$expected', got '$actual'" >&2
+    failures=$((failures + 1))
+  fi
+}
+
+status() { curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$1"; }
+location() { curl -sS -o /dev/null -w '%{redirect_url}' --max-time 15 "$1"; }
+```
+
+`check` **counts** failures so one run reports them all; `-w '%{http_code}'` prints only the status and `status` "returns" by printing. **Why it fits (my assessment):** each check is one curl call and one comparison, readable as a checklist in the deploy session. **Limitations:** the header says it "exits non-zero on the first failed check", but that holds only for the first request (line 24 under `set -e`, without `--fail`); later connection errors surface as `000` or empty FAIL lines. Not run, because it targets the live site; `bash -n` and ShellCheck were clean.
+
+### 3. Python tests for a Bash host check (tools)
+
+**Source:** `tests/scripts/test_initialize.py` in tools, testing `scripts/lib/require-centos.sh`, a Bash function that allows or refuses an operation depending on the operating system and CPU.
+
+*Actual repository code.* Repository: tools. File: `tests/scripts/test_initialize.py`, lines 102–108.
+
+```python
+ def test_mac_host_operations_rejected_and_portable_allowed(self):
+  with tempfile.TemporaryDirectory() as temp:
+   uname=Path(temp)/'uname';uname.write_text('#!/bin/sh\ncase "$1" in -s) echo Darwin;; *) echo arm64;; esac\n');uname.chmod(0o755)
+   env={**os.environ,'PATH':temp+':'+os.environ['PATH']}
+   for operation,status in [('portable',0),('linux',1),('centos',1)]:
+    result=subprocess.run(['bash',str(ROOT/'scripts/lib/require-centos.sh'),'check',operation],env=env,capture_output=True)
+    self.assertEqual(result.returncode,status)
+```
+
+A fake `uname` claiming an ARM Mac goes first on `PATH`, the real Bash script runs for three operations, and each exit status is checked; all 16 tests passed on Python 3.11.9 without installing anything. **Why it fits (my assessment):** the check stays in Bash because scripts `source` it, and the tests are Python because temporary directories, subprocesses and assertions are easier there. **Limitations:** the dense style is hard for newcomers, and faked inputs do not prove every host's real `uname`.
+
+## Rewrite one small task in both languages
+
+This is a teaching example. Neither implementation exists in my repositories.
+
+**Task:** summarise the files under a directory, read-only.
+
+**Requirements:**
+
+1. Take exactly one argument, a directory. Wrong usage exits `2` with a usage line on stderr.
+2. A path that is not a directory exits `1` with a message on stderr.
+3. Walk the tree recursively. Count regular files only, not symbolic links.
+4. Group by lower-cased extension; files without one go under `(none)`. A leading dot does not start an extension, so `.bashrc` has none.
+5. Print `extension count bytes` per group, sorted by extension, then `total count bytes`.
+6. Handle spaces and other unusual characters in names. Never modify anything.
+
+*Standalone comparison example.*
+
+```bash
+#!/usr/bin/env bash
+# summarize.sh
+# Summarise files under a directory by extension. Read-only. Needs Bash 4.0 or later.
+set -euo pipefail
+if (( $# != 1 )); then
+  echo "usage: summarize.sh DIRECTORY" >&2
+  exit 2
+fi
+dir="$1"
+[[ -d "$dir" ]] || { echo "not a directory: $dir" >&2; exit 1; }
+declare -A count=() bytes=()
+files=0 total=0
+while IFS= read -r -d '' path; do
+  name="${path##*/}"
+  base="${name#.}"
+  ext="(none)"
+  if [[ "$base" == *.* ]]; then ext=".${base##*.}"; ext="${ext,,}"; fi
+  size=$(wc -c < "$path")
+  count[$ext]=$(( ${count[$ext]:-0} + 1 ))
+  bytes[$ext]=$(( ${bytes[$ext]:-0} + size ))
+  files=$((files + 1)) total=$((total + size))
+done < <(find "$dir" -type f -print0)
+if (( files > 0 )); then
+  while IFS= read -r ext; do
+    printf '%s %d %d\n' "$ext" "${count[$ext]}" "${bytes[$ext]}"
+  done < <(printf '%s\n' "${!count[@]}" | LC_ALL=C sort)
+fi
+printf 'total %d %d\n' "$files" "$total"
+# Run: bash summarize.sh sample
+# Output:
+# (none) 1 1
+# .md 2 14
+# .png 1 3
+# .txt 1 3
+# total 5 21
+# Run: bash summarize.sh
+# Exit status: 2
+# Stderr:
+# usage: summarize.sh DIRECTORY
+# Run: bash summarize.sh "no such dir"
+# Exit status: 1
+# Stderr:
+# not a directory: no such dir
+```
+
+```python
+#!/usr/bin/env python3
+# summarize.py
+"""Summarise files under a directory by extension. Read-only."""
+import sys
+from collections import Counter
+from pathlib import Path
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 2:
+        print("usage: summarize.py DIRECTORY", file=sys.stderr)
+        return 2
+    root = Path(argv[1])
+    if not root.is_dir():
+        print(f"not a directory: {root}", file=sys.stderr)
+        return 1
+    count: Counter[str] = Counter()
+    size: Counter[str] = Counter()
+    for path in root.rglob("*"):
+        if path.is_file() and not path.is_symlink():
+            ext = path.suffix.lower() or "(none)"
+            count[ext] += 1
+            size[ext] += path.stat().st_size
+    for ext in sorted(count):
+        print(ext, count[ext], size[ext])
+    print("total", sum(count.values()), sum(size.values()))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
+# Run: python3 summarize.py sample
+# Output:
+# (none) 1 1
+# .md 2 14
+# .png 1 3
+# .txt 1 3
+# total 5 21
+# Run: python3 summarize.py
+# Exit status: 2
+# Stderr:
+# usage: summarize.py DIRECTORY
+# Run: python3 summarize.py "no such dir"
+# Exit status: 1
+# Stderr:
+# not a directory: no such dir
+```
+
+The `sample` folder from the setup script holds `README.md` (6 bytes), `docs/user guide.md` (8), `docs/notes.TXT` (3), `img/logo.png` (3) and `Makefile` (1).
+
+**Bash and odd names:** `find -print0` and `read -r -d ''` split on NUL, the one character paths cannot contain; `< <(find ...)` **process substitution** avoids a pipe whose subshell would lose the counters; and `wc -c < "$path"` keeps a leading `-` away from `wc`.
+
+**Comparison:**
+
+| | Bash | Python |
+| --- | --- | --- |
+| Dependencies | Bash 4.0 or later (associative arrays, `${ext,,}`), `find`, `wc`, `sort` | Python 3.9 or later (for `Counter[str]` annotations), standard library only |
+| Processes | One `wc` per file, plus `find` and `sort` | One interpreter |
+| Odd file names | Correct, but only because of `-print0`, `-d ''`, quoting and redirection | Correct by default; paths are objects |
+| Errors | `set -euo pipefail`; an unreadable file stops the script with `wc`'s message | An unreadable directory raises `PermissionError` with a traceback; a production tool would catch it |
+| Testability | Whole-script tests of output and exit code | `main()` can be imported and called from a test |
+
+They also disagree on names like `notes.` and `..x`; requirements and tests should settle such cases. macOS's Bash 3.2 cannot run the Bash version.
+
+## When to choose each
+
+| Task | Bash may fit when | Python may fit when | Important constraint |
+| --- | --- | --- | --- |
+| Short command orchestration | The work is mostly running commands in order and checking their status | Steps share data structures or need real logic between commands | Expected non-zero statuses need explicit handling either way |
+| CI/CD steps | A step calls existing CLIs (`kubectl`, `aws`, `docker`) a few times | A step parses reports, compares versions or calls APIs with retries | The runner image decides which shell, tools and Python exist |
+| Container entrypoints | It validates a few settings and `exec`s the main process | The image already ships Python and the startup logic is complex | Alpine images have BusyBox `sh`, not Bash, unless you add it |
+| File operations | `find`, `mkdir -p`, `cp`, `rsync` do the job directly | You need to walk trees, filter on metadata and produce structured results | Quote everything, use `--` and `-print0` in shell; check symlink rules in both |
+| API integrations | One or two calls with curl, `--fail`, `--max-time` and jq | Authentication, pagination, retries and error handling all matter | Retry writes only when the operation is idempotent |
+| Complex data transformations | A short pipeline over line-oriented text | Nested JSON, CSV with quoting, joins, or anything you want to unit-test | Never parse CSV or JSON with `cut` or `sed` unless the format is guaranteed |
+| Cloud automation | The AWS CLI with `--query` and `--output text/json` covers it | You need SDK features, paginators, or logic across many resources | Never hardcode credentials; do not run mutations to "try it out" |
+| Reusable command-line tools | A thin wrapper around another tool | Options, help text, subcommands and tests are needed | `argparse` is standard library; Bash's `getopts` handles short options only |
+| Cross-platform automation | Only POSIX features and POSIX utility options are used | The script must behave the same on Linux, macOS and possibly Windows | Neither is portable by default; pin versions or use containers |
+| Long-running or concurrent tasks | Simple background jobs with `&` and `wait` | Workers, timeouts, signal handling and shared state | Cleanup cannot cover `SIGKILL`; design for restarts |
+
+Existing tooling, team skills, dependencies and next year's maintainer usually decide more than language features.
+
+## Using both together
+
+The practical pattern in my repositories: the shell coordinates commands, Python processes structured data, data passes through arguments, pipes, files or JSON, and exit codes report back. In MOKS's `create-runtime-key.sh`, the AWS CLI emits the new key as JSON, a one-line Python program reshapes it into a Kubernetes patch in a private temporary file, and `kubectl patch --patch-file` reads it: the secret never appears on a command line, `pipefail` stops on either side's failure, and the trap removes the file (not run, since it creates real keys). In miniature:
+
+*Standalone comparison example.*
+
+```python
+# unhealthy.py
+"""Read services JSON on stdin, print unhealthy names on stdout, exit 1 if there are any."""
+import json
+import sys
+
+services = json.load(sys.stdin)["services"]
+unhealthy = [s["name"] for s in services if not s["healthy"]]
+for name in unhealthy:
+    print(name)
+print(f"{len(unhealthy)} of {len(services)} services unhealthy", file=sys.stderr)
+sys.exit(1 if unhealthy else 0)
+```
+
+```bash
+# health-gate.sh
+set -euo pipefail
+if ! python3 unhealthy.py < services.json; then
+  echo "health gate failed" >&2
+  exit 1
+fi
+echo "all services healthy"
+# Run: bash health-gate.sh
+# Exit status: 1
+# Output:
+# api gateway
+# Stderr:
+# 1 of 3 services unhealthy
+# health gate failed
+```
+
+Decide the boundaries: configuration enters once in the outer script and is passed explicitly, logs go to stderr so stdout stays data, and exit codes are documented (`1` means "unhealthy" here). If one language does the whole job, use one.
+
+## Beginner exercises
+
+All five only read the practice folder; try each in both languages first.
+
+1. **Read and validate arguments.** Write `replicas` that takes a service name and a replica count from 1 to 100 and prints `would scale NAME to COUNT replicas`. Wrong argument count exits 2 with `usage: replicas NAME COUNT`; a bad count exits 2 with `COUNT must be a whole number from 1 to 100`.
+2. **Handle a path containing spaces.** Write `linecount` that prints `PATH: N line(s)` for the file given as its only argument. It must work for `notes/release notes.txt` and `notes/-n.txt`.
+3. **Summarise a directory without modifying it.** Print `DIR: N files, M subdirectories` for a directory, counting recursively.
+4. **Parse a JSON fixture.** From `services.json`, print `PORT NAME` for every service that has a port, sorted by port.
+5. **Handle a failing external command.** Count lines containing `500` in `access.log`, `notes/plain.txt` and `missing.log` with `grep -c`. Print `FILE: COUNT` for files that exist (even when the count is 0), print an error to stderr for the missing file, keep going, and exit 1 at the end if any file failed.
+
+## Exercise solutions
+
+### 1. Read and validate arguments
+
+*Standalone comparison example.*
+
+```bash
+# replicas.sh
+if (( $# != 2 )); then
+  echo "usage: replicas NAME COUNT" >&2
+  exit 2
+fi
+name="$1" count="$2"
+if [[ ! "$count" =~ ^[0-9]+$ ]] || (( 10#$count < 1 || 10#$count > 100 )); then
+  echo "COUNT must be a whole number from 1 to 100" >&2
+  exit 2
+fi
+echo "would scale $name to $((10#$count)) replicas"
+# Run: bash replicas.sh "api gateway" 3
+# Output:
+# would scale api gateway to 3 replicas
+# Run: bash replicas.sh web
+# Exit status: 2
+# Stderr:
+# usage: replicas NAME COUNT
+# Run: bash replicas.sh web 500
+# Exit status: 2
+# Stderr:
+# COUNT must be a whole number from 1 to 100
+```
+
+```python
+# replicas.py
+import re
+import sys
+
+if len(sys.argv) != 3:
+    sys.stderr.write("usage: replicas NAME COUNT\n")
+    sys.exit(2)
+name, count = sys.argv[1], sys.argv[2]
+if not re.fullmatch(r"[0-9]+", count) or not 1 <= int(count) <= 100:
+    sys.stderr.write("COUNT must be a whole number from 1 to 100\n")
+    sys.exit(2)
+print(f"would scale {name} to {int(count)} replicas")
+# Run: python3 replicas.py "api gateway" 3
+# Output:
+# would scale api gateway to 3 replicas
+# Run: python3 replicas.py web
+# Exit status: 2
+# Stderr:
+# usage: replicas NAME COUNT
+# Run: python3 replicas.py web 500
+# Exit status: 2
+# Stderr:
+# COUNT must be a whole number from 1 to 100
+```
+
+The regular expression runs before any arithmetic in both versions, so `abc` or `1e3` never reaches `(( ))` or `int()`.
+
+### 2. Handle a path containing spaces
+
+*Standalone comparison example.*
+
+```bash
+# linecount.sh
+path="$1"
+lines=$(wc -l < "$path")
+echo "$path: $((lines)) line(s)"
+# Run: bash linecount.sh "notes/release notes.txt"
+# Output:
+# notes/release notes.txt: 1 line(s)
+# Run: bash linecount.sh notes/-n.txt
+# Output:
+# notes/-n.txt: 1 line(s)
+```
+
+```python
+# linecount.py
+import sys
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as f:
+    lines = sum(1 for _ in f)
+print(f"{path}: {lines} line(s)")
+# Run: python3 linecount.py "notes/release notes.txt"
+# Output:
+# notes/release notes.txt: 1 line(s)
+# Run: python3 linecount.py notes/-n.txt
+# Output:
+# notes/-n.txt: 1 line(s)
+```
+
+Quoting `"$path"` keeps the space; reading through `<` means `wc` never sees a leading hyphen. One honest difference: `wc -l` counts newline characters, while Python counts lines. On `notes/plain.txt`, whose last line has no newline, `wc` says 4 and Python says 5.
+
+### 3. Summarise a directory without modifying it
+
+*Standalone comparison example.*
+
+```bash
+# dirsummary.sh
+dir="$1"
+files=$(find "$dir" -type f -print0 | tr -dc '\0' | wc -c)
+subdirs=$(find "$dir" -mindepth 1 -type d -print0 | tr -dc '\0' | wc -c)
+echo "$dir: $((files)) files, $((subdirs)) subdirectories"
+# Run: bash dirsummary.sh sample
+# Output:
+# sample: 5 files, 2 subdirectories
+```
+
+```python
+# dirsummary.py
+import os
+import sys
+
+directory = sys.argv[1]
+files = subdirs = 0
+for _, dirnames, filenames in os.walk(directory):
+    subdirs += len(dirnames)
+    files += sum(1 for name in filenames if not os.path.islink(os.path.join(_, name)))
+print(f"{directory}: {files} files, {subdirs} subdirectories")
+# Run: python3 dirsummary.py sample
+# Output:
+# sample: 5 files, 2 subdirectories
+```
+
+`tr -dc '\0'` deletes every character except NUL, and `wc -c` counts what is left: one per name, even if a name contains a newline. `os.walk()` lists subdirectories and files per directory. Both only read.
+
+### 4. Parse a JSON fixture
+
+*Standalone comparison example.*
+
+```bash
+# ports.sh
+jq -r '.services | map(select(.port != null)) | sort_by(.port)[] | "\(.port) \(.name)"' services.json
+# Run: bash ports.sh
+# Output:
+# 3000 api gateway
+# 8080 web
+```
+
+```python
+# ports.py
+import json
+
+with open("services.json", encoding="utf-8") as f:
+    services = json.load(f)["services"]
+for service in sorted((s for s in services if s["port"] is not None), key=lambda s: s["port"]):
+    print(service["port"], service["name"])
+# Run: python3 ports.py
+# Output:
+# 3000 api gateway
+# 8080 web
+```
+
+### 5. Handle a failing external command
+
+*Standalone comparison example.*
+
+```bash
+# count500.sh
+status=0
+for file in access.log notes/plain.txt missing.log; do
+  out="$(grep -c -- 500 "$file" 2>&1)" && rc=0 || rc=$?
+  case "$rc" in
+    0|1) echo "$file: $out" ;;
+    *) echo "$file: error ($out)" >&2; status=1 ;;
+  esac
+done
+exit "$status"
+# Run: bash count500.sh
+# Exit status: 1
+# Output:
+# access.log: 1
+# notes/plain.txt: 0
+# Stderr:
+# missing.log: error (grep: missing.log: No such file or directory)
+```
+
+```python
+# count500.py
+import subprocess
+import sys
+
+status = 0
+for file in ["access.log", "notes/plain.txt", "missing.log"]:
+    result = subprocess.run(["grep", "-c", "--", "500", file], capture_output=True, text=True)
+    if result.returncode in (0, 1):
+        print(f"{file}: {result.stdout.strip()}")
+    else:
+        print(f"{file}: error ({result.stderr.strip()})", file=sys.stderr)
+        status = 1
+sys.exit(status)
+# Run: python3 count500.py
+# Exit status: 1
+# Output:
+# access.log: 1
+# notes/plain.txt: 0
+# Stderr:
+# missing.log: error (grep: missing.log: No such file or directory)
+```
+
+`cmd && rc=0 || rc=$?` records the exit status without letting `set -e` (if you add it) stop the loop. `grep`'s status 1 is "no match", which is an answer, not an error.
+
+## Quick reference
+
+| Concept | Bash | Python | Important difference |
+| --- | --- | --- | --- |
+| Run a script | `bash x.sh` or `./x.sh` | `python3 x.py` or `./x.py` | The shebang matters only for `./x` |
+| Variable | `name="web"` | `name = "web"` | No spaces around `=` in Bash; Bash values are strings |
+| Read a variable | `"$name"`, `"${name}"` | `name` | Quote Bash expansions to stop splitting and globbing |
+| Default value | `"${VAR:-default}"` | `os.environ.get("VAR") or "default"` | `:-` also replaces empty values |
+| Required value | `"${VAR:?message}"` | `if not ...: sys.exit("message")` | Bash's exit code here is shell-specific |
+| Arguments | `"$@"`, `$1`, `$#` | `sys.argv[1:]`, `argparse` | Only `"$@"` preserves arguments exactly |
+| Command output | `out="$(cmd)"` | `subprocess.run([...], capture_output=True, text=True).stdout` | `$(...)` captures stdout only and drops trailing newlines |
+| Exit status | `$?`, `if cmd; then` | `result.returncode`, `check=True` | Non-zero is not always an error (`grep` 1) |
+| Test | `[[ ... ]]` (Bash), `[ ... ]` (POSIX) | `if expression:` | `>` inside `[[ ]]` compares strings |
+| Arithmetic | `$(( a + b ))`, `(( a > b ))` | `a + b`, `a > b` | Bash integers only; validate input first |
+| List | `arr=(a "b c")`, `"${arr[@]}"` | `["a", "b c"]` | Bash arrays cannot nest; POSIX `sh` has none |
+| Dictionary | `declare -A m=([k]=v)` | `{"k": "v"}` | Bash 4.0 or later; key order undefined |
+| Read lines | `while IFS= read -r line` | `for line in open(...)` | Bash `read` skips a last line without a newline |
+| Write a file | `> file`, `>> file` | `open(file, "w")`, `"a"` | `>` truncates immediately |
+| JSON | `jq` (external) | `json` (standard library) | jq is a separate dependency |
+| CSV | (no safe built-in) | `csv` module | Never split CSV on commas |
+| HTTP | `curl --fail --max-time` | `urllib.request`, third-party clients | Set timeouts in both |
+| Errors | `set -euo pipefail`, explicit checks | Exceptions, `try`/`except` | `set -e` is ignored in many contexts |
+| Cleanup | `trap cleanup EXIT` | `try`/`finally`, `with` | Neither runs after `SIGKILL` |
+| Temporary files | `mktemp`, `mktemp -d` | `tempfile.TemporaryDirectory()` | Never invent temp names yourself |
+| Safe external calls | Arrays, `--`, no `eval` | Argument lists, no `shell=True` | Options can still be misread in both |
+| Lint and check | `bash -n`, ShellCheck | Tests, `py_compile`, linters | No check proves the logic right |
+
+Shell scripting vs Python is not a contest. Bash is the shortest path between existing commands; Python is the clearer home for data, APIs and logic you want to test. The useful skill in DevOps automation is noticing when a script has moved from the first kind of work to the second, and if you want more Python practice first, the [beginner Python tutorial](/blog/python-tutorial-beginners-real-projects) uses the same repositories. For another side-by-side comparison in the same style, see [Python vs TypeScript](/blog/python-vs-typescript), and for a real CI script that drives `kubectl` from Bash, [GitHub Actions and Minikube authentication](/blog/github-actions-authenticate-minikube).

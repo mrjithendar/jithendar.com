@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 760" width="720" height="760" role="img" aria-labelledby="caching-layers-title caching-layers-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="caching-layers-title">The caching layers of jithendar.com, from the browser to the database</title>
+<desc id="caching-layers-desc">A request first meets the browser cache, which keeps Next.js static files and optimised images for a year. An optional CDN could honour s-maxage=300 but is not deployed. The Istio ingress terminates TLS and compresses responses. In the Next.js pod the proxy runs first, then pages come from the in-memory ISR page cache in 5 to 9 milliseconds; a miss renders the page in about half a second from the per-process content cache and PostgreSQL. Images go to the next/image optimiser, which encodes AVIF or WebP with sharp, keeps the result on disk for 30 days and reads the original from Cloudflare R2 only on a miss. The cache bus over Valkey clears the page cache on every pod when content changes.</desc>
+<rect width="720" height="760" fill="#ffffff"/>
+<defs>
+<marker id="caching-layers-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+<marker id="caching-layers-write" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b45309"/></marker>
+<marker id="caching-layers-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#be123c"/></marker>
+<marker id="caching-layers-reject" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b91c1c"/></marker>
+<marker id="caching-layers-dashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+<marker id="caching-layers-life" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#cbd5e1"/></marker>
+</defs>
+<rect x="15" y="12" width="345" height="100" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="28" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Reader&#x27;s device</text>
+<rect x="375" y="12" width="330" height="100" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="383" y="28" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Edge (optional)</text>
+<rect x="15" y="124" width="690" height="88" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="140" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Cluster ingress</text>
+<rect x="15" y="224" width="690" height="420" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="240" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Next.js pod (2 replicas)</text>
+<rect x="15" y="656" width="690" height="92" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="697" y="741" text-anchor="end" font-size="12" font-weight="600" fill="#475569">Data</text>
+<polyline points="187.5,100 187.5,148" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#caching-layers-sync)"/>
+<polyline points="540.0,100 540.0,148" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#caching-layers-dashed)"/>
+<polyline points="187.5,200 187.5,248" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#caching-layers-sync)"/>
+<polyline points="187.5,312 187.5,346" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#caching-layers-sync)"/>
+<polyline points="345,280.0 540,280 540.0,346" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#caching-layers-sync)"/>
+<polyline points="187.5,426 187.5,460" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#caching-layers-sync)"/>
+<polyline points="187.5,524 187.5,558" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#caching-layers-sync)"/>
+<polyline points="187.5,622 187.5,680" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#caching-layers-sync)"/>
+<polyline points="690,386.0 700,386 700,706 690,706.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#caching-layers-sync)"/>
+<polyline points="390,590.0 368,590 368,386 345,386.0" fill="none" stroke="#be123c" stroke-width="2.2" marker-end="url(#caching-layers-async)"/>
+<rect x="30" y="36" width="315" height="64" rx="7" fill="#f8fafc" stroke="#334155" stroke-width="1.4"/>
+<text x="187.5" y="59.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Browser cache</text>
+<text x="187.5" y="75.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">/_next/static/*: 1 year, immutable</text>
+<text x="187.5" y="91.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">optimised images: 1 year · icon: 1 day</text>
+<rect x="390" y="36" width="300" height="64" rx="7" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="6 4"/>
+<text x="540.0" y="59.0" text-anchor="middle" font-size="14" font-weight="600" fill="#475569">CDN (not deployed)</text>
+<text x="540.0" y="75.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">could honour s-maxage=300</text>
+<text x="540.0" y="91.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">stale-while-revalidate ≤ 1 day</text>
+<rect x="30" y="148" width="660" height="52" rx="7" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+<text x="360.0" y="173.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e1b4b">Istio ingress gateway</text>
+<text x="360.0" y="189.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">TLS, Brotli/zstd compression (an article: 1.1 MB of HTML → 108 KB)</text>
+<rect x="30" y="248" width="315" height="64" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="187.5" y="271.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">Next.js proxy (middleware)</text>
+<text x="187.5" y="287.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">410 Gone, redirects, maintenance mode</text>
+<text x="187.5" y="303.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">runs before the cache</text>
+<rect x="30" y="346" width="315" height="80" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="187.5" y="369.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">ISR page cache (in memory)</text>
+<text x="187.5" y="385.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">cache-handler.mjs, ≤ 64 MB, LRU</text>
+<text x="187.5" y="401.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">hit: 5–9 ms · refresh after 300 s</text>
+<text x="187.5" y="417.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">cleared at once when content changes</text>
+<rect x="30" y="460" width="315" height="64" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="187.5" y="483.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">Render on a miss</text>
+<text x="187.5" y="499.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">React Server Components + MDX</text>
+<text x="187.5" y="515.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">≈ 0.49 s for an article</text>
+<rect x="30" y="558" width="315" height="64" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="187.5" y="589.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">Content cache (per process)</text>
+<text x="187.5" y="605.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">30 s TTL + bus invalidation</text>
+<rect x="390" y="346" width="300" height="80" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="540.0" y="369.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">Image optimiser (next/image)</text>
+<text x="540.0" y="385.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">sharp: AVIF / WebP, quality 75</text>
+<text x="540.0" y="401.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">widths 96–1920 px</text>
+<text x="540.0" y="417.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">disk cache 30 days, ≤ 200 MB</text>
+<rect x="390" y="558" width="300" height="64" rx="7" fill="#fff1f2" stroke="#be123c" stroke-width="1.4"/>
+<text x="540.0" y="581.0" text-anchor="middle" font-size="14" font-weight="600" fill="#4c0519">Cache bus (Valkey pub/sub)</text>
+<text x="540.0" y="597.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">{kind, origin} messages only</text>
+<text x="540.0" y="613.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">every pod clears its page cache</text>
+<rect x="30" y="680" width="315" height="52" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="187.5" y="705.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">PostgreSQL</text>
+<text x="187.5" y="721.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">posts, pages, settings, categories</text>
+<rect x="390" y="680" width="300" height="52" rx="7" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+<text x="540.0" y="705.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Cloudflare R2</text>
+<text x="540.0" y="721.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">original uploads (e.g. an 860 KB JPEG)</text>
+<rect x="196.0" y="320.5" width="139.0" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="265.5" y="332.5" text-anchor="middle" font-size="12" fill="#0f172a">pages, feeds, sitemap</text>
+<rect x="434.1" y="261.5" width="82.9" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="475.5" y="273.5" text-anchor="middle" font-size="12" fill="#0f172a">/_next/image</text>
+<rect x="195.1" y="434.5" width="132.8" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="261.5" y="446.5" text-anchor="middle" font-size="12" fill="#0f172a">miss: render + store</text>
+<rect x="197.0" y="642.5" width="189.0" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="291.5" y="654.5" text-anchor="middle" font-size="12" fill="#0f172a">reload after 30 s or a change</text>
+<rect x="600.3" y="511.5" width="95.4" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="648.0" y="523.5" text-anchor="middle" font-size="12" fill="#0f172a">miss: original</text>
+<rect x="378.4" y="466.5" width="39.2" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="398.0" y="478.5" text-anchor="middle" font-size="12" fill="#0f172a">clear</text>
+</svg>

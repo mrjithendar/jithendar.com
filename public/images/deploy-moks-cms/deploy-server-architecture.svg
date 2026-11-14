@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 620" width="900" height="620" role="img" aria-labelledby="deploy-server-architecture-title deploy-server-architecture-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="deploy-server-architecture-title">Moks CMS on one Linux server with Docker Compose</title>
+<desc id="deploy-server-architecture-desc">A reader&#x27;s browser looks up the domain in DNS, which points at the server&#x27;s Elastic IP. On the server, Docker Compose runs three containers: Caddy terminates HTTPS with a Let&#x27;s Encrypt certificate and proxies to the Next.js container on port 3000, which talks to PostgreSQL on port 5432. CI builds the image and pushes it to a registry, and the server pulls it. Media uploads go to R2 or S3, and a nightly pg_dump is copied to an S3 bucket.</desc>
+<rect width="900" height="620" fill="#ffffff"/>
+<defs>
+<marker id="deploy-server-architecture-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+<marker id="deploy-server-architecture-write" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b45309"/></marker>
+<marker id="deploy-server-architecture-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#be123c"/></marker>
+<marker id="deploy-server-architecture-reject" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b91c1c"/></marker>
+<marker id="deploy-server-architecture-dashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+<marker id="deploy-server-architecture-life" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#cbd5e1"/></marker>
+</defs>
+<rect x="30" y="130" width="600" height="460" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="622" y="583" text-anchor="end" font-size="12" font-weight="600" fill="#475569">EC2 instance (Ubuntu 24.04, Docker Compose)</text>
+<rect x="650" y="130" width="240" height="460" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="882" y="583" text-anchor="end" font-size="12" font-weight="600" fill="#475569">Outside the server</text>
+<polyline points="310,69.0 350,69.0" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#deploy-server-architecture-dashed)"/>
+<polyline points="185.0,98 185.0,175" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#deploy-server-architecture-sync)"/>
+<polyline points="185.0,249 185.0,295" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#deploy-server-architecture-sync)"/>
+<polyline points="185.0,369 185.0,415" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#deploy-server-architecture-sync)"/>
+<polyline points="310,332.0 670,332.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#deploy-server-architecture-sync)"/>
+<polyline points="310,452.0 350,452.0" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#deploy-server-architecture-dashed)"/>
+<polyline points="600,452.0 670,452.0" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#deploy-server-architecture-write)"/>
+<polyline points="770.0,98 770.0,175" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#deploy-server-architecture-write)"/>
+<polyline points="670,212.0 330,212 330,310 310,309.8" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#deploy-server-architecture-dashed)"/>
+<rect x="60" y="40" width="250" height="58" rx="7" fill="#f8fafc" stroke="#334155" stroke-width="1.4"/>
+<text x="185.0" y="68.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Reader&#x27;s browser</text>
+<text x="185.0" y="84.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">https://your-domain</text>
+<rect x="350" y="40" width="250" height="58" rx="7" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+<text x="475.0" y="68.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">DNS (Route 53 or Cloudflare)</text>
+<text x="475.0" y="84.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">A record → Elastic IP</text>
+<rect x="670" y="40" width="200" height="58" rx="7" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+<text x="770.0" y="68.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">CI (GitHub Actions)</text>
+<text x="770.0" y="84.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">docker buildx --push</text>
+<rect x="60" y="175" width="250" height="74" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="185.0" y="203.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">Caddy 2 (ports 80, 443)</text>
+<text x="185.0" y="219.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">automatic Let&#x27;s Encrypt TLS</text>
+<text x="185.0" y="235.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">volume caddy_data</text>
+<rect x="60" y="295" width="250" height="74" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="185.0" y="323.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">web: Moks CMS (Next.js)</text>
+<text x="185.0" y="339.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">node server.js, port 3000</text>
+<text x="185.0" y="355.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">read-only, user 1000</text>
+<rect x="60" y="415" width="250" height="74" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="185.0" y="443.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">postgres:18-alpine</text>
+<text x="185.0" y="459.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">port 5432, not published</text>
+<text x="185.0" y="475.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">volume pgdata</text>
+<rect x="350" y="415" width="250" height="74" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="475.0" y="443.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">backup.sh (cron, 03:00)</text>
+<text x="475.0" y="459.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">pg_dump -Fc</text>
+<text x="475.0" y="475.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">→ S3, 30-day lifecycle</text>
+<rect x="670" y="175" width="200" height="74" rx="7" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+<text x="770.0" y="203.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Image registry</text>
+<text x="770.0" y="219.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">GHCR or Amazon ECR</text>
+<text x="770.0" y="235.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">tag = git commit</text>
+<rect x="670" y="295" width="200" height="74" rx="7" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+<text x="770.0" y="323.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Object storage</text>
+<text x="770.0" y="339.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">media uploads</text>
+<text x="770.0" y="355.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Cloudflare R2 or S3</text>
+<rect x="670" y="415" width="200" height="74" rx="7" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+<text x="770.0" y="443.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">S3 bucket</text>
+<text x="770.0" y="459.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">database dumps</text>
+<text x="770.0" y="475.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">versioned, private</text>
+<rect x="307.3" y="60.5" width="45.4" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="330.0" y="72.5" text-anchor="middle" font-size="12" fill="#0f172a">lookup</text>
+<rect x="152.9" y="128.0" width="64.2" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="185.0" y="140.0" text-anchor="middle" font-size="12" fill="#0f172a">HTTPS 443</text>
+<rect x="149.8" y="263.5" width="70.4" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="185.0" y="275.5" text-anchor="middle" font-size="12" fill="#0f172a">HTTP :3000</text>
+<rect x="152.9" y="383.5" width="64.2" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="185.0" y="395.5" text-anchor="middle" font-size="12" fill="#0f172a">SQL :5432</text>
+<rect x="464.2" y="323.5" width="51.7" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="490.0" y="335.5" text-anchor="middle" font-size="12" fill="#0f172a">uploads</text>
+<rect x="304.2" y="443.5" width="51.7" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="330.0" y="455.5" text-anchor="middle" font-size="12" fill="#0f172a">pg_dump</text>
+<rect x="753.5" y="128.0" width="33.0" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="770.0" y="140.0" text-anchor="middle" font-size="12" fill="#0f172a">push</text>
+<rect x="494.2" y="203.5" width="76.6" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="532.5" y="215.5" text-anchor="middle" font-size="12" fill="#0f172a">docker pull</text>
+<text x="50" y="542" font-size="12" fill="#475569">Security group: 80 and 443 from anywhere, 22 from your IP only (or SSM, no port 22).</text>
+<text x="50" y="564" font-size="12" fill="#475569">Only Caddy publishes ports. web and postgres talk over the Compose network.</text>
+</svg>

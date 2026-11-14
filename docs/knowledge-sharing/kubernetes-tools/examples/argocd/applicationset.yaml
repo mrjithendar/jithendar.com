@@ -1,0 +1,30 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: shop-web
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - env: staging
+            server: https://kubernetes.default.svc
+          - env: production
+            server: https://prod.k8s.example.com
+  template:
+    metadata:
+      name: "shop-web-{{.env}}"
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/example-org/platform-config.git
+        targetRevision: main
+        path: "apps/shop-web/overlays/{{.env}}"
+      destination:
+        server: "{{.server}}"
+        namespace: shop
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true

@@ -1,0 +1,32 @@
+---
+config:
+  htmlLabels: false
+  flowchart: {htmlLabels: false, curve: basis, nodeSpacing: 40, rankSpacing: 44}
+  themeVariables: {fontSize: 15px, fontFamily: "Inter, Segoe UI, system-ui, Helvetica, Arial, sans-serif"}
+---
+flowchart TD
+  accTitle: MOKS investigation workflow
+  accDescr: The graph runs triage, logs and skills. With a model it enters a loop of plan and act, otherwise it runs rules. Plan goes to rules on a model or budget failure, to correlate when the budget is spent or no calls are returned, and to act when calls are returned. Act returns to plan unless the model said done or no call was new, when it goes to correlate. Rules goes to correlate, then report, then the end. After the graph, code verifies causes and stores the report.
+
+  S((START)) --> triage["triage<br/>baseline: k8s_triage, prom_alerts"]
+  triage --> logs["logs<br/>current and previous container logs"]
+  logs --> skills["skills<br/>select up to 3, run read-only steps"]
+  skills -->|"model configured"| plan
+  skills -->|"no model"| rules
+  plan["plan<br/>one model call, JSON tool requests"]
+  plan -->|"tool calls returned"| act["act<br/>up to 4 calls through ToolExecutor"]
+  act -->|"more to do"| plan
+  act -->|"done=true, or no new call"| correlate
+  plan -->|"no calls, or rounds or<br/>tool budget spent"| correlate
+  plan -->|"LLMError or BudgetExceeded"| rules["rules<br/>detector-driven follow-ups"]
+  rules --> correlate["correlate<br/>config audit, rightsizing, rollout timing"]
+  correlate --> report["report<br/>model report, else rule-based report"]
+  report --> E((END))
+  E --> V["engine.py, after the graph<br/>verify_causes, coverage, skill contracts, store report"]
+
+  classDef node fill:#ede9fe,stroke:#6d28d9,color:#2e1065
+  classDef term fill:#0f172a,stroke:#0f172a,color:#ffffff
+  classDef own fill:#f1f5f9,stroke:#475569,color:#0f172a
+  class triage,logs,skills,plan,act,rules,correlate,report node
+  class S,E term
+  class V own
