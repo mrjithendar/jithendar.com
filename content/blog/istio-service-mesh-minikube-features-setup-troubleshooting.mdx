@@ -1,12 +1,12 @@
 ---
-title: "Istio Service Mesh on Minikube: Features, Setup and Troubleshooting"
+title: "Istio Service Mesh on k3s: Features, Setup and Troubleshooting"
 slug: istio-service-mesh-minikube-features-setup-troubleshooting
-description: "Istio on Minikube: architecture, a Bookinfo lab, an Istio gateway as the only edge, STRICT mTLS for the whole mesh, dry-run authorization and real fixes."
-seoTitle: "Istio on Minikube: Gateway, STRICT mTLS, Troubleshooting"
-seoDescription: "Istio on Minikube: sidecars, the ingress gateway as the only edge, mesh-wide STRICT mTLS, dry-run AuthorizationPolicy, istioctl and Envoy response flags."
+description: "Istio on k3s: architecture, a Bookinfo lab, an Istio gateway as the only edge, STRICT mTLS for the whole mesh, dry-run authorization and real fixes."
+seoTitle: "Istio on k3s: Gateway, STRICT mTLS, Troubleshooting"
+seoDescription: "Istio on k3s (Hetzner): sidecars, the ingress gateway as the only edge, mesh-wide STRICT mTLS, dry-run AuthorizationPolicy, istioctl and Envoy response flags."
 author: jithendar-dharmapuri
 category: kubernetes
-tags: [Istio, Service Mesh, Kubernetes, Minikube, Envoy, mTLS, Kiali, Terraform, DevOps, SRE]
+tags: [Istio, Service Mesh, Kubernetes, k3s, Hetzner, Envoy, mTLS, Kiali, Terraform, DevOps, SRE]
 contentType: tutorial
 status: review
 related:
@@ -78,15 +78,16 @@ sources:
     url: https://www.envoyproxy.io/docs/envoy/latest/configuration/observability/access_log/usage
     publisher: Envoy
 ---
+<Todo>Updated on 2026-11-14 for k3s on Hetzner Cloud: mk4's description, versions, the CNI paths and the front door (a Hetzner load balancer instead of HAProxy). The lab still uses Minikube on a laptop, which is a reader's sandbox, not mk4. The figures and measurements from 9 November are from Minikube and say so; re-check the edge hostnames (db.jithendar.com, postgres.jithendar.com) before publishing.</Todo>
 
 A service mesh moves the network plumbing (encryption, identity, retries, timeouts, traffic splitting, telemetry) out of your application code and into a proxy next to every workload. Istio is the most widely used open-source mesh, and Minikube is a cheap, safe place to learn it.
 
 This guide is for DevOps and SRE engineers who know Kubernetes basics and are new to service mesh. It has two tracks:
 
 - **The lab track.** A single-node Minikube cluster on a laptop. Every command is copy-pasteable, and you delete the cluster when you are done.
-- **The "on my cluster" notes.** How Istio runs on `mk4`, the 8-node Minikube cluster that hosts this website, the MOKS SRE portal, RoboShop AI, Harbor and my tooling. On `mk4` the Istio ingress gateway is now the **only** way in, and every meshed namespace runs STRICT mutual TLS. The notes come from my `miniKube` repository and from read-only `kubectl` and `istioctl` checks on 9 November 2026.
+- **The "on my cluster" notes.** How Istio runs on `mk4`, the k3s cluster on Hetzner Cloud (one control-plane node and three Arm workers) that hosts this website, the MOKS SRE portal, RoboShop AI, Harbor and my tooling. On `mk4` the Istio ingress gateway is now the **only** way in, and every meshed namespace runs STRICT mutual TLS. The notes come from my `kubernetes` repository (formerly `miniKube`) and from read-only `kubectl` and `istioctl` checks on 9 November 2026, when mk4 was still a Minikube cluster on one server; they were updated for k3s on 14 November 2026.
 
-Versions quoted here (Istio 1.30.7, Kiali 2.34.0, Kubernetes v1.37.0) are what `mk4` runs, not recommendations. Istio's [supported releases page](https://istio.io/latest/docs/releases/supported-releases/) lists Kubernetes 1.32 to 1.36 for Istio 1.30, so `mk4` is one Kubernetes minor ahead of its mesh; Istio 1.31 adds 1.37. Check that table before you pick versions.
+Versions quoted here (Istio 1.30.7, Kiali 2.34.0, k3s v1.37.2+k3s1) are what `mk4` runs, not recommendations. Istio's [supported releases page](https://istio.io/latest/docs/releases/supported-releases/) lists Kubernetes 1.32 to 1.36 for Istio 1.30, so `mk4` is one Kubernetes minor ahead of its mesh; Istio 1.31 adds 1.37. Check that table before you pick versions.
 
 ## 1. What a service mesh is, and why Istio
 
@@ -213,7 +214,7 @@ helm install istiod     istio/istiod -n istio-system --wait \
 helm install istio-ingressgateway istio/gateway -n istio-ingress --create-namespace --wait
 ```
 
-The release name `istio-ingressgateway` gives the gateway pods the label `istio: ingressgateway`, which the Bookinfo sample's `Gateway` selects. The CNI chart's defaults worked for sidecars on `mk4`; ambient mode on Minikube needs extra settings, listed on Istio's platform prerequisites pages.
+The release name `istio-ingressgateway` gives the gateway pods the label `istio: ingressgateway`, which the Bookinfo sample's `Gateway` selects. The CNI chart's defaults work for sidecars on Minikube. On `mk4` (k3s) the CNI chart needs k3s's own paths, `cniConfDir: /var/lib/rancher/k3s/agent/etc/cni/net.d` and `cniBinDir: /var/lib/rancher/k3s/data/cni`, and it chains to k3s's flannel. Ambient mode needs extra settings on both, listed on Istio's platform prerequisites pages.
 
 > **On my cluster.** `mk4` installs the same charts through Terraform `helm_release` resources (`minikube-infrastructure/istio.tf` in my `miniKube` repository), all pinned to 1.30.7, plus two local charts: `istio-edge` (the public routing, section 5) and `istio-mesh` (mesh-wide policies, section 6). Settings worth copying:
 >
@@ -291,13 +292,17 @@ Why bother: if several VirtualServices bind the same host, Istio merges them in 
 
 Until 8 November 2026, Traefik was `mk4`'s edge and Istio only handled east–west traffic. Traefik sent requests to pod IPs with the public `Host: jithendar.com`, so its sidecar could not match a mesh service and passed them through as plain TCP. That kept three namespaces on PERMISSIVE mTLS and showed every caller in Kiali as `unknown`. Now Traefik is uninstalled, and the Istio ingress gateway terminates all public traffic.
 
+The figure shows mk4 on 9 November 2026, still on Minikube, where HAProxy on the server forwarded ports 80 and 443. Since 10 November mk4 runs on k3s on Hetzner Cloud, and the front door is a Hetzner load balancer, `mk4-edge` (LB11), which Hetzner's cloud controller creates for the gateway's `LoadBalancer` Service. It forwards 80 and 443 over the private network to the gateway's NodePorts (31080 and 31443) with a PROXY protocol header, which the gateway still requires. Everything after the front door is unchanged.
+
+![How a request reaches an application on mk4 since 10 November 2026. A visitor looks up the name in Cloudflare DNS, which does no proxying, and connects on port 80 or 443 to the Hetzner load balancer mk4-edge (LB11), which Hetzner's cloud controller created for the gateway's LoadBalancer Service. It forwards TCP with a PROXY protocol header to NodePorts 31080 and 31443 on the nodes' private addresses. In namespace istio-ingress the istio-ingressgateway requires the PROXY header for the client address, terminates TLS with the wildcard certificate and applies logins and IP allowlists by path; the Gateway public and the root VirtualService pick one route per path prefix, own hostnames by SNI, and the site last. Delegates lead to meshed namespaces with STRICT mTLS: jithendar, moks, roboshop-ai and monitoring. On Minikube, until then, HAProxy on the one server forwarded to the same NodePorts.](/images/mk4-k3s/mk4-k3s-request-path.svg)
+
 ![The mk4 request path on 9 November 2026. A visitor (browser, docker or psql) looks up the name in Cloudflare DNS, which does no proxying, and connects on port 80 or 443 to HAProxy on the Hetzner host. HAProxy forwards TCP with a PROXY protocol v2 header to NodePort 31080 or 31443 of the istio-ingressgateway Service. In namespace istio-ingress, two gateway replicas with a PodDisruptionBudget require the PROXY header, terminate TLS with the wildcard certificate, apply basic auth by path prefix, enforce DENY rules for read-only paths and IP allowlists, set X-Forwarded-For to the real address, compress responses and write an access log. Hosts with their own names are matched by SNI: registry.jithendar.com goes to Harbor, and db.jithendar.com has TLS terminated at the gateway and continues as TCP to the jithendar-postgres database with ALPN postgresql. jithendar.com goes through the root VirtualService on Gateway public, which has one delegate per path prefix: jithendar (the site, the default route, and /db), moks (/moks and /opensearch), roboshop-ai (/roboshop), monitoring (/grafana, /prometheus, /loki), argocd (/argocd) and istio-system (/kiali). Every hop below the gateway is mTLS between Envoy sidecars.](/images/istio-minikube/mk4-istio-edge.svg)
 
 The design, all in the `istio-edge` chart:
 
 - **One `Gateway` named `public`** with one HTTPS server for every hostname (`jithendar.com`, `www`, `registry.`, `jfrog.`), written as `namespace/host` so only the owning namespace can bind it, plus a TLS server for `db.jithendar.com` and a port 80 server that only redirects. One wildcard certificate from cert-manager (DNS-01 through Cloudflare) covers all of them.
 - **A root VirtualService** with the path table: `www` → apex (308), a few redirects, one delegate per prefix (longer prefixes first: `/opensearch-dashboards` before `/opensearch`), and the site last.
-- **The visitor's address.** HAProxy on the host forwards plain TCP with a PROXY protocol v2 header, and an `EnvoyFilter` inserts Envoy's `proxy_protocol` listener filter first on ports 80 and 443. Connections without the header are refused. A second filter overwrites `X-Forwarded-For` and `X-Real-IP` with that address, so a client cannot choose its own. The IP allowlists for `/db` and the database are DENY `AuthorizationPolicy` rules on `remoteIpBlocks`.
+- **The visitor's address.** The Hetzner load balancer (on Minikube: HAProxy on the server) forwards plain TCP with a PROXY protocol header, and an `EnvoyFilter` inserts Envoy's `proxy_protocol` listener filter first on ports 80 and 443. Connections without the header are refused. A second filter overwrites `X-Forwarded-For` and `X-Real-IP` with that address, so a client cannot choose its own. The IP allowlists for `/db` and the database are DENY `AuthorizationPolicy` rules on `remoteIpBlocks`.
 - **Logins at the edge.** Prometheus, Loki and OpenSearch have no authentication of their own. Envoy's `basic_auth` filter, wrapped in a path matcher, protects their prefixes on the HTTPS listener only and fails closed if a login is missing.
 - **PostgreSQL on port 443.** `db.jithendar.com` is a TLS server: the gateway terminates TLS, selects ALPN `postgresql` (libpq 17's `sslnegotiation=direct` requires it; Istio sets no ALPN for TLS servers, so an `EnvoyFilter` merges it in), and a `tcp` route forwards to the database over the mesh.
 
@@ -446,7 +451,7 @@ A live line looks like `{"durationMs":20,"errorCode":"-","event":"edge_request",
 
 ### Resource usage on mk4
 
-One `kubectl top` reading on 9 November 2026 with light traffic, so treat it as rough:
+One `kubectl top` reading on 9 November 2026 with light traffic, on Minikube with 8 nodes (one CNI agent per node; k3s mk4 has four nodes), so treat it as rough:
 
 | Component | Count | Measured | Requests / limits set |
 | --- | --- | --- | --- |
@@ -516,7 +521,7 @@ kubectl -n istio-ingress exec deploy/istio-ingressgateway -- \
 | HTTP features ignored, odd resets | Port named `p4107` or unnamed, so protocol detection guessed | Name ports `http-…`, `grpc-…`, `tcp-…` or set `appProtocol` |
 | Pods `Pending` or `OOMKilled` | Not enough memory for istiod, gateways and sidecars | More Minikube memory; set `global.proxy.resources`; scope with `Sidecar` |
 
-### Four outages from mk4, and what each taught me
+### Four outages from mk4 (on Minikube), and what each taught me
 
 **The sidecar that could not find istiod (8 November).** After enabling sidecars in `jithendar`, the site returned 503. Postgres and Redis had NetworkPolicies without DNS egress, the new sidecar policy allowed `istiod:15012` but not DNS, so their sidecars never became ready, and with `holdApplicationUntilProxyStarts` Postgres never started. Lesson: on a cluster that enforces NetworkPolicy, every meshed pod needs DNS and `istiod:15012` egress.
 
@@ -550,7 +555,7 @@ spec:
 ```
 
 - **Upgrade with revisions.** Install the new istiod with `--set revision=1-31-0`, move one namespace at a time (`istio.io/rev=1-31-0`, restart), then remove the old one. `mk4` needs this next: Istio 1.31 is the first release that lists Kubernetes 1.37.
-- **Back up Istio objects and the root CA.** A Velero backup of the Istio CRDs and the `istio-ca-secret` in `istio-system` gives a point-in-time restore; losing the root CA means every workload must restart for new certificates. On `mk4` the `velero` namespace exists but the Velero server is not installed, so this is still a plan.
+- **Back up Istio objects and the root CA.** A Velero backup of the Istio CRDs and the `istio-ca-secret` in `istio-system` gives a point-in-time restore; losing the root CA means every workload must restart for new certificates. mk4 has no Velero (on Minikube a `velero` namespace existed without the server), so this is still a plan.
 
 ## Conclusion
 

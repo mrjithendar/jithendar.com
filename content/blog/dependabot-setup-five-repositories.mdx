@@ -31,7 +31,7 @@ sources:
 ---
 <Todo>(1) Every number and setting here was read from the five repositories and the GitHub API on 9 November 2026. Re-check the PR and alert counts in section 1 before publishing, because they change every Monday. (2) Section 10 says no repository requires status checks on its default branch, and that MOKS and RoboShop AI pin actions by tag instead of by commit SHA. Fix those or keep them as stated; the text must match whatever you choose. (3) tools still has an open Helm PR (#4) from before its Helm entry moved to the miniKube repository. Close it, or say why it stays open. (4) Add your own commentary, confirm the AI-assistance line against the AI use policy, then set status and publishedAt.</Todo>
 
-I keep five public repositories on GitHub: this site (`jithendar.com`), the MOKS SRE agent (`moks`), the RoboShop AI microservices demo (`roboshop-ai`), the AWS infrastructure (`tools`) and my home Kubernetes cluster (`miniKube`). Together they use npm, pip, Gradle, Go modules, Docker images, Helm charts, Terraform providers and GitHub Actions. I don't have time to read changelogs for all of that, so Dependabot does the watching.
+I keep five public repositories on GitHub: this site (`jithendar.com`), the MOKS SRE agent (`moks`), the RoboShop AI microservices demo (`roboshop-ai`), the AWS infrastructure (`tools`) and my Kubernetes cluster, now k3s on Hetzner Cloud (`kubernetes`, called `miniKube` until November 2026). Together they use npm, pip, Gradle, Go modules, Docker images, Helm charts, Terraform providers and GitHub Actions. I don't have time to read changelogs for all of that, so Dependabot does the watching.
 
 This article shows how that works today: the actual `dependabot.yml` files, why each rule is there, what Dependabot does for security, where it breaks things, and an FAQ at the end.
 
@@ -43,7 +43,7 @@ This article shows how that works today: the actual `dependabot.yml` files, why 
 | `moks` | pip (backend, reranker), npm, Docker, Helm, Terraform, GitHub Actions | 13 | 0 |
 | `roboshop-ai` | npm, pip, Gradle, Go modules, Docker, GitHub Actions | 43 | 18 |
 | `tools` | Terraform, GitHub Actions | 3 | 0 |
-| `miniKube` | Docker, Helm, Terraform, GitHub Actions | 1 | 0 |
+| `kubernetes` (was `miniKube`) | Docker, Helm, Terraform, GitHub Actions | 1 | 0 |
 
 The counts come from `gh pr list --author app/dependabot` and the Dependabot alerts API on 9 November 2026. All five repositories have three settings turned on under **Settings → Code security**:
 
@@ -65,7 +65,7 @@ People often treat "Dependabot" as one thing. It is three, and they behave diffe
 
 ![How a dependency update travels through my repositories. Two things start Dependabot. A new advisory in the GitHub Advisory Database that matches the dependency graph raises a Dependabot alert; if a fixed version is reachable, Dependabot opens a security update PR for that one package, with no cooldown and no grouping, and if the parent package pins the vulnerable range, the fix is made by hand with npm overrides or the alert is dismissed with a reason. The weekly schedule, Monday 06:00 New York time, starts a version update run that reads .github/dependabot.yml, skips releases younger than the 3-day cooldown and versions matched by ignore rules, and opens grouped PRs: family groups such as opentelemetry and next-react first, then one minor and patch group per directory, with each major in its own PR. Every PR runs CI on its branch with a read-only GITHUB_TOKEN and no repository secrets; forks are skipped. A red PR gets an ignore rule and @dependabot recreate. A green PR is reviewed by a person, because there is no auto-merge, and merging to master deploys: jithendar.com and MOKS build an image, Argo CD syncs miniKube, and tools runs terraform apply.](/images/dependabot/dependabot-flow.svg)
 
-The bottom row matters most. In my repositories **merging a Dependabot PR is a deploy**: a new image is built for jithendar.com and MOKS, Argo CD syncs miniKube, and `terraform apply` runs for tools. Section 9 covers what that means for review.
+The bottom row matters most. In my repositories **merging a Dependabot PR is a deploy**: a new image is built for jithendar.com and MOKS, the cluster repository's changes reach mk4, and `terraform apply` runs for tools. Section 9 covers what that means for review.
 
 ## 3. The shape of every config file
 
@@ -267,7 +267,7 @@ ignore:
 
 Dependabot isn't only for application packages. Half my entries update infrastructure.
 
-**Kubernetes manifests.** The `docker` ecosystem also reads `image:` lines in plain Kubernetes YAML. It reads only the listed directory, not its subdirectories, so in miniKube I list each directory explicitly with `directories:`:
+**Kubernetes manifests.** The `docker` ecosystem also reads `image:` lines in plain Kubernetes YAML. It reads only the listed directory, not its subdirectories, so in the cluster repository I list each directory explicitly with `directories:`:
 
 ```yaml
 - package-ecosystem: docker
@@ -387,7 +387,7 @@ PRs only get `fmt`, `validate` and mocked tests.
 
 **No auto-merge.** `allow_auto_merge` is off in every repository, and no workflow merges Dependabot PRs. Many teams auto-merge patch updates with `dependabot/fetch-metadata`, and that's reasonable when the tests are strong and merging doesn't deploy. In my repositories merging *is* the deploy, so a person reads the diff.
 
-**Stateful images get a warning in the config.** The miniKube header reads (RoboShop AI has a shorter version above its data-store directories):
+**Stateful images get a warning in the config.** The cluster repository's header reads, as written when mk4 was still Minikube (RoboShop AI has a shorter version above its data-store directories):
 
 ```yaml
 # Stateful images (postgres, valkey) restart their StatefulSet when merged. mk4's hostpath PVs have no
@@ -403,7 +403,7 @@ That is a cluster weakness, not a Dependabot one, but a routine Dependabot merge
 - **No required status checks.** No rule on any default branch requires the CI job to pass before merging. I wait for green checks myself. A ruleset that requires the `check` job would turn that habit into a rule.
 - **Tags instead of SHAs in two repositories.** MOKS and RoboShop AI pin most actions by tag (`actions/checkout@v7`, `@v7.0.1`); only a couple use a SHA. Dependabot updates them anyway, but a moved tag would be picked up without a PR.
 - **Inconsistent configs.** RoboShop AI has no cooldown, no labels and a limit of 5 open PRs; the newer repositories have all three. Its groups use `patterns: ["*"]` with `update-types`, which works, but has no family groups like `opentelemetry`.
-- **Stale PRs.** `tools` still has an open Helm PR from before that entry moved to the miniKube repository.
+- **Stale PRs.** `tools` still has an open Helm PR from before that entry moved to the cluster repository.
 - **Hand-bumped versions drift.** Everything in the "not covered" lists depends on me remembering. A scheduled check that compares them against the latest releases would close that gap.
 
 ## 11. FAQ
@@ -481,4 +481,4 @@ Renovate can do more: regex managers for versions in scripts and workflows, rich
 - MOKS: [github.com/mrjithendar/moks](https://github.com/mrjithendar/moks)
 - RoboShop AI: [github.com/mrjithendar/roboshop-ai](https://github.com/mrjithendar/roboshop-ai)
 - tools: [github.com/mrjithendar/tools](https://github.com/mrjithendar/tools)
-- miniKube: [github.com/mrjithendar/miniKube](https://github.com/mrjithendar/miniKube)
+- kubernetes (formerly miniKube): [github.com/mrjithendar/kubernetes](https://github.com/mrjithendar/kubernetes)

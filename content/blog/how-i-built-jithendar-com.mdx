@@ -1,9 +1,9 @@
 ---
-title: "How I Built jithendar.com: CrewAI Pipelines, Istio Mesh and Gateway, and EKS-Style Patterns on Minikube"
+title: "How I Built jithendar.com: CrewAI Pipelines, Istio Mesh and Gateway, and EKS-Style Patterns on k3s"
 slug: how-i-built-jithendar-com
-description: "How I run jithendar.com on minikube with EKS-style patterns: Istio gateway and STRICT mTLS, CrewAI flows with human review, and PR-tagged releases."
-seoTitle: "Building jithendar.com: Istio, CrewAI and EKS on Minikube"
-seoDescription: "How I run my blog on minikube with EKS-style patterns: Istio gateway and STRICT mTLS, CrewAI flows with human review, and PR-tagged releases."
+description: "How I run jithendar.com on k3s on Hetzner Cloud with EKS-style patterns: Istio gateway and STRICT mTLS, CrewAI flows with human review, and PR-tagged releases."
+seoTitle: "Building jithendar.com: Istio, CrewAI and EKS Habits on k3s"
+seoDescription: "How I run my blog on k3s on Hetzner Cloud with EKS-style patterns: Istio gateway and STRICT mTLS, CrewAI flows with human review, and PR-tagged releases."
 author: jithendar-dharmapuri
 category: kubernetes
 tags: [Kubernetes, Istio, CrewAI, Platform Engineering, CI/CD]
@@ -11,7 +11,7 @@ contentType: tutorial
 status: review
 featuredImage:
   src: /images/how-i-built-jithendar-com/platform-architecture.png
-  alt: "Architecture of jithendar.com on minikube: Cloudflare DNS, HAProxy and the Istio ingress gateway in front of the Next.js site, seo-agent with CrewAI flows, CronJob triggers, a human review step, PostgreSQL, Valkey and monitoring."
+  alt: "Architecture of jithendar.com on k3s on Hetzner Cloud: Cloudflare DNS, a Hetzner load balancer and the Istio ingress gateway in front of the Next.js site, seo-agent with CrewAI flows, CronJob triggers, a human review step, PostgreSQL, Valkey and monitoring."
   width: 1922
   height: 1898
 related:
@@ -26,9 +26,9 @@ This post walks through what is actually in the repository: the manifests, the C
 
 ## The architecture in one picture
 
-The site is a Next.js app (`services/www`) with content in MDX and PostgreSQL. Two Python services sit next to it: a sandboxed Python practice executor and `seo-agent`, which runs every AI workflow as a CrewAI Flow. Everything runs in one namespace, `jithendar`, on a multi-node minikube cluster I call mk4.
+The site is a Next.js app (`services/www`) with content in MDX and PostgreSQL. Two Python services sit next to it: a sandboxed Python practice executor and `seo-agent`, which runs every AI workflow as a CrewAI Flow. Everything runs in one namespace, `jithendar`, on mk4: a k3s cluster on Hetzner Cloud with one control-plane node and three Arm workers. Until 10 November 2026 mk4 was a multi-node minikube cluster on one server; the habits below carried over unchanged.
 
-![How a request reaches jithendar.com and how the content pipeline fits around it. A reader looks up the name in Cloudflare DNS, which does no proxying, and connects on port 80 or 443 to HAProxy on the cluster host, which forwards TCP with a PROXY protocol v2 header to a NodePort of the Istio ingress gateway. The gateway terminates TLS with a wildcard certificate, redirects www to the apex and HTTP to HTTPS, and routes through a root VirtualService kept in the cluster repository. A delegate VirtualService sends the site's traffic to the two jithendar-com Next.js pods in namespace jithendar, which runs STRICT mTLS with sidecars. Next to the site are the practice executor with gVisor sandboxes and no network, and seo-agent, which runs CrewAI Flows and Crews with an internal API on port 8080 and an MCP port on 8090. CronJobs named seo-flow-* only post a kickoff to seo-agent. seo-agent writes drafts to the site's callback port, and a person approving in /admin/review is the only publish trigger. A /mcp/* route to port 8090 is documented as a Kong decK file or an Istio match but is not applied. Prometheus scrapes port 9464 over mTLS, traces go through OpenTelemetry to Jaeger and logs through Alloy to Loki, and Grafana dashboards come from sites/jithendar.com/grafana through Argo CD. seo-agent uses the shared CloudNativePG PostgreSQL with pgvector and calls the Anthropic API under a budget guard. The site uses the shared Valkey for a pub/sub cache bus, Cloudflare R2 for media, backups and report PDFs, and Google's Search Console and GA4 APIs.](/images/how-i-built-jithendar-com/platform-architecture.svg)
+![How a request reaches jithendar.com and how the content pipeline fits around it. A reader looks up the name in Cloudflare DNS, which does no proxying, and connects on port 80 or 443 to the Hetzner load balancer mk4-edge, which forwards TCP with a PROXY protocol header to a NodePort of the Istio ingress gateway. The gateway terminates TLS with a wildcard certificate, redirects www to the apex and HTTP to HTTPS, and routes through a root VirtualService kept in the cluster repository. A delegate VirtualService sends the site's traffic to the two jithendar-com Next.js pods in namespace jithendar, which runs STRICT mTLS with sidecars. Next to the site are the practice executor with gVisor sandboxes and no network, and seo-agent, which runs CrewAI Flows and Crews with an internal API on port 8080 and an MCP port on 8090. CronJobs named seo-flow-* only post a kickoff to seo-agent. seo-agent writes drafts to the site's callback port, and a person approving in /admin/review is the only publish trigger. A /mcp/* route to port 8090 is documented as a Kong decK file or an Istio match but is not applied. Prometheus scrapes port 9464 over mTLS, traces go through OpenTelemetry to Jaeger and logs through Alloy to Loki, and Grafana dashboards come from sites/jithendar.com/grafana through Argo CD. seo-agent uses the shared CloudNativePG PostgreSQL with pgvector and calls the Anthropic API under a budget guard. The site uses the shared Valkey for a pub/sub cache bus, Cloudflare R2 for media, backups and report PDFs, and Google's Search Console and GA4 APIs.](/images/how-i-built-jithendar-com/platform-architecture.svg)
 
 The content pipeline has two edges into the site. CronJobs or admin buttons start flows. Flows write **drafts** back through the site's internal callback port (9465, never routed publicly). Publishing only happens when I approve a draft in the admin.
 
@@ -77,9 +77,9 @@ spec:
 
 Inside the namespace, mTLS is **STRICT** with no plain-text port. Even Prometheus scrapes `:9464` through its own sidecar. An `allow-known-callers` AuthorizationPolicy admits only the gateway, the monitoring namespace and the namespace itself. It runs with `istio.io/dry-run: "true"` first, so it only counts what it would deny. It gets enforced once that count stays at zero.
 
-## EKS-style patterns on minikube
+## EKS-style patterns on k3s
 
-I spend my days on AWS EKS, so I copied the habits that matter there, even where minikube doesn't force them.
+I spend my days on AWS EKS, so I copied the habits that matter there, even where a small k3s cluster doesn't force them.
 
 **Namespaces and least-privilege CI.** CI has two ServiceAccounts. `github-ci-deployer` may only patch (set the image of, or restart) and watch specific Deployments. `github-ci-applier` may apply application objects (Deployments, Services, ConfigMaps, NetworkPolicies, PDBs, VirtualServices) but never RBAC, Secrets, Namespaces or PeerAuthentications. That way a commit can't widen CI's own access. Nothing is ever pruned.
 
@@ -109,7 +109,7 @@ topologySpreadConstraints:
 
 **Backups.** Admin → Backups writes zip files to Cloudflare R2, optionally AES-256 encrypted with a passphrase only I know. They contain content, configuration and accounts, but no password hashes, sessions or stored credentials.
 
-**Where minikube differs from EKS.** There's no managed control plane, so I restart the cluster after a host reboot myself (`scripts/protect-host.sh` installs a systemd unit for it). There's no IRSA: pods get credentials from Kubernetes Secrets, not IAM roles. The registry is a self-hosted Harbor, not ECR; the unused ECR Terraform was removed in November 2026. Every node shares one physical host, so "spread across nodes" protects against a node failing, not against the host failing. And Argo CD is only used for dashboards. The site itself deploys through CI (`ci-jithendar-com.yml` for the image, `deploy-kubernetes.yml` for manifests), not GitOps.
+**Where my k3s cluster differs from EKS.** There's no managed control plane: one k3s server node, with no HA and no load balancer for the API, upgraded by k3s's system-upgrade-controller. (On minikube I even restarted the cluster after a host reboot myself.) There's no IRSA: pods get credentials from Kubernetes Secrets, not IAM roles. The registry is a self-hosted Harbor, not ECR; the unused ECR Terraform was removed in November 2026. All four nodes are in one Hetzner location (Falkenstein), so "spread across nodes" protects against a node failing, not against the location failing. And Argo CD deploys the other applications (MOKS, RoboShop AI); the platform add-ons, Grafana's dashboards included, are Terraform. The site itself deploys through CI (`ci-jithendar-com.yml` for the image, `deploy-kubernetes.yml` for manifests), not GitOps.
 
 ## The AI content pipeline with CrewAI
 

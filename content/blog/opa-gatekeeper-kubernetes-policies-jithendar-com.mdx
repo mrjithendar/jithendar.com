@@ -31,7 +31,7 @@ sources:
     publisher: Kubernetes
 ---
 
-jithendar.com doesn't run alone. Its pods share a four-node cluster, which I call **mk4**, with MOKS (my SRE agent), RoboShop AI, Argo CD, Harbor, a shared PostgreSQL cluster, Valkey and the monitoring stack. Manifests reach that cluster from Terraform, Argo CD and my own `kubectl`. Until this week, Kubernetes accepted any of them as long as the YAML was valid and the identity had permission.
+jithendar.com doesn't run alone. Its pods share a four-node k3s cluster on Hetzner Cloud (one control-plane node and three workers), which I call **mk4**, with MOKS (my SRE agent), RoboShop AI, Argo CD, Harbor, a shared PostgreSQL cluster, Valkey and the monitoring stack. Manifests reach that cluster from Terraform, Argo CD and my own `kubectl`. Until this week, Kubernetes accepted any of them as long as the YAML was valid and the identity had permission.
 
 That's a weak guarantee. One manifest with `privileged: true` or a `hostPath: /` mount, from any of those apps, would give a container root on a node. That node might be the one serving this site or holding its database. So I installed **OPA Gatekeeper** and turned on a first set of policies.
 
@@ -76,7 +76,7 @@ Gatekeeper covers the pod-security rules and anything else you can express. Exce
 
 ## How it's installed: three Helm releases in Terraform
 
-All add-ons on mk4 are Terraform `helm_release` resources, one file per add-on, in my `miniKube` repository. Gatekeeper follows the same pattern in `minikube-infrastructure/gatekeeper.tf`:
+All add-ons on mk4 are Terraform `helm_release` resources, one file per add-on, in my `kubernetes` repository (formerly `miniKube`, so the folder names still say minikube). Gatekeeper follows the same pattern in `minikube-infrastructure/gatekeeper.tf`:
 
 | Release | Chart | What it holds |
 |---|---|---|

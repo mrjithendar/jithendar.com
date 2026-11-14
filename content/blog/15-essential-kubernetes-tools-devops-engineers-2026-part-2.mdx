@@ -675,22 +675,22 @@ Pick one GitOps controller, one mesh and one policy engine. Cilium and a mesh ov
 
 ## My lab: what runs, what ran on EKS, what would fit
 
-On mk4, the eight-node Minikube cluster from Part 1, only cert-manager from this part runs. Most of the rest ran on RoboShop AI's EKS cluster, whose manifests left the `roboshop-ai` repository in commit a6d5e10 on 1 November, the day before the cluster was deleted. Resource figures are chart **default requests**, not measurements.
+On mk4, the eight-node Minikube cluster from Part 1 (as inspected on 8 November; it moved to k3s on Hetzner Cloud two days later), only cert-manager from this part ran. Most of the rest ran on RoboShop AI's EKS cluster, whose manifests left the `roboshop-ai` repository in commit a6d5e10 on 1 November, the day before the cluster was deleted. Resource figures are chart **default requests**, not measurements.
 
 | Tool | Verified 8 Nov 2026 | Justified on mk4? | On EKS |
 |---|---|---|---|
-| Karpenter | EKS had arm64 `general` and `spot` NodePools with a business-hours consolidation block | No, Minikube nodes are fixed | Yes, the main cost lever |
+| Karpenter | EKS had arm64 `general` and `spot` NodePools with a business-hours consolidation block | No, mk4's nodes are fixed (on k3s the cluster autoscaler is off too) | Yes, the main cost lever |
 | KEDA | Not installed; the RabbitMQ example scaled `shipping-worker` on EKS | Yes for queue workers (3 × 100m, 100 MiB) | Yes, with Karpenter |
 | Istio | Not running; EKS used it as gateway and mesh; Terraform plan in `tools` (e18e0e6) pins 1.30.7, unapplied | Doubtful: istiod 500m and 2 GiB, ztunnel 512 MiB per node (4 GiB across 8), sidecars 128 MiB per pod | If you need its traffic features |
 | Linkerd | Not installed | The lighter option if mk4 needs mTLS | Yes, for small teams |
-| Cilium | No, mk4 runs kindnet, which cannot express the FQDN egress rules MOKS's terminal design asks for | Only by recreating the profile | Chaining or ENI mode |
+| Cilium | No, mk4 ran kindnet on Minikube and runs flannel on k3s; neither can express the FQDN egress rules MOKS's terminal design asks for | Only by recreating the cluster | Chaining or ENI mode |
 | cert-manager | v1.20.4 (1.21.3 is current), 2 HTTP-01 ClusterIssuers via Traefik, 4 Certificates Ready | Yes | Yes, often DNS-01 on Route 53 |
 | Velero | Broken: CRDs, the R2 location and a daily schedule exist but no server runs; last completed backup 1 November, 7 requests never processed | Yes for objects; hostPath volumes need database dumps | Yes, with snapshot data movement |
 | Kyverno | Not installed; EKS used OPA Gatekeeper with five templates | Yes, Audit first (4 controllers, 400m and 320 MiB in total) | Yes |
 
 Two findings to fix first:
 
-1. **The planned Istio does not support this cluster.** Istio 1.30 covers Kubernetes 1.32 to 1.36, and mk4 runs 1.37.0. 1.31.x covers 1.37, but on 8 November the Istio Helm repository's newest `istiod` chart was 1.30.8, so either wait for 1.31 charts or use `istioctl`.
+1. **The planned Istio does not support this cluster.** Istio 1.30 covers Kubernetes 1.32 to 1.36, and mk4 runs 1.37 (k3s v1.37.2 since 10 November). 1.31.x covers 1.37, but on 8 November the Istio Helm repository's newest `istiod` chart was 1.30.8, so either wait for 1.31 charts or use `istioctl`.
 2. **Velero needs a running server or a clean-up.** MOKS shows backup requests nothing will process. Syncing `moks/deploy/argocd/velero.yaml` (chart 12.2.2, node agent off) brings the server back.
 
 ## Troubleshooting scenarios

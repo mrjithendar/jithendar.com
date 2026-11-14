@@ -1,7 +1,7 @@
 ---
 title: "How jithendar.com runs: a self-hosted Next.js platform on Kubernetes"
 slug: nextjs-site-on-kubernetes
-description: "The architecture of this site after its WordPress compromise: Next.js on one Minikube server, PostgreSQL, R2, the release path and its failure modes."
+description: "The architecture of this site after its WordPress compromise: Next.js on k3s on Hetzner Cloud, PostgreSQL, R2, the release path and its failure modes."
 author: jithendar-dharmapuri
 category: devops-sre
 tags: [Next.js, Kubernetes, PostgreSQL, Observability, Security]
@@ -36,7 +36,9 @@ Reader
 3. **PostgreSQL** holds the content. **Redis** speeds things up, and losing it only sends reads back to Postgres.
 4. **Media** comes from R2 through the app, and `next/image` resizes images to AVIF or WebP inside the pods.
 
-The whole cluster is a four-node Minikube profile on one server, shared with Argo CD and the monitoring stack.
+The whole cluster is k3s on Hetzner Cloud: one control-plane node and three Arm workers, shared with Argo CD, MOKS, RoboShop AI and the monitoring stack. (Until 10 November 2026 it was a four-node Minikube profile on one server.)
+
+![mk4 on Hetzner Cloud in Falkenstein, 14 November 2026. Visitors look up jithendar.com in Cloudflare DNS and connect on ports 80 and 443 to the load balancer mk4-edge (LB11), which forwards to the Istio gateway's NodePorts with the PROXY protocol. GitHub Actions reaches the API on port 6443 through the cloud firewall that hetzner-k3s creates, open to 0.0.0.0/0. Inside the private network 10.0.0.0/16 with flannel run k3s v1.37.2 on Ubuntu 24.04 arm64: the control-plane node jithendar-master1 (cax11, 2 vCPU, 4 GB), tainted CriticalAddonsOnly so it runs no workloads and with no API load balancer, and three workers (cax21, 4 vCPU, 8 GB, 80 GB disk each). Worker1 holds valkey-0, a PgBouncer pod, pgAdmin and Grafana; worker2 holds the PostgreSQL primary postgres-cluster-1, valkey-1, a PgBouncer pod, the Harbor registry and Loki; worker3 holds the replica postgres-cluster-2. Two StorageClasses: local-path, a folder on the node's own disk pinned to that node with Retain, used by Postgres, Valkey, Harbor, Loki, Prometheus and Grafana; and the default hcloud-volumes, Hetzner Cloud block volumes, used by RoboShop's stateful services. Terraform in minikube-infrastructure installs the add-ons as Helm releases; hetzner-k3s.yaml defines servers, network, firewall and the k3s version.](/images/mk4-k3s/mk4-k3s-cluster.svg)
 
 ## Why the setup page disappears
 
@@ -53,7 +55,7 @@ The hijack's root cause was exposing an application before it was initialized. T
 | Media | Cloudflare R2, `next/image` with sharp | Files, backups and image resizing |
 | Editor | Tiptap 3, remark and rehype | Visual Markdown editing, server rendering |
 | Sign-in | Better Auth, Cloudflare Turnstile | Accounts, roles and bot checks |
-| Cluster | Minikube, Traefik, cert-manager | Hosting, ingress, certificates |
+| Cluster | k3s on Hetzner Cloud, Istio ingress gateway, cert-manager | Hosting, ingress, certificates |
 | Delivery | GitHub Actions, Harbor | Tests, image builds and the registry |
 | Monitoring | Prometheus, Grafana, Loki, Jaeger | Metrics, logs and traces |
 
@@ -164,8 +166,9 @@ The design is small enough to reason about, so its limits are easy to list:
 | Failure | What happens |
 | --- | --- |
 | A pod crashes, or a rollout replaces one | The other replica serves. This is what two replicas buy. |
-| The server or its disk fails | The site is down. Replicas share one machine, and all four Minikube nodes share one disk. |
-| The node holding Postgres goes away | Postgres stays down, because it is pinned to a node with hostpath storage. |
+| A worker or its disk fails | The other web replica keeps serving: the two are spread over different nodes. Pods with `local-path` volumes wait for their node. |
+| The Hetzner location fails | The site is down. All four nodes are in Falkenstein. |
+| The node holding the Postgres primary goes away | CloudNativePG promotes the replica on another worker, and the site reconnects through PgBouncer. |
 | Redis is lost | Reads fall back to Postgres, and the site keeps working. |
 | R2 is unreachable | Pages load without media, and uploads and backups fail. |
 | A traffic flood reaches the origin | Nothing in front absorbs it, because the DNS-only record bypasses Cloudflare. |

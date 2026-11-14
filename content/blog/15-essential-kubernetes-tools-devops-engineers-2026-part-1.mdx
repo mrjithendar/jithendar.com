@@ -5,7 +5,7 @@ description: "Helm, Argo CD, Flux, Kustomize, K9s, Lens and Prometheus: what eac
 seoTitle: "Kubernetes Tools for DevOps Engineers 2026 (Part 1)"
 seoDescription: "Explore 15 essential Kubernetes tools for DevOps engineers in 2026, including Helm, Argo CD, KEDA, Istio, Cilium, Prometheus, and more."
 socialTitle: "15 Kubernetes tools every DevOps engineer should know in 2026 (Part 1)"
-socialDescription: "Part 1 covers Helm, Argo CD, Flux, Kustomize, K9s, Lens and Prometheus, with validated manifests and a real Minikube lab."
+socialDescription: "Part 1 covers Helm, Argo CD, Flux, Kustomize, K9s, Lens and Prometheus, with validated manifests and a real lab cluster."
 author: jithendar-dharmapuri
 category: kubernetes
 tags: [Kubernetes, DevOps, Helm, Argo CD, Flux, Kustomize, K9s, Prometheus, GitOps, Platform Engineering]
@@ -509,11 +509,11 @@ Two lessons. My site labels status as a class (`status="5xx"`), so the usual `st
 
 ## My Kubernetes lab: what is really there
 
-My lab cluster, `mk4`, runs this website, the MOKS SRE portal and RoboShop AI. I inspected it read-only on 8 November 2026.
+My lab cluster, `mk4`, runs this website, the MOKS SRE portal and RoboShop AI. I inspected it read-only on 8 November 2026, when it was still a Minikube cluster on one server. Two days later it moved to k3s on Hetzner Cloud; the update after the table shows what that changed.
 
 ![mk4: eight Minikube nodes on one 16 vCPU, 32 GB host, what is installed, what is broken, and what is absent.](/images/kubernetes-tools/k8s-tools-mk4-lab.svg)
 
-It is not a single-node cluster, as my own brief for this article assumed. It is **eight Minikube nodes** on one 16 vCPU, 32 GB Hetzner server. Each node reports the whole host as its capacity, so the scheduler sees 128 CPUs that do not exist, and every tool I add competes for the same memory. The 80 pods used about 1.6 cores and 16 GiB at inspection time.
+It was not a single-node cluster, as my own brief for this article assumed. It was **eight Minikube nodes** on one 16 vCPU, 32 GB Hetzner server. Each node reports the whole host as its capacity, so the scheduler sees 128 CPUs that do not exist, and every tool I add competes for the same memory. The 80 pods used about 1.6 cores and 16 GiB at inspection time.
 
 | Tool | On mk4 (verified) | Worth it here? | On EKS |
 |---|---|---|---|
@@ -531,7 +531,11 @@ What the inspection found, unfixed:
 - **Two kinds of "not synced".** Five MOKS apps are OutOfSync because Git moved on and sync is manual, which is expected. 29 `roboshop-demo-*` Applications are `Unknown` with `there are no clusters with this name`, because their EKS cluster was deleted on 2 November.
 - **Stale tooling.** `tools/devops-tools/k9s.sh` installs K9s v0.24.15 on CentOS 8 only; the current release is v0.51.0.
 - **Alerts go nowhere.** The config says "no Alertmanager is configured for delivery".
-- **A Terraform takeover is committed, not applied.** `tools/minikube-infrastructure` (e18e0e6) declares metrics-server, cert-manager, Istio, Kiali and the observability stack as Terraform `helm_release` resources. Until it runs, the table above holds.
+- **A Terraform takeover was committed, not applied (8 November).** `tools/minikube-infrastructure` (e18e0e6) declares metrics-server, cert-manager, Istio, Kiali and the observability stack as Terraform `helm_release` resources. Until it runs, the table above holds.
+
+**Update, 14 November 2026.** The takeover ran (the Terraform now lives in my `kubernetes` repository), and mk4 moved. Since 10 November it is a k3s cluster on Hetzner Cloud, created with hetzner-k3s: one control-plane node (cax11) that runs no workloads and three cax21 workers with 4 vCPU and 8 GB each. Each node reports its own capacity, so the scheduler no longer sees CPUs that do not exist. cert-manager v1.20.4, Argo CD v3.5.5, Prometheus v3.16.0, Grafana 13.2.4 and Istio 1.30.7 run there as Terraform Helm releases; Velero is not installed.
+
+![mk4 on Hetzner Cloud in Falkenstein, 14 November 2026. Visitors look up jithendar.com in Cloudflare DNS and connect on ports 80 and 443 to the load balancer mk4-edge (LB11), which forwards to the Istio gateway's NodePorts with the PROXY protocol. GitHub Actions reaches the API on port 6443 through the cloud firewall that hetzner-k3s creates, open to 0.0.0.0/0. Inside the private network 10.0.0.0/16 with flannel run k3s v1.37.2 on Ubuntu 24.04 arm64: the control-plane node jithendar-master1 (cax11, 2 vCPU, 4 GB), tainted CriticalAddonsOnly so it runs no workloads and with no API load balancer, and three workers (cax21, 4 vCPU, 8 GB, 80 GB disk each). Worker1 holds valkey-0, a PgBouncer pod, pgAdmin and Grafana; worker2 holds the PostgreSQL primary postgres-cluster-1, valkey-1, a PgBouncer pod, the Harbor registry and Loki; worker3 holds the replica postgres-cluster-2. Two StorageClasses: local-path, a folder on the node's own disk pinned to that node with Retain, used by Postgres, Valkey, Harbor, Loki, Prometheus and Grafana; and the default hcloud-volumes, Hetzner Cloud block volumes, used by RoboShop's stateful services. Terraform in minikube-infrastructure installs the add-ons as Helm releases; hetzner-k3s.yaml defines servers, network, firewall and the k3s version.](/images/mk4-k3s/mk4-k3s-cluster.svg)
 
 ## Troubleshooting scenarios
 
@@ -589,4 +593,4 @@ Through `kubernetes_sd_configs`: it watches the API server for nodes, pods, Serv
 - **Exercises**: deploy an app with plain YAML; install kube-prometheus-stack with Helm and change a value; turn your YAML into a base with dev and prod overlays; debug a crashing pod with only K9s; write a ServiceMonitor and an alert, break the app and watch it fire.
 - **Outcome**: you can ship, change and observe an application and explain each step.
 
-Intermediate and advanced paths, the production architecture and recommendations for labs, startups and enterprise EKS are in [Part 2](/blog/15-essential-kubernetes-tools-devops-engineers-2026-part-2). See also [Traefik on Minikube](/blog/traefik-minikube-architecture-implementation) for the lab's ingress and the [DevOps interview preparation guide](/blog/devops-interview-preparation-guide).
+Intermediate and advanced paths, the production architecture and recommendations for labs, startups and enterprise EKS are in [Part 2](/blog/15-essential-kubernetes-tools-devops-engineers-2026-part-2). See also [how Traefik ran the lab's edge](/blog/traefik-minikube-architecture-implementation) until Istio replaced it and the [DevOps interview preparation guide](/blog/devops-interview-preparation-guide).

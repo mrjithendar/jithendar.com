@@ -1,12 +1,12 @@
 ---
-title: "Traefik on Minikube: Architecture, Features, and Implementation Across My Applications"
+title: "How Traefik Ran My Cluster's Edge: Architecture, Features, and Implementation (Retired)"
 slug: traefik-minikube-architecture-implementation
-description: "How one Traefik v3.7 pod routes jithendar.com, MOKS, Grafana, Prometheus, Loki and Argo CD on a Minikube cluster, checked against Git and the running cluster."
-seoTitle: "Traefik on Minikube: Real Architecture and Setup"
-seoDescription: "How Traefik v3.7 runs on a self-hosted Minikube cluster: Helm install, NodePort and HAProxy exposure, TLS, middlewares, app onboarding and troubleshooting."
+description: "How one Traefik v3.7 pod routed jithendar.com, MOKS, Grafana, Prometheus, Loki and Argo CD until November 2026, when Istio replaced it and mk4 moved to k3s."
+seoTitle: "Traefik as a Cluster Edge: Real Architecture and Setup"
+seoDescription: "How Traefik v3.7 ran on my cluster until November 2026: Helm install, NodePort and HAProxy exposure, TLS, middlewares, app onboarding and troubleshooting."
 author: jithendar-dharmapuri
 category: kubernetes
-tags: [Traefik, Kubernetes, Minikube, Ingress, cert-manager, Let's Encrypt, Helm, Argo CD, DevOps]
+tags: [Traefik, Kubernetes, Ingress, cert-manager, Let's Encrypt, Helm, Argo CD, DevOps]
 contentType: tutorial
 status: review
 featuredImage:
@@ -52,8 +52,15 @@ sources:
     url: https://cert-manager.io/docs/configuration/acme/http01/
     publisher: cert-manager
 ---
+<Todo>Updated on 2026-11-14: Traefik is retired and mk4 runs on k3s on Hetzner Cloud, so this article is kept as a dated record with a note on today's setup at the top. Decide whether to publish it as history or fold its general Traefik parts into another article.</Todo>
 
-My `mk4` cluster is a five-node Minikube profile on one Hetzner server. It hosts this website, the MOKS SRE portal, Grafana, Prometheus, Loki and Argo CD, and one Traefik pod is the only way in from the internet. This article shows how a request reaches that pod, how Traefik is installed, how I put a new application behind it, and how to check each layer when a route breaks.
+> **Retired.** This article describes `mk4` as it was on 5 and 6 November 2026: a Minikube profile on one Hetzner server, with Traefik as the only way in. Traefik was uninstalled on 8 November, when the Istio ingress gateway became the edge ([Istio as the only edge](/blog/istio-service-mesh-minikube-features-setup-troubleshooting)), and on 10 November mk4 moved to k3s on Hetzner Cloud: one control-plane node and three Arm workers behind a Hetzner load balancer. Today a request takes this path:
+
+![How a request reaches an application on mk4 since 10 November 2026. A visitor looks up the name in Cloudflare DNS, which does no proxying, and connects on port 80 or 443 to the Hetzner load balancer mk4-edge (LB11), which Hetzner's cloud controller created for the gateway's LoadBalancer Service. It forwards TCP with a PROXY protocol header to NodePorts 31080 and 31443 on the nodes' private addresses. In namespace istio-ingress the istio-ingressgateway requires the PROXY header for the client address, terminates TLS with the wildcard certificate and applies logins and IP allowlists by path; the Gateway public and the root VirtualService pick one route per path prefix, own hostnames by SNI, and the site last. Delegates lead to meshed namespaces with STRICT mTLS: jithendar, moks, roboshop-ai and monitoring. On Minikube, until then, HAProxy on the one server forwarded to the same NodePorts.](/images/mk4-k3s/mk4-k3s-request-path.svg)
+
+The rest of the article is kept as a guide to Traefik and as a record of that setup.
+
+My `mk4` cluster was then a five-node Minikube profile on one Hetzner server. It hosted this website, the MOKS SRE portal, Grafana, Prometheus, Loki and Argo CD, and one Traefik pod was the only way in from the internet. This article shows how a request reached that pod, how Traefik is installed, how I put a new application behind it, and how to check each layer when a route breaks.
 
 Every implementation claim comes from the `tools`, `jithendar.com` and `moks` repositories, or from a read-only inspection of the running cluster on 5 November 2026 (rechecked on 6 November). Recommendations are marked as such.
 
@@ -74,7 +81,7 @@ Traefik reads three kinds of routing object. A standard [Ingress](https://kubern
 
 `mk4` runs the Ingress and CRD providers. Most routes are plain Ingress objects; CRDs appear only where Ingress cannot express the rule. The Gateway API provider is off and its CRDs are not installed.
 
-## The request path on mk4
+## The request path on mk4 (Minikube, November 2026)
 
 ![External request path on the mk4 Minikube cluster. A browser resolves jithendar.com through Cloudflare DNS in DNS-only mode, reaches an HAProxy container on the Hetzner host that forwards TCP 80 and 443 to NodePorts 30080 and 30443 with a PROXY protocol header, then the single Traefik pod, where TLS ends. Traefik matches host and path rules and forwards plain HTTP to Services in the jithendar, moks, monitoring and argocd namespaces. Pod-to-pod calls, such as the site to the practice executor, bypass Traefik.](/images/traefik-minikube/traefik-minikube-request-path.svg)
 

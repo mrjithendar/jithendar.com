@@ -1,12 +1,12 @@
 ---
-title: "How GitHub Actions Authenticates to My Minikube Cluster"
+title: "How GitHub Actions Authenticates to My k3s Cluster"
 slug: github-actions-authenticate-minikube
-description: "How jithendar.com's CI reaches a self-hosted minikube cluster: a public API port, a scoped ServiceAccount token, and a kubeconfig built at run time."
-seoTitle: "GitHub Actions to Minikube: ServiceAccount Token and RBAC Tutorial"
-seoDescription: "How jithendar.com's CI reaches a self-hosted minikube cluster: a public API port, a scoped ServiceAccount token, and a kubeconfig built at run time."
+description: "How jithendar.com's CI reaches a k3s cluster on Hetzner Cloud: a public API port, a scoped ServiceAccount token, and a kubeconfig built at run time."
+seoTitle: "GitHub Actions to k3s: ServiceAccount Token and RBAC Tutorial"
+seoDescription: "How jithendar.com's CI reaches a k3s cluster on Hetzner Cloud: a public API port, a scoped ServiceAccount token, and a kubeconfig built at run time."
 author: jithendar-dharmapuri
 category: kubernetes
-tags: [Kubernetes, Minikube, GitHub Actions, RBAC, ServiceAccount, kubeconfig, CI/CD]
+tags: [Kubernetes, k3s, Hetzner, GitHub Actions, RBAC, ServiceAccount, kubeconfig, CI/CD]
 contentType: tutorial
 status: review
 related:
@@ -21,9 +21,12 @@ sources:
   - title: "Using RBAC Authorization"
     url: https://kubernetes.io/docs/reference/access-authn-authz/rbac/
     publisher: Kubernetes
-  - title: "minikube start flags"
-    url: https://minikube.sigs.k8s.io/docs/commands/start/
-    publisher: minikube
+  - title: "K3s server CLI reference (tls-san, kube-apiserver-arg)"
+    url: https://docs.k3s.io/cli/server
+    publisher: K3s
+  - title: "hetzner-k3s"
+    url: https://github.com/vitobotta/hetzner-k3s
+    publisher: hetzner-k3s
   - title: "Using secrets in GitHub Actions"
     url: https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions
     publisher: GitHub
@@ -31,18 +34,18 @@ sources:
     url: https://docs.github.com/en/actions/security-for-github-actions/security-hardening-your-deployments/about-security-hardening-with-openid-connect
     publisher: GitHub
 ---
-<Todo>(1) The API port is written as `<api-port>` on purpose. The real port is in the public repository already (a comment in scripts/setup-ci-deployer.sh), but decide whether you want the article to name it. (2) Section 8 describes a bug that was fixed on 2026-11-14 (per-release image tags and scripts/ci-rollout.py); it now reads as a lesson with its fix. Check that is how you want to tell it. (3) The repositories do not record why a long-lived token was chosen over GitHub OIDC for Kubernetes, so the article gives no reason; add yours if you have one. (4) Add your own commentary, confirm the AI-assistance line against the AI use policy, then set status and publishedAt.</Todo>
+<Todo>(1) The API address is written as `<control-plane-ip>` on purpose: decide whether you want the article to name it. Section 3 was rewritten on 2026-11-14 for k3s on Hetzner Cloud from hetzner-k3s.yaml and the live API certificate; the minikube setup is kept as a short dated note. (2) Section 8 describes a bug that was fixed on 2026-11-14 (per-release image tags and scripts/ci-rollout.py); it now reads as a lesson with its fix. Check that is how you want to tell it. (3) The repositories do not record why a long-lived token was chosen over GitHub OIDC for Kubernetes, so the article gives no reason; add yours if you have one. (4) Add your own commentary, confirm the AI-assistance line against the AI use policy, then set status and publishedAt.</Todo>
 
-This site is built by GitHub Actions and runs on **mk4**, a four-node minikube cluster on a single server that I manage myself. GitHub's runners live on the public internet and mk4 does not, so every release has to answer one question: how does a throwaway virtual machine at GitHub prove to my cluster that it is allowed to touch the site?
+This site is built by GitHub Actions and runs on **mk4**, a k3s cluster on Hetzner Cloud that I manage myself: one control-plane node and three workers. GitHub's runners are throwaway machines somewhere on the internet, so every release has to answer one question: how does a throwaway virtual machine at GitHub prove to my cluster that it is allowed to touch the site?
 
-This article walks through the exact answer used today, file by file, and then through its weak spots. All of it was checked against the live cluster on 3 November 2026, and updated on 14 November 2026 after releases moved to their own image tags and the repository was renamed to `moks-cms`.
+This article walks through the exact answer used today, file by file, and then through its weak spots. All of it was checked against the live cluster on 3 November 2026, and updated on 14 November 2026: releases moved to their own image tags, the repository was renamed to `moks-cms`, and mk4 moved from minikube on one server to k3s on Hetzner Cloud (10 November 2026).
 
 ## 1. The short version
 
 A release job on GitHub does four things to reach the cluster:
 
 1. It builds a kubeconfig file at run time from a template in the repository and three values stored in GitHub.
-2. It connects to the cluster's Kubernetes API over HTTPS at `jithendar.com:<api-port>`.
+2. It connects to the cluster's Kubernetes API over HTTPS, on port 6443 of the control-plane node.
 3. It checks the server's certificate against the cluster's own certificate authority (CA), stored in GitHub as a variable.
 4. It presents a bearer token that belongs to one ServiceAccount, `jithendar/github-ci-deployer`, which RBAC allows to do almost nothing.
 
@@ -54,12 +57,10 @@ GitHub-hosted runner
   │                         MK4_CA_DATA    (variable)
   │                         MK4_CI_TOKEN   (secret)
   ▼
-https://jithendar.com:<api-port>    ← DNS points at the server
+https://<control-plane-ip>:6443     ← the Hetzner Cloud firewall allows 6443
   ▼
-Docker port mapping on the server   ← <api-port> → 8443 in the minikube node
-  ▼
-kube-apiserver
-  ├─ TLS: certificate signed by minikubeCA, SAN includes jithendar.com
+kube-apiserver (k3s, on jithendar-master1)
+  ├─ TLS: certificate signed by the k3s server CA, SANs include the node's addresses
   ├─ Authentication: token → system:serviceaccount:jithendar:github-ci-deployer
   └─ Authorization: Role github-ci-deployer in namespace jithendar
 ```
@@ -75,35 +76,39 @@ The same release job talks to two systems, and they authenticate differently.
 
 Neither of them trusts GitHub's OIDC issuer, so both need a credential copied into the repository settings by hand. Until November 2026 images went to Amazon ECR instead, which does: the job exchanged a short-lived GitHub token for temporary AWS credentials, and only a role ARN was stored. That Terraform was removed once every release pushed to Harbor. Most of this article is about the second row.
 
-## 3. Making a minikube API server reachable from the internet
+## 3. Making the k3s API server reachable from the internet
 
-By default minikube's API server is only reachable from the machine it runs on. The installer for mk4 (`deploy/minikube/install.sh` in my tools repository) changes three things when `PUBLIC_HOST` is set:
+![How GitHub Actions reaches the k3s API on mk4. A GitHub-hosted release job builds a kubeconfig at run time from the variables MK4_API_SERVER and MK4_CA_DATA and the secret MK4_CI_TOKEN, and connects over HTTPS on port 6443 through the Hetzner Cloud firewall, whose allowed_networks.api is 0.0.0.0/0 because runners have no fixed addresses. On the control-plane node jithendar-master1 the k3s API server presents a certificate from k3s-server-ca whose SANs are the node name and addresses, not jithendar.com, so CI connects by IP and verifies the CA. The bearer token maps to a ServiceAccount: github-ci-deployer may patch four Deployments, github-ci-applier may apply application objects, and neither may read Secrets or create pods. In namespace jithendar, scripts/ci-rollout.py runs kubectl set image to the pr-number tag for jithendar-com, the practice executor and the SEO agent, and deploy-kubernetes.yml applies the kubernetes folder on merge while keeping each Deployment's running image.](/images/mk4-k3s/mk4-k3s-ci-api.svg)
 
-```bash
-NETWORK_ARGS=(--listen-address=0.0.0.0 "--apiserver-names=$PUBLIC_HOST")
-NETWORK_ARGS+=("--ports=0.0.0.0:$API_PORT:8443")
+k3s runs the API server on the control-plane node, on port 6443, on every interface, so there is nothing to publish. Whether the internet can reach it is a firewall question. `hetzner-k3s`, the tool that created mk4, builds the Hetzner Cloud firewall from `allowed_networks` in its config (`hetzner-k3s.yaml` in my kubernetes repository):
+
+```yaml
+networking:
+  allowed_networks:
+    api:
+      - 0.0.0.0/0   # tighten to your own IP
+create_load_balancer_for_the_kubernetes_api: false
 ```
 
-- `--listen-address=0.0.0.0` publishes the node container's ports on every host interface, not just `127.0.0.1`.
-- `--ports=0.0.0.0:<api-port>:8443` fixes the host port for the API (8443 inside the node), so the address does not change when the cluster restarts.
-- `--apiserver-names=jithendar.com` adds the public hostname to the API server's certificate.
+The API stays open to the whole internet because GitHub-hosted runners have no fixed addresses (section 9). With one control-plane node and no load balancer for the API, the server address in the kubeconfig is that node's public IP on port 6443.
 
-The last flag matters more than it looks. You can see its effect from any machine:
+The certificate is the other half. You can see it from any machine:
 
 ```bash
-echo | openssl s_client -connect jithendar.com:<api-port> -servername jithendar.com 2>/dev/null \
+echo | openssl s_client -connect <control-plane-ip>:6443 2>/dev/null \
   | openssl x509 -noout -issuer -ext subjectAltName
 ```
 
 ```text
-issuer=CN=minikubeCA
+issuer=CN=k3s-server-ca@1794296796
 X509v3 Subject Alternative Name:
-    DNS:jithendar.com, DNS:minikubeCA, DNS:control-plane.minikube.internal, DNS:mk4, ...
+    DNS:jithendar-master1, DNS:kubernetes, DNS:kubernetes.default, DNS:kubernetes.default.svc,
+    DNS:kubernetes.default.svc.cluster.local, DNS:localhost, IP Address:<the node's addresses>
 ```
 
-Because `jithendar.com` is in the certificate, `kubectl` can verify the server normally. Without it, the only way to connect would be `insecure-skip-tls-verify: true`, which lets anyone in the middle impersonate the cluster.
+k3s signs the certificate with its own CA and lists the node's addresses, so `kubectl` can verify the server when it connects by IP. `jithendar.com` is not in the list and does not need to be: that name points at the Hetzner load balancer in front of the Istio gateway, not at the API. (To add a name, k3s takes `--tls-san`.) Without a matching name or address, the only way to connect would be `insecure-skip-tls-verify: true`, which lets anyone in the middle impersonate the cluster.
 
-> The installer's default port is 32811, but mk4 publishes a different one. Existing Docker port bindings cannot be changed in place, and the installer refuses to change them rather than recreate the cluster. Read the real address from your context instead of assuming the default: `kubectl config view --minify --context mk4 -o jsonpath='{.clusters[0].cluster.server}'`.
+> Until 10 November 2026 mk4 was a minikube cluster on one server. Its API was published on a fixed host port with `--listen-address`, `--ports` and `--apiserver-names=jithendar.com`, and signed by `minikubeCA`. On k3s none of that is needed.
 
 ## 4. The identity: one ServiceAccount, one Role
 
@@ -144,15 +149,15 @@ Three details make this Role narrow:
 
 `kubectl set image` and `kubectl rollout restart` both work with only `patch`, because neither deletes pods. `set image` changes the container image in the pod template, and `restart` writes a `kubectl.kubernetes.io/restartedAt` annotation into it; either way the Deployment controller replaces the pods. `rollout status` only needs to read Deployments and ReplicaSets.
 
-You can check the result without the token, by impersonating the ServiceAccount as a cluster admin:
+You can check the result without the token, by impersonating the ServiceAccount as a cluster admin (with mk4's kubeconfig):
 
 ```bash
 SA=system:serviceaccount:jithendar:github-ci-deployer
-kubectl --context mk4 auth can-i patch deployment/jithendar-com -n jithendar --as=$SA   # yes
-kubectl --context mk4 auth can-i patch deployment/moks-portal   -n jithendar --as=$SA   # no
-kubectl --context mk4 auth can-i get secrets                    -n jithendar --as=$SA   # no
-kubectl --context mk4 auth can-i create pods                    -n jithendar --as=$SA   # no
-kubectl --context mk4 auth can-i get pods                       -n kube-system --as=$SA # no
+kubectl auth can-i patch deployment/jithendar-com -n jithendar --as=$SA   # yes
+kubectl auth can-i patch deployment/moks-portal   -n jithendar --as=$SA   # no
+kubectl auth can-i get secrets                    -n jithendar --as=$SA   # no
+kubectl auth can-i create pods                    -n jithendar --as=$SA   # no
+kubectl auth can-i get pods                       -n kube-system --as=$SA # no
 ```
 
 Those are the answers mk4 gives today.
@@ -174,13 +179,13 @@ type: kubernetes.io/service-account-token
 
 When this Secret is created, the token controller fills in `data.token` with a JWT signed by the cluster. The token has **no expiry**. It stays valid until the Secret (or the ServiceAccount) is deleted, which is also the way to revoke it.
 
-On mk4 that token was issued on 30 October 2026 and has not been rotated since.
+The current token was issued on 10 November 2026, when the k3s cluster was set up, and has not been rotated since.
 
 ## 6. Getting the values into GitHub
 
 `scripts/setup-ci-deployer.sh` is run once from my Mac, where `kubectl` has admin access to mk4 and `gh` is signed in. It does the whole setup:
 
-1. Reads the API URL and CA certificate from my own `mk4` kubeconfig context.
+1. Reads the API URL and CA certificate from the kubeconfig context it is given (`KUBE_CONTEXT`, mk4's).
 2. Applies `kubernetes/80-ci-deployer.yaml` and waits for the token controller to fill in the token.
 3. Builds a kubeconfig exactly as CI will, in a temporary file, and checks that it can patch `deployment/jithendar-com`.
 4. Stores three values in the repository:
@@ -288,7 +293,7 @@ This setup is deliberately small, but it has real limits.
 
 **The token never expires.** If it leaks, it works until someone runs `ROTATE=1 scripts/setup-ci-deployer.sh`. There is no automatic rotation.
 
-**`patch` on a Deployment is more than restart.** The Role cannot read Secrets or create pods directly, but whoever can patch `deployment/jithendar-com` can change its image or its pod template. The Deployment controller would then run that code with every Secret the site's pods already receive, such as the database URL. The namespace has no Pod Security labels and the admission policies on mk4 cover the practice sandbox, not the site. Treat this token as close to "can run code as the website".
+**`patch` on a Deployment is more than restart.** The Role cannot read Secrets or create pods directly, but whoever can patch `deployment/jithendar-com` can change its image or its pod template. The Deployment controller would then run that code with every Secret the site's pods already receive, such as the database URL. The namespace has no Pod Security labels. Gatekeeper refuses privileged pods, host namespaces and hostPath volumes across the cluster, but its webhook fails open, and nothing stops a patched Deployment from running a different image with the site's Secrets. Treat this token as close to "can run code as the website".
 
 **The secret is repository-wide.** `MK4_CI_TOKEN` is a repository secret, so a workflow running on any branch pushed to this repository can read it. The `if:` on the release job does not protect it; a changed workflow file on another branch could print or use it. Forks do not get repository secrets. The Harbor robot's password is a repository secret too.
 
@@ -300,12 +305,12 @@ In order of effort:
 
 1. **Move `MK4_CI_TOKEN` into a GitHub environment** restricted to the default branch. Then only jobs that declare that environment can read the token.
 2. **Rotate the token on a schedule** with `ROTATE=1`, and after any change of who has write access to the repository.
-3. **Add Pod Security `restricted` labels** to the `jithendar` namespace, so a patched Deployment cannot ask for privileged pods or host paths.
-4. **Drop the static token entirely.** Kubernetes can be configured to accept JWTs from an external OIDC issuer with the API server's structured authentication configuration. With GitHub's issuer trusted, a job would sign in with the short-lived OIDC token GitHub can issue to every job, and the `sub` claim could be limited to this repository's default branch. On minikube that means passing an authentication config file to the API server, which I have not tried on mk4.
+3. **Add Pod Security `restricted` labels** to the `jithendar` namespace, as a second layer behind Gatekeeper, whose webhook fails open.
+4. **Drop the static token entirely.** Kubernetes can be configured to accept JWTs from an external OIDC issuer with the API server's structured authentication configuration. With GitHub's issuer trusted, a job would sign in with the short-lived OIDC token GitHub can issue to every job, and the `sub` claim could be limited to this repository's default branch. On k3s that means passing an authentication config file to the API server (`--kube-apiserver-arg`), which I have not tried on mk4.
 
 ## 11. Recap
 
-- The cluster is reachable because minikube publishes the API on a fixed host port and puts the public hostname in its certificate.
+- The cluster is reachable because k3s serves the API on port 6443 of the control-plane node, the Hetzner Cloud firewall lets it through, and the certificate lists the node's address.
 - CI trusts the server through the CA certificate (`MK4_CA_DATA`), not by skipping TLS checks.
 - The server trusts CI through a long-lived ServiceAccount token (`MK4_CI_TOKEN`), the only real secret.
 - RBAC limits that token to a few named objects in one namespace; `kubectl auth can-i --as` proves it.
@@ -314,7 +319,7 @@ In order of effort:
 
 ### Checklist
 
-- [ ] Start minikube with `--listen-address`, a fixed `--ports` mapping and `--apiserver-names` for the public hostname.
+- [ ] Open the API port (6443 on k3s) in the cloud firewall, and connect by a name or address that is in the API server's certificate (`--tls-san` adds one).
 - [ ] Create a ServiceAccount with a namespaced Role; limit `patch` with `resourceNames`; grant no Secrets.
 - [ ] Verify the Role with `kubectl auth can-i --as=system:serviceaccount:<ns>:<name>`.
 - [ ] Request a token with a `kubernetes.io/service-account-token` Secret; know that it does not expire.

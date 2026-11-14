@@ -49,7 +49,7 @@ sources:
 
 MOKS is the SRE agent and investigation portal I am building. An engineer asks about a namespace, and a LangGraph investigation reads live evidence from Kubernetes, Prometheus and Loki, searches the team's documentation and writes a report. When that takes 15 seconds instead of 5, or the report says "rule-based" although a model is configured, I want telemetry to say why.
 
-This article shows how MOKS observes itself with structured logs, metrics and OpenTelemetry traces, how one trace follows a question through every LangGraph node, tool call and model call, and what a review on the live mk4 cluster on 4 November 2026 found and fixed. I label claims as **Implemented** (in code, usually tested), **Configured** (Helm chart or the cluster's `tools` repository), **Observed** (seen on mk4, from build `11d3e6a`) or **Not verified**.
+This article shows how MOKS observes itself with structured logs, metrics and OpenTelemetry traces, how one trace follows a question through every LangGraph node, tool call and model call, and what a review on the live mk4 cluster on 4 November 2026 found and fixed. mk4 was then a Minikube cluster on one server; since 10 November 2026 it runs on k3s on Hetzner Cloud (one control-plane node and three Arm workers), with the same observability stack reinstalled from the same Terraform. I label claims as **Implemented** (in code, usually tested), **Configured** (Helm chart or the cluster's `tools` repository), **Observed** (seen on mk4, from build `11d3e6a`) or **Not verified**.
 
 The fixes have since shipped. On 6 November Prometheus was scraping every MOKS pod (`up{job="moks"}` = 1), the new metrics were present, and Jaeger had not restarted since its new limits.
 
@@ -313,7 +313,7 @@ mk4 has no Alertmanager, so these notify nobody; that is a known gap, not a desi
 **2. Read the trace.** There is no Jaeger ingress on mk4; use a port-forward for the UI, or the API through the Kubernetes API server. The longest `node` is where the time went, `llm.complete` shows model latency and tokens, and a `tool` span whose `moks.outcome` is not `ok` names the failing dependency.
 
 ```bash
-kubectl --context mk4 get --raw \
+kubectl get --raw \
   "/api/v1/namespaces/observability/services/jaeger:16686/proxy/api/v3/traces/5e46b29b86122c10ff3a2b03e99ef9c9"
 ```
 
@@ -324,7 +324,7 @@ kubectl --context mk4 get --raw \
 ```
 
 ```bash
-kubectl --context mk4 -n moks logs deploy/moks-worker | grep 5e46b29b86122c10ff3a2b03e99ef9c9
+kubectl -n moks logs deploy/moks-worker | grep 5e46b29b86122c10ff3a2b03e99ef9c9
 ```
 
 **4. Check whether it is one run or a pattern:**

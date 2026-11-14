@@ -1,12 +1,12 @@
 ---
-title: "One Redis for Every App: A Highly Available Valkey Cluster on Minikube with Terraform"
+title: "One Redis for Every App: A Highly Available Valkey Cluster on k3s with Terraform"
 slug: valkey-redis-sentinel-minikube-terraform
-description: "How we replaced four Redis pods with one shared, highly available Valkey on Minikube: Sentinel, HAProxy, per-app ACLs, Istio mTLS, Terraform and an FAQ."
-seoTitle: "Highly Available Redis (Valkey) on Minikube with Terraform"
-seoDescription: "A shared Valkey 9 on Minikube: three pods, Sentinel failover, an HAProxy master proxy, per-app ACL users and databases, Istio STRICT mTLS, troubleshooting."
+description: "How we replaced four Redis pods with one shared, highly available Valkey on k3s: Sentinel, HAProxy, per-app ACLs, Istio mTLS, Terraform and an FAQ."
+seoTitle: "Highly Available Redis (Valkey) on k3s with Terraform"
+seoDescription: "A shared Valkey 9 on k3s (Hetzner Cloud): Sentinel failover, an HAProxy master proxy, per-app ACL users and databases, Istio STRICT mTLS, troubleshooting."
 author: jithendar-dharmapuri
 category: kubernetes
-tags: [Redis, Valkey, Redis Sentinel, Kubernetes, Minikube, Terraform, Helm, HAProxy, Istio, DevOps, SRE]
+tags: [Redis, Valkey, Redis Sentinel, Kubernetes, k3s, Hetzner, Terraform, Helm, HAProxy, Istio, DevOps, SRE]
 contentType: tutorial
 status: review
 related:
@@ -49,11 +49,13 @@ sources:
     publisher: HashiCorp
 ---
 
-Until this week, four applications on `mk4` (the 8-node Minikube cluster that runs this website, Harbor and RoboShop AI) each ran their own Redis: one single pod each, no replica, no failover, four passwords typed into four Secrets. This article explains how we replaced them with **one shared, highly available Valkey** (the open source, Redis-compatible fork): three pods on three nodes, Sentinel failover, a proxy that hides the failover from applications, and one ACL user and database range per application. Everything is installed from Terraform as Helm releases, next to the [shared PostgreSQL cluster](/blog/cloudnativepg-postgres-cluster-minikube-terraform) we built the same week.
+<Todo>Updated on 2026-11-14 for k3s on Hetzner Cloud from the kubernetes repository and read-only kubectl. On k3s the release runs two pods, not three, and automatic failover on the loss of the primary's node is gone ("What two pods cost"). The figures and the failover measurement are from the three-pod setup on Minikube and say so. A leftover claim data-valkey-2 is Pending in namespace redis.</Todo>
+
+Until November 2026, four applications on `mk4` (the cluster that runs this website, Harbor and RoboShop AI) each ran their own Redis: one single pod each, no replica, no failover, four passwords typed into four Secrets. This article explains how we replaced them with **one shared, highly available Valkey** (the open source, Redis-compatible fork): a primary and a replica on two nodes, Sentinel failover, a proxy that hides the failover from applications, and one ACL user and database range per application. Everything is installed from Terraform as Helm releases, next to the [shared PostgreSQL cluster](/blog/cloudnativepg-postgres-cluster-minikube-terraform) we built the same week.
 
 It is written for DevOps and SRE engineers who know Kubernetes basics (Pods, Services, StatefulSets, PersistentVolumeClaims) and have used Redis as a cache or a queue, but have not run it highly available.
 
-Everything below was read from the repositories and from `kubectl` on 9 November 2026. Versions are what `mk4` runs, not recommendations: Valkey 9.1.0 (Redis protocol 7.2.4), chart `cloudpirates/valkey` 0.25.16, HAProxy 3.4, `redis_exporter` 1.95.0, RedisInsight 3.8.0, Kubernetes v1.37.0, Istio 1.30.7.
+We built it on 9 November 2026 on Minikube, with three pods. A day later mk4 moved to **k3s on Hetzner Cloud** (one control-plane node and three `cax21` Arm workers), where it runs two. Everything below describes the k3s cluster, read from the repositories and from `kubectl` on 14 November 2026; measurements from the Minikube days are marked. Versions are what `mk4` runs, not recommendations: Valkey 9.1.0 (Redis protocol 7.2.4), chart `cloudpirates/valkey` 0.25.16, HAProxy 3.4, `redis_exporter` 1.95.0, RedisInsight 3.8.0, k3s v1.37.2+k3s1, Istio 1.30.7.
 
 ## 1. Why one shared Redis
 
@@ -66,7 +68,7 @@ Everything below was read from the repositories and from `kubectl` on 9 November
 | Harbor | `harbor-redis` (databases 0, 1, 2, 5) | core cache, jobservice queue, registry cache, Trivy |
 | RoboShop AI | `roboshop-ai/redis` | cart and shipping cache |
 
-Four pods, four volumes on Minikube's default `standard` StorageClass, and four places to upgrade and monitor. Losing any node took one of them down, and because `standard` volumes have no node affinity, a rescheduled Redis pod could come up on **another node's empty folder**. For a cache that only logs users out. For Harbor's jobservice queue and the practice executor queue it loses jobs.
+Four pods, four volumes on Minikube's default `standard` StorageClass (mk4 was Minikube then), and four places to upgrade and monitor. Losing any node took one of them down, and because `standard` volumes have no node affinity, a rescheduled Redis pod could come up on **another node's empty folder**. For a cache that only logs users out. For Harbor's jobservice queue and the practice executor queue it loses jobs.
 
 ### What we wanted
 
@@ -110,12 +112,12 @@ Every Valkey pod runs five containers:
 | Container | Job |
 |---|---|
 | `valkey` | the data, primary or replica |
-| `sentinel` | watches the primary; three Sentinels vote (quorum 2) to promote a replica |
+| `sentinel` | watches the primary; the Sentinels vote (quorum 2) to promote a replica |
 | `haproxy` | the "master proxy": asks which pod is primary right now and forwards to it |
 | `metrics` | `redis_exporter` on port 9121 for Prometheus |
 | `istio-proxy` | Envoy sidecar (a native sidecar, started before the init container) |
 
-The trick is the HAProxy in every pod. The Service `valkey-master` selects **all three pods** on HAProxy's port, and each HAProxy health-checks the three Valkeys for `role:master`. Whichever pod a connection lands on, it reaches the primary. After a failover, applications reconnect to the same address and get the new primary. No application needed Sentinel support.
+The trick is the HAProxy in every pod. The Service `valkey-master` selects **every pod** on HAProxy's port, and each HAProxy health-checks every Valkey for `role:master`. Whichever pod a connection lands on, it reaches the primary. After a failover, applications reconnect to the same address and get the new primary. No application needed Sentinel support.
 
 | Piece | Where it is defined |
 |---|---|
@@ -125,7 +127,7 @@ The trick is the HAProxy in every pod. The Service `valkey-master` selects **all
 | `/redis` route, gateway login, TLS server for `redis.jithendar.com` | `deploy/minikube/istio/edge/values.yaml` |
 | Alerts and dashboard | `deploy/minikube/observability/` |
 
-All of it lives in the private `miniKube` repository, in the same Terraform root as every other add-on.
+All of it lives in my `kubernetes` repository (formerly `miniKube`; the folder names still say so), in the same Terraform root as every other add-on.
 
 ## 4. Implementation
 
@@ -154,7 +156,7 @@ The heart of `deploy/minikube/redis/values.yaml`:
 ```yaml
 fullnameOverride: valkey
 architecture: replication
-replicaCount: 3
+replicaCount: 2                         # 3 on Minikube; see "What two pods cost"
 
 auth:
   enabled: true
@@ -189,7 +191,7 @@ persistentVolumeClaimRetentionPolicy:
 affinity:
   podAntiAffinity:
     requiredDuringSchedulingIgnoredDuringExecution:
-      - topologyKey: kubernetes.io/hostname   # Minikube nodes have no zone label
+      - topologyKey: kubernetes.io/hostname   # all mk4 nodes are in one zone
         labelSelector:
           matchLabels:
             app.kubernetes.io/name: valkey
@@ -197,7 +199,7 @@ affinity:
 
 pdb:
   enabled: true
-  minAvailable: 2                       # a drain never breaks Sentinel's quorum
+  minAvailable: 1                       # 2 would block every drain with two pods
 
 terminationGracePeriodSeconds: 60
 
@@ -209,13 +211,19 @@ podAnnotations:
 
 The choices worth explaining:
 
-- **`downAfterMilliseconds: 5000`.** The chart's 1.5 s is fine on dedicated hardware. On Minikube, a sidecar restart or a briefly overloaded node would start needless failovers. Five seconds of silence is a real outage.
+- **`downAfterMilliseconds: 5000`.** The chart's 1.5 s is fine on dedicated hardware. On small shared nodes, a sidecar restart or a briefly overloaded node would start needless failovers. Five seconds of silence is a real outage.
 - **`valkeyShutdownWaitFailover` and `preStop`.** When the primary pod is told to stop (rolling update, `kubectl delete pod`, node drain), its preStop hook asks Sentinel to fail over **first** and waits until a replica has taken over. That needs more than the default 30 s grace period, hence 60.
 - **The Istio annotations.** The init container asks Sentinel who the primary is, and that request must go through Envoy (STRICT mTLS), so Envoy must start first. On shutdown, Envoy must outlive the preStop failover, or the hand-over loses its network halfway.
 - **`local-path` and `Retain`.** Same lesson as the PostgreSQL cluster: volumes pinned to the node that holds them, and data kept when the StatefulSet or a PVC is deleted.
-- **Required anti-affinity by hostname, PDB `minAvailable: 2`.** One node failure or one drain costs at most one copy, and two Sentinels are always left to vote.
+- **Required anti-affinity by hostname, PDB `minAvailable: 1`.** One node failure or one drain costs at most one copy. On Minikube, with three pods, the PDB was `minAvailable: 2`, so two Sentinels were always left to vote; with two pods that would block every drain, k3s upgrades included.
 
 ![How the Valkey primary moves. A planned stop (rolling update, pod delete or node drain) sends SIGTERM and runs the preStop hook, which hands over first with SENTINEL FAILOVER mk4 and waits for a new primary. An unplanned loss (crash, OOM or a lost node) makes the primary go silent; after 5 seconds without an answer, 2 of 3 Sentinels mark it down. Both paths end with a replica promoted by the leader Sentinel (REPLICAOF NO ONE). HAProxy then follows by health-checking role:master, so valkey-master keeps the same address, and the old pod comes back on the same node with the same volume and resyncs as a replica. Clients see a few failed writes: 2 in about 4 seconds in the 9 November test. Four settings make the hand-over safe: a PodDisruptionBudget with minAvailable 2 so a drain never breaks quorum, a 60-second grace period for the preStop failover, Envoy starting first and draining for 45 seconds, and a 5000 ms down-after so a blip does not start a failover.](/images/valkey-minikube/valkey-failover.svg)
+
+#### What two pods cost
+
+The figure shows the three-pod design from Minikube. On k3s the release runs two pods, `valkey-0` and `valkey-1`, one on each of two workers, with quorum 2 of 2. Planned moves are unchanged: a rolling update, a drain or a deleted pod hands the primary over first, and that needs no vote. A crashed Valkey process with its node still up also fails over after 5 seconds. But losing the whole node of the primary takes one of the two Sentinels with it, and the survivor cannot win a vote: writes then fail until the node is back or someone runs `SENTINEL FAILOVER mk4` by hand. The replica keeps a copy of every key either way. A third pod (`replicaCount: 3`, `minAvailable: 2`) brings automatic failover back, and mk4 has a third worker since 11 November.
+
+![mk4 on Hetzner Cloud in Falkenstein, 14 November 2026. Visitors look up jithendar.com in Cloudflare DNS and connect on ports 80 and 443 to the load balancer mk4-edge (LB11), which forwards to the Istio gateway's NodePorts with the PROXY protocol. GitHub Actions reaches the API on port 6443 through the cloud firewall that hetzner-k3s creates, open to 0.0.0.0/0. Inside the private network 10.0.0.0/16 with flannel run k3s v1.37.2 on Ubuntu 24.04 arm64: the control-plane node jithendar-master1 (cax11, 2 vCPU, 4 GB), tainted CriticalAddonsOnly so it runs no workloads and with no API load balancer, and three workers (cax21, 4 vCPU, 8 GB, 80 GB disk each). Worker1 holds valkey-0, a PgBouncer pod, pgAdmin and Grafana; worker2 holds the PostgreSQL primary postgres-cluster-1, valkey-1, a PgBouncer pod, the Harbor registry and Loki; worker3 holds the replica postgres-cluster-2. Two StorageClasses: local-path, a folder on the node's own disk pinned to that node with Retain, used by Postgres, Valkey, Harbor, Loki, Prometheus and Grafana; and the default hcloud-volumes, Hetzner Cloud block volumes, used by RoboShop's stateful services. Terraform in minikube-infrastructure installs the add-ons as Helm releases; hetzner-k3s.yaml defines servers, network, firewall and the k3s version.](/images/mk4-k3s/mk4-k3s-cluster.svg)
 
 ### 4.3 Memory, durability and a shared server
 
@@ -248,7 +256,7 @@ config:
 
 The rest:
 
-- **AOF every second plus RDB snapshots.** At most one second of writes lost if all three pods die at once; RDB makes restarts fast.
+- **AOF every second plus RDB snapshots.** At most one second of writes lost if every pod dies at once; RDB makes restarts fast.
 - **`databases 32`.** Each application gets its own database numbers; 32 leaves room to grow.
 - **`lazyfree-*`.** Deleting or expiring a large key happens in a background thread, so one application's big key cannot stall everyone else's requests.
 - **`enable-debug-command no`, `enable-module-command no`.** Off for every user, the admin included. Nobody needs them on a shared server.
@@ -507,7 +515,7 @@ Each one guards a decision that is easy to undo by accident in a later "small" c
 The edge chart refuses to plan until the gateway has a login line for `/redis`, and that line is built from Secret `redis-ui-auth`, which this same apply creates. So the first install goes in three steps:
 
 ```bash
-cd miniKube
+cd kubernetes
 # Only if ~/.docker/config.json names a credsStore that is not installed (the chart is an OCI pull).
 export DOCKER_CONFIG=$(mktemp -d)
 
@@ -515,7 +523,7 @@ terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars \
   -target=helm_release.redis \
   -target=kubernetes_secret_v1.redis_ui_auth \
   -target=kubernetes_secret_v1.redis_app
-python3 scripts/istio/gateway-basic-auth.py --context mk4
+python3 scripts/istio/gateway-basic-auth.py --context <mk4-context>
 terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars
 ```
 
@@ -523,30 +531,24 @@ The first apply installs Valkey and writes every Secret. The script turns the UI
 
 ### 5.3 What healthy looks like
 
-Three pods with five containers each, on three different nodes, plus the console:
+On k3s, two pods with five containers each, on two different workers, plus the console:
 
 ```text
-$ kubectl --context mk4 -n redis get pods -o wide
+$ kubectl -n redis get pods -o wide
 NAME                        READY   STATUS    NODE
-redis-ui-77996456b5-md686   2/2     Running   mk4-m08
-valkey-0                    5/5     Running   mk4-m06
-valkey-1                    5/5     Running   mk4-m03
-valkey-2                    5/5     Running   mk4-m07
+redis-ui-77996456b5-jg5jd   2/2     Running   jithendar-pool-workers-worker1
+valkey-0                    5/5     Running   jithendar-pool-workers-worker1
+valkey-1                    5/5     Running   jithendar-pool-workers-worker2
 
-$ kubectl --context mk4 -n redis get pvc,pdb
-NAME                                  STATUS   CAPACITY   STORAGECLASS
-persistentvolumeclaim/data-valkey-0   Bound    2Gi        local-path
-persistentvolumeclaim/data-valkey-1   Bound    2Gi        local-path
-persistentvolumeclaim/data-valkey-2   Bound    2Gi        local-path
-
+$ kubectl -n redis get pdb
 NAME                                MIN AVAILABLE   ALLOWED DISRUPTIONS
-poddisruptionbudget.policy/valkey   2               1
+poddisruptionbudget.policy/valkey   1               1
 ```
 
-Then ask Sentinel and the primary:
+Then ask Sentinel and the primary (the output below is from Minikube, with three pods; on k3s expect two usable Sentinels and one replica):
 
 ```bash
-kubectl --context mk4 -n redis exec valkey-0 -c valkey -- sh -c '
+kubectl -n redis exec valkey-0 -c valkey -- sh -c '
   export REDISCLI_AUTH=$VALKEY_PASSWORD
   valkey-cli -p 26379 sentinel get-master-addr-by-name mk4
   valkey-cli -p 26379 sentinel ckquorum mk4
@@ -576,7 +578,7 @@ The keyspace shows the tenancy working: database 1 is the practice queue, 2–4 
 
 ### 5.4 The failover test
 
-With a client writing in a loop through `valkey-master`, we deleted the primary pod. Measured on 9 November 2026: **2 failed writes over about 4 seconds**, then writes resumed on the new primary through the same address, with no change on the client side. Because the volumes are pinned, the deleted pod is recreated on its own node with its own data, and rejoins as a replica.
+With a client writing in a loop through `valkey-master`, we deleted the primary pod. Measured on 9 November 2026, on Minikube with three pods: **2 failed writes over about 4 seconds**, then writes resumed on the new primary through the same address, with no change on the client side. Because the volumes are pinned, the deleted pod is recreated on its own node with its own data, and rejoins as a replica.
 
 ## 6. Moving the applications
 
@@ -626,8 +628,8 @@ Memory is full of keys **without** a TTL, so `volatile-lru` has nothing to evict
 That is `local-path` working as designed: the volume is pinned to the lost node. If the lost pod was the primary, Sentinel has already promoted a replica; nothing is broken. If the node comes back, wait. If it is gone for good:
 
 ```bash
-kubectl --context mk4 -n redis delete pvc data-valkey-2
-kubectl --context mk4 -n redis delete pod valkey-2
+kubectl -n redis delete pvc data-valkey-2
+kubectl -n redis delete pod valkey-2
 ```
 
 The pod is rebuilt on another node and resyncs from the primary. With `Retain`, the old PersistentVolume stays behind; delete it once you are sure.
@@ -636,9 +638,9 @@ The pod is rebuilt on another node and resyncs from the primary. With `Retain`, 
 
 The chart is pulled from Docker Hub's OCI registry, and Helm uses your Docker config. If `~/.docker/config.json` names a `credsStore` (such as `desktop`) whose helper is not installed, the pull fails before anything is downloaded. `export DOCKER_CONFIG=$(mktemp -d)` for that shell is enough; the chart is public.
 
-### Every tenant change restarts all three pods. Is that safe?
+### Every tenant change restarts every pod. Is that safe?
 
-Yes, by design. The `checksum/acl` annotation rolls the StatefulSet one pod at a time, the PDB keeps two pods up, and the primary hands over before it stops. Expect a write pause of about a second. Batch tenant changes into one apply when you can.
+Yes, by design. The `checksum/acl` annotation rolls the StatefulSet one pod at a time, the PDB keeps one pod up, and the primary hands over before it stops. Expect a write pause of about a second. Batch tenant changes into one apply when you can.
 
 ### `redis-cli` to `redis.jithendar.com` hangs or closes at once
 
@@ -669,9 +671,10 @@ Only for reads. `valkey` selects any pod, replicas included, and writes to a rep
 
 Open items, in order:
 
-1. **Backups.** There is no off-cluster copy of the AOF and RDB files yet. Replicas protect against a lost node, not against a deleted key or a bad `FLUSHDB`. Harbor's job queue is the reason this comes first.
-2. **Apply the website's removal** from `redis_tenants`, then flush database 0 by hand.
+1. **A third pod**, for automatic failover when the primary's node is lost (see "What two pods cost").
+2. **Backups.** There is no off-cluster copy of the AOF and RDB files yet. Replicas protect against a lost node, not against a deleted key or a bad `FLUSHDB`. Harbor's job queue is the reason this comes first.
+3. **Apply the website's removal** from `redis_tenants`, then flush database 0 by hand.
 
 ### Conclusion
 
-One Valkey replication group replaced four unmanaged Redis pods with a primary, two replicas on separate nodes, automatic failover and one place to monitor, while every application kept a single address and its own isolated databases. The lessons that cost the most time were not about Redis itself: an idle-connection timeout hidden in a sidecar's proxy config, a NetworkPolicy that has to name the pod port rather than the Service port, and a memory policy that decides whether a full server loses cache entries or loses jobs.
+One Valkey replication group replaced four unmanaged Redis pods with a primary and a replica on separate nodes, failover that hides itself from applications and one place to monitor, while every application kept a single address and its own isolated databases. The lessons that cost the most time were not about Redis itself: an idle-connection timeout hidden in a sidecar's proxy config, a NetworkPolicy that has to name the pod port rather than the Service port, and a memory policy that decides whether a full server loses cache entries or loses jobs.

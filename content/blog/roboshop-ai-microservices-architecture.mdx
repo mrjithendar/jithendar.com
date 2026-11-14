@@ -1,5 +1,5 @@
 ---
-title: "Inside RoboShop AI: microservices on Kubernetes, from Minikube today to an EKS-ready design"
+title: "Inside RoboShop AI: microservices on Kubernetes, from k3s today to an EKS-ready design"
 slug: roboshop-ai-microservices-architecture
 description: How RoboShop AI's storefront, gateway, AI assistant and data services fit together, how it ships to Kubernetes today, and how its EKS stack is designed.
 author: jithendar-dharmapuri
@@ -23,7 +23,9 @@ This article walks through how it works, how it is deployed today, and how its A
 ::toc
 
 :::callout{type="info" title="Where it runs today"}
-RoboShop AI currently runs on a self-managed **Minikube** cluster and is delivered with **Argo CD**. The **EKS** stack described later exists as Terraform but is switched off (`eks_enabled = false`, and the file is parked as `eks.tfbk`). Its add-ons were removed from the repository in a cleanup. Treat that section as a reviewed design, not a running cluster.
+<Todo>Updated on 2026-11-14 for k3s on Hetzner Cloud from read-only kubectl: the cluster, ingress, storage and image registry in the "today" column. The delivery diagram's GitHub Actions and ECR steps are from the earlier setup; check how RoboShop images reach Harbor today.</Todo>
+
+RoboShop AI currently runs on a self-managed **k3s** cluster on Hetzner Cloud (until 10 November 2026 a Minikube cluster on one server) and is delivered with **Argo CD**. The **EKS** stack described later exists as Terraform but is switched off (`eks_enabled = false`, and the file is parked as `eks.tfbk`). Its add-ons were removed from the repository in a cleanup. Treat that section as a reviewed design, not a running cluster.
 :::
 
 ## At a glance
@@ -166,13 +168,16 @@ Every service exposes liveness and metrics endpoints. The gateway's readiness ch
 git push ──► GitHub Actions (self-hosted ARM64 runner)
                └─ docker build (linux/arm64) ──► Amazon ECR  roboshop-<service>:latest
                                                      │
-Argo CD catalog (manual sync) ──► Minikube cluster ◄─┘  pulls with an ecr-pull secret
-                                    └─ Traefik  /roboshop ─► strip prefix ─► nginx ─► services
+Argo CD catalog (manual sync) ──► k3s cluster mk4 ◄─┘  (earlier: ECR; today images come from Harbor)
+                                    └─ Istio gateway  /roboshop ─► nginx ─► services
 ```
 :::
 
-- **Cluster.** A four-node Minikube cluster (arm64 nodes) on a single server, shared with other workloads.
-- **Images.** Each service has its own GitHub Actions workflow that builds an `arm64` image on a self-hosted runner and pushes it to a private ECR repository.
+- **Cluster.** `mk4`, a k3s cluster on Hetzner Cloud: one control-plane node and three arm64 workers (cax21), shared with other workloads.
+
+![mk4 on Hetzner Cloud in Falkenstein, 14 November 2026. Visitors look up jithendar.com in Cloudflare DNS and connect on ports 80 and 443 to the load balancer mk4-edge (LB11), which forwards to the Istio gateway's NodePorts with the PROXY protocol. GitHub Actions reaches the API on port 6443 through the cloud firewall that hetzner-k3s creates, open to 0.0.0.0/0. Inside the private network 10.0.0.0/16 with flannel run k3s v1.37.2 on Ubuntu 24.04 arm64: the control-plane node jithendar-master1 (cax11, 2 vCPU, 4 GB), tainted CriticalAddonsOnly so it runs no workloads and with no API load balancer, and three workers (cax21, 4 vCPU, 8 GB, 80 GB disk each). Worker1 holds valkey-0, a PgBouncer pod, pgAdmin and Grafana; worker2 holds the PostgreSQL primary postgres-cluster-1, valkey-1, a PgBouncer pod, the Harbor registry and Loki; worker3 holds the replica postgres-cluster-2. Two StorageClasses: local-path, a folder on the node's own disk pinned to that node with Retain, used by Postgres, Valkey, Harbor, Loki, Prometheus and Grafana; and the default hcloud-volumes, Hetzner Cloud block volumes, used by RoboShop's stateful services. Terraform in minikube-infrastructure installs the add-ons as Helm releases; hetzner-k3s.yaml defines servers, network, firewall and the k3s version.](/images/mk4-k3s/mk4-k3s-cluster.svg)
+
+- **Images.** Each service has its own GitHub Actions workflow that builds an `arm64` image. The cluster pulls RoboShop's ten service images from Harbor (`registry.jithendar.com`); the stateful services use public images (Kafka, MongoDB, PostgreSQL, RabbitMQ).
 - **Delivery.** An Argo CD catalog describes every workload. New applications start with **manual sync** and no automatic pruning, so each change is reviewed in Argo CD before it reaches the cluster.
 - **Registry credentials.** ECR tokens expire, so a CronJob refreshes the `ecr-pull` image-pull secret every six hours.
 - **Routing.** Traefik serves the app under `/roboshop` and strips that prefix before forwarding to the edge proxy. TLS comes from cert-manager and Let's Encrypt.
@@ -219,18 +224,18 @@ A second Terraform state installed the platform layer once the cluster existed:
 
 The whole stack is applied by a manual **Create infrastructure** GitHub Actions workflow on the self-hosted runner: format check, validate, test, then plan and apply in order. There is no plan-only option, so every run applies.
 
-## Minikube today versus the EKS design
+## k3s today versus the EKS design
 
-| Concern | Minikube (today) | EKS (design) |
+| Concern | k3s on Hetzner Cloud (today) | EKS (design) |
 | --- | --- | --- |
-| Nodes | 4 × arm64, single server | 2–6 × `t3.large` (x86_64), private subnets, multiple AZs |
-| Ingress | Traefik on the host | Traefik behind an AWS NLB |
-| Storage | `standard` host-path volumes tied to one node | Encrypted `gp3` EBS volumes |
+| Nodes | 3 × arm64 workers (cax21) and one control-plane node, one location | 2–6 × `t3.large` (x86_64), private subnets, multiple AZs |
+| Ingress | Istio ingress gateway behind a Hetzner load balancer | Traefik behind an AWS NLB |
+| Storage | `hcloud-volumes`: Hetzner Cloud block volumes, 10Gi per stateful service | Encrypted `gp3` EBS volumes |
 | Delivery | Argo CD catalog, manual sync | New cluster; application delivery not yet defined |
-| Cost | One server | EKS control plane, EC2, NAT, load balancer, logs and volumes |
+| Cost | Four Hetzner Cloud servers and a load balancer | EKS control plane, EC2, NAT, load balancer, logs and volumes |
 
 :::callout{type="danger" title="One thing to fix before moving"}
-RoboShop's images are built for **arm64**, while the EKS design uses **x86_64** nodes (`AL2023_x86_64_STANDARD`). Moving as designed would need either multi-architecture images (`linux/amd64,linux/arm64`) or Graviton (arm64) node groups. Storage also cannot be carried over by changing a field: the guide calls for a planned data migration from Minikube's `standard` class to `gp3`.
+RoboShop's images are built for **arm64**, while the EKS design uses **x86_64** nodes (`AL2023_x86_64_STANDARD`). Moving as designed would need either multi-architecture images (`linux/amd64,linux/arm64`) or Graviton (arm64) node groups. Storage also cannot be carried over by changing a field: the guide calls for a planned data migration from the cluster's volumes (`hcloud-volumes` on k3s today; Minikube's `standard` class when the guide was written) to `gp3`.
 :::
 
 ## What I would do next
@@ -241,4 +246,4 @@ RoboShop's images are built for **arm64**, while the EKS design uses **x86_64** 
 
 - Live app: [jithendar.com/roboshop](https://jithendar.com/roboshop)
 - Source: [github.com/mrjithendar/roboshop-ai](https://github.com/mrjithendar/roboshop-ai)
-- How CI deploys to the cluster: [Authenticating GitHub Actions to Minikube](/blog/github-actions-authenticate-minikube)
+- How CI deploys to the cluster: [Authenticating GitHub Actions to k3s](/blog/github-actions-authenticate-minikube)

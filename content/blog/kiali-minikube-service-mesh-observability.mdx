@@ -1,12 +1,12 @@
 ---
-title: "Kiali on Minikube: How We Implemented Service Mesh Observability (and What to Check)"
+title: "Kiali for Istio: How We Implemented Service Mesh Observability (and What to Check)"
 slug: kiali-minikube-service-mesh-observability
-description: "Adding Istio 1.30 and Kiali 2.34 to a self-hosted Minikube cluster: what the traffic graph showed, the outage it caused, and our Kiali checklist."
-seoTitle: "Kiali on Minikube: Istio Mesh Observability Checklist"
-seoDescription: "Istio 1.30 and Kiali 2.34 on an 8-node Minikube cluster: Helm values, Prometheus scrape jobs, token auth, sidecar pitfalls and a daily Kiali checklist."
+description: "Adding Istio 1.30 and Kiali 2.34 to our cluster, now k3s on Hetzner Cloud: what the traffic graph showed, the outage it caused, and our Kiali checklist."
+seoTitle: "Kiali for Istio: Mesh Observability Checklist"
+seoDescription: "Istio 1.30 and Kiali 2.34 on k3s (Hetzner Cloud): Helm values, Prometheus scrape jobs, token auth, sidecar pitfalls and a daily Kiali checklist."
 author: jithendar-dharmapuri
 category: kubernetes
-tags: [Kiali, Istio, Service Mesh, Kubernetes, Minikube, Prometheus, mTLS, Observability, Terraform]
+tags: [Kiali, Istio, Service Mesh, Kubernetes, k3s, Prometheus, mTLS, Observability, Terraform]
 contentType: tutorial
 status: review
 related:
@@ -16,7 +16,7 @@ related:
 
 ## Why we added a mesh, and why Kiali
 
-Our Minikube cluster, mk4, runs this site, MOKS (our Python and React SRE agent), RoboShop AI, Argo CD, Harbor and the monitoring stack. We had metrics per application and logs in Loki, but no single picture of **who calls whom**. When a page was slow, we could see that the web pod was slow, but not whether the time went to Postgres, Redis or another service.
+Our cluster, mk4, runs this site, MOKS (our Python and React SRE agent), RoboShop AI, Argo CD, Harbor and the monitoring stack. We added the mesh on 8 November 2026, when mk4 was a Minikube cluster on one server; since 10 November it runs on k3s on Hetzner Cloud, with Istio and Kiali reinstalled from the same Terraform. We had metrics per application and logs in Loki, but no single picture of **who calls whom**. When a page was slow, we could see that the web pod was slow, but not whether the time went to Postgres, Redis or another service.
 
 A service mesh fixes that. Every pod gets an Envoy sidecar that reports every request it sees, and Kiali turns those reports into a live graph. We also wanted mutual TLS (mTLS) between pods without changing application code.
 
@@ -54,14 +54,14 @@ If Prometheus has no data, Kiali has no graph. That one sentence explains most o
 
 | Item | Value |
 | --- | --- |
-| Cluster | Minikube profile `mk4`, Docker driver, containerd, 8 nodes, Kubernetes 1.37. Minikube version: [TODO: confirm] |
-| Node size | Each node reports 16 CPUs and ~30 GiB, but all 8 share one host, so these numbers overlap |
-| Edge | Traefik v3.7.14 (chart 42.0.0). A Kong Gateway migration is prepared on a branch but **not deployed** |
+| Cluster | Today: k3s v1.37.2+k3s1 on Hetzner Cloud, created with hetzner-k3s. When we added the mesh: Minikube profile `mk4`, Docker driver, 8 nodes on one server |
+| Node size | Today: one control-plane node (cax11, 2 vCPU, 4 GB, runs no workloads) and three workers (cax21, 4 vCPU, 8 GB each). On Minikube all 8 nodes shared one 16-CPU host |
+| Edge | Today: the Istio ingress gateway behind a Hetzner load balancer. When we added the mesh: Traefik v3.7.14 (chart 42.0.0), retired on 8 November |
 | Istio | 1.30.7, Helm charts `base`, `cni`, `istiod`, sidecar mode, no ingress gateway |
 | Kiali | `kiali-server` Helm chart 2.34.0 in `istio-system`, token auth, view-only |
 | Metrics | Our own Prometheus chart, `scrape_interval: 30s` |
 | Tracing | Jaeger 2.x (in-memory), **not connected to Kiali** |
-| Install | Terraform `helm_release` resources in our `miniKube` repository |
+| Install | Terraform `helm_release` resources in our `kubernetes` repository (formerly `miniKube`) |
 
 Two corrections to how we first described this setup. First, Kong does not front Kiali today; Traefik does. Second, these add-ons are **not** Argo CD Applications. They were, until 8 November, when we moved all thirteen cluster add-ons into Terraform so one plan shows the whole platform. Argo CD still deploys the applications, and Argo CD's own pods are in the mesh.
 
@@ -85,7 +85,7 @@ resource "helm_release" "istiod" {
 }
 ```
 
-The istiod values carry most of the Minikube tuning:
+The istiod values carry most of the tuning for a small cluster:
 
 ```yaml
 pilot:
@@ -121,14 +121,14 @@ A single istiod replica is a trade-off. The injection webhook fails closed, so w
 Injection is per namespace:
 
 ```bash
-kubectl --context mk4 label namespace moks istio-injection=enabled
-kubectl --context mk4 -n moks rollout restart deployment
+kubectl label namespace moks istio-injection=enabled
+kubectl -n moks rollout restart deployment
 ```
 
 Existing pods only get a sidecar when they restart. Check before you trust the graph:
 
 ```bash
-kubectl --context mk4 get ns -L istio-injection
+kubectl get ns -L istio-injection
 ```
 
 ### 3. Prometheus, so Kiali has data
@@ -192,7 +192,7 @@ Notes on each choice:
 Kiali is public at `https://jithendar.com/kiali/` through a Traefik Ingress, set in the same values file with `deployment.ingress.override_yaml`. Because the path is public, we chose `token` auth and `view_only_mode`. Sign-in uses a short-lived ServiceAccount token:
 
 ```bash
-kubectl --context mk4 -n istio-system create token kiali --duration=8h
+kubectl -n istio-system create token kiali --duration=8h
 ```
 
 View-only mode means nobody can change the mesh from the UI, even with a valid token. It also hides the traffic wizards (more below).
@@ -323,8 +323,8 @@ Lesson: with `holdApplicationUntilProxyStarts`, a sidecar that cannot reach isti
 
 - **Kiali shows what Prometheus has.** Scrape interval (30s for us), dropped targets and sidecar bypasses all shape the graph.
 - **A mesh with a non-mesh edge is half a mesh.** Until the edge proxy sends traffic to mesh Services (Istio calls this native load balancing in Traefik's case) or is replaced by a mesh-aware gateway, the edge hop is plaintext and anonymous.
-- **Sidecars cost memory on a shared host.** Every pod now requests an extra 64Mi with a 256Mi limit. Across roughly 60 meshed pods, that adds up on eight nodes sharing one machine. [TODO: confirm measured usage with `kubectl top`.]
-- **The mesh interacts with NetworkPolicy.** Our Minikube CNI (kindnet) enforces NetworkPolicy, so every new port (15012, 15020, 15090, DNS) has to be allowed explicitly.
+- **Sidecars cost memory on a shared host.** Every pod now requests an extra 64Mi with a 256Mi limit. Across roughly 60 meshed pods, that adds up: on Minikube eight nodes shared one machine, and on k3s the three workers have 8 GB each. [TODO: confirm measured usage with `kubectl top`.]
+- **The mesh interacts with NetworkPolicy.** Our Minikube CNI (kindnet) enforced NetworkPolicy, and the same policies moved to k3s, so every new port (15012, 15020, 15090, DNS) has to be allowed explicitly.
 - **Before EKS**, we would run istiod with two replicas, decide on ambient vs sidecar mode first, and put the edge inside the mesh from day one.
 
 ## What's next

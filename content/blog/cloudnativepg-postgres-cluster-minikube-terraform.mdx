@@ -1,12 +1,12 @@
 ---
-title: "One PostgreSQL Cluster for Every App: CloudNativePG on Minikube with Terraform"
+title: "One PostgreSQL Cluster for Every App: CloudNativePG on k3s with Terraform"
 slug: cloudnativepg-postgres-cluster-minikube-terraform
-description: "How we built one highly available PostgreSQL 18 cluster for every app on Minikube: CloudNativePG, Helm releases in Terraform, PgBouncer, Istio access, FAQ."
-seoTitle: "CloudNativePG on Minikube with Terraform and Helm"
-seoDescription: "A shared PostgreSQL 18 cluster on Minikube: CloudNativePG operator, local-path storage, PgBouncer, per-app roles, Istio access, troubleshooting FAQ."
+description: "How we built one highly available PostgreSQL 18 cluster for every app on k3s: CloudNativePG, Helm releases in Terraform, PgBouncer, Istio access, FAQ."
+seoTitle: "CloudNativePG on k3s with Terraform and Helm"
+seoDescription: "A shared PostgreSQL 18 cluster on k3s (Hetzner Cloud): CloudNativePG operator, local-path storage, PgBouncer, per-app roles, Istio access, troubleshooting FAQ."
 author: jithendar-dharmapuri
 category: kubernetes
-tags: [PostgreSQL, CloudNativePG, Kubernetes, Minikube, Terraform, Helm, PgBouncer, Istio, DevOps, SRE]
+tags: [PostgreSQL, CloudNativePG, Kubernetes, k3s, Hetzner, Terraform, Helm, PgBouncer, Istio, DevOps, SRE]
 contentType: tutorial
 status: review
 related:
@@ -51,12 +51,13 @@ sources:
     url: https://registry.terraform.io/providers/hashicorp/helm/latest/docs
     publisher: HashiCorp
 ---
+<Todo>Updated on 2026-11-14 for k3s on Hetzner Cloud from the kubernetes repository and read-only kubectl: two instances instead of three, pgAdmin instead of Adminer, live output from k3s. Check: (1) why the database stays on local-path although k3s's default class is hcloud-volumes (the repositories do not say; add your reason in "Why local-path"); (2) which applications use the cluster today (the site and the SEO agent read postgres-db-credentials, Harbor's README says its database is here; MOKS and RoboShop shipping are not confirmed); (3) the comments in the kubernetes repository still describe minikube ("minikube nodes have no zone label", "mk4's 8 nodes").</Todo>
 
-Until this week, every application on `mk4` (the 8-node Minikube cluster that runs this website, the MOKS SRE portal, Harbor and RoboShop AI) brought its own PostgreSQL: one single-replica pod each, four in total, four sets of credentials, four volumes and no failover. This article explains how we replaced that with **one shared, highly available PostgreSQL 18 cluster**, managed by the CloudNativePG operator and installed as Helm releases from Terraform. It covers why we made each choice, the exact files, how it was deployed, and a troubleshooting FAQ built from the errors we actually hit.
+Until November 2026, every application on `mk4` (the cluster that runs this website, the MOKS SRE portal, Harbor and RoboShop AI) brought its own PostgreSQL: one single-replica pod each, four in total, four sets of credentials, four volumes and no failover. This article explains how we replaced that with **one shared, highly available PostgreSQL 18 cluster**, managed by the CloudNativePG operator and installed as Helm releases from Terraform. It covers why we made each choice, the exact files, how it was deployed, and a troubleshooting FAQ built from the errors we actually hit.
 
 It is written for DevOps and SRE engineers who know Kubernetes basics (Pods, Services, PersistentVolumeClaims) and have used Terraform, but have not yet run a PostgreSQL operator.
 
-Everything below was read from the repositories and from `kubectl` on 9 November 2026. Versions are what `mk4` runs, not recommendations: CloudNativePG 1.30.1 (chart `cloudnative-pg` 0.29.1), chart `cluster` 0.9.0, PostgreSQL 18.6, local-path-provisioner v0.0.37, Kubernetes v1.37.0, Istio 1.30.7.
+We built it on 9 November 2026, when `mk4` was still an 8-node Minikube cluster on one server. A day later mk4 moved to **k3s on Hetzner Cloud** (one control-plane node and three `cax21` Arm workers in Falkenstein), and Terraform installed the same releases there. Everything below describes the k3s cluster, read from the repositories and from `kubectl` on 14 November 2026; the Minikube story is kept where it explains a decision. Versions are what `mk4` runs, not recommendations: CloudNativePG 1.30.1 (chart `cloudnative-pg` 0.29.1), chart `cluster` 0.9.0, PostgreSQL 18, local-path-provisioner v0.0.37, k3s v1.37.2+k3s1, Istio 1.30.7.
 
 ## 1. Why one shared cluster
 
@@ -71,7 +72,7 @@ Everything below was read from the repositories and from `kubectl` on 9 November
 
 Under half a gigabyte in total, spread over four pods that each had to be upgraded, monitored and backed up separately. None of them could survive losing its node.
 
-### The incident that forced the issue
+### The incident that forced the issue (on Minikube)
 
 The bigger problem was storage. Minikube's default StorageClass, `standard`, uses the `k8s.io/minikube-hostpath` provisioner. Its volumes are plain folders under `/tmp/hostpath-provisioner/` **with no node affinity**. On a single-node Minikube that does not matter. On 8 nodes it means that when a database pod is rescheduled to a different node, Kubernetes happily mounts *that* node's empty folder.
 
@@ -98,17 +99,15 @@ flowchart LR
   end
   subgraph pgdb["namespace postgres-db"]
     PB["PgBouncer x2<br/>postgres-cluster-pooler-rw"]
-    P1["postgres-cluster-1<br/>primary (node mk4)"]
-    P2["postgres-cluster-2<br/>replica (mk4-m03)"]
-    P3["postgres-cluster-3<br/>replica (mk4-m06)"]
-    UI["Adminer<br/>postgres-ui"]
+    P1["postgres-cluster-1<br/>primary (worker2)"]
+    P2["postgres-cluster-2<br/>replica (worker3)"]
+    UI["pgAdmin 4<br/>postgres-ui"]
   end
   OP["CloudNativePG operator<br/>namespace cnpg-system"]
   GW["Istio ingress gateway<br/>IP allowlist"]
   J & M & H & R -->|"uri from postgres-db-credentials"| PB
   PB --> P1
   P1 -->|"streaming replication"| P2
-  P1 -->|"streaming replication"| P3
   GW -->|"/postgres (HTTPS)"| UI
   GW -->|"postgres.jithendar.com:443 (TLS, then TCP)"| P1
   UI --> P1
@@ -119,12 +118,12 @@ flowchart LR
 |---|---|---|
 | local-path-provisioner | StorageClass `local-path`: node-pinned volumes | `minikube-infrastructure/local-path.tf`, `deploy/minikube/storage/` |
 | CloudNativePG operator | CRDs, webhooks and the controller that runs PostgreSQL | `minikube-infrastructure/postgres.tf`, `deploy/minikube/postgres/operator.yaml` |
-| `postgres-cluster` | 3 PostgreSQL instances, a PgBouncer Pooler, one `Database` object per application | `postgres.tf`, `deploy/minikube/postgres/cluster.yaml` |
+| `postgres-cluster` | 2 PostgreSQL instances, a PgBouncer Pooler, one `Database` object per application | `postgres.tf`, `deploy/minikube/postgres/cluster.yaml` |
 | Tenancy | Roles, passwords and credential Secrets per application | `postgres.tf`, variable `postgres_databases` |
-| `postgres-access` | Adminer, the TCP route, gateway allowlists, NetworkPolicies, metrics Service | local chart `deploy/minikube/postgres/access` |
+| `postgres-access` | pgAdmin 4, the TCP route, gateway allowlists, NetworkPolicies, metrics Service | local chart `deploy/minikube/postgres/access` |
 | Edge | Route `/postgres` and the TLS server for `postgres.jithendar.com` | `deploy/minikube/istio/edge/values.yaml` |
 
-All of it lives in the private `miniKube` repository, in the Terraform root `minikube-infrastructure/`, next to the other add-ons (cert-manager, Istio, Prometheus, Grafana, Loki). Each add-on is one `.tf` file and one or more `helm_release` resources.
+All of it lives in my `kubernetes` repository (it was called `miniKube`, and the folder names still say so), in the Terraform root `minikube-infrastructure/`, next to the other add-ons (cert-manager, Istio, Prometheus, Grafana, Loki). Each add-on is one `.tf` file and one or more `helm_release` resources.
 
 ## 3. The choices, and why
 
@@ -140,18 +139,21 @@ You can run PostgreSQL as a plain StatefulSet, which is what all four applicatio
 2. **A built-in PgBouncer.** The `Pooler` resource runs PgBouncer and keeps its authentication in sync with the cluster.
 3. **Official Helm charts.** The operator chart and a `cluster` chart, so the setup fits the "every add-on is a `helm_release`" rule of this repository.
 
-### Why `local-path` instead of `standard`
+### Why `local-path`
+
+![mk4 on Hetzner Cloud in Falkenstein, 14 November 2026. Visitors look up jithendar.com in Cloudflare DNS and connect on ports 80 and 443 to the load balancer mk4-edge (LB11), which forwards to the Istio gateway's NodePorts with the PROXY protocol. GitHub Actions reaches the API on port 6443 through the cloud firewall that hetzner-k3s creates, open to 0.0.0.0/0. Inside the private network 10.0.0.0/16 with flannel run k3s v1.37.2 on Ubuntu 24.04 arm64: the control-plane node jithendar-master1 (cax11, 2 vCPU, 4 GB), tainted CriticalAddonsOnly so it runs no workloads and with no API load balancer, and three workers (cax21, 4 vCPU, 8 GB, 80 GB disk each). Worker1 holds valkey-0, a PgBouncer pod, pgAdmin and Grafana; worker2 holds the PostgreSQL primary postgres-cluster-1, valkey-1, a PgBouncer pod, the Harbor registry and Loki; worker3 holds the replica postgres-cluster-2. Two StorageClasses: local-path, a folder on the node's own disk pinned to that node with Retain, used by Postgres, Valkey, Harbor, Loki, Prometheus and Grafana; and the default hcloud-volumes, Hetzner Cloud block volumes, used by RoboShop's stateful services. Terraform in minikube-infrastructure installs the add-ons as Helm releases; hetzner-k3s.yaml defines servers, network, firewall and the k3s version.](/images/mk4-k3s/mk4-k3s-cluster.svg)
+
+On Minikube the alternative was the default class, `standard`, with the problem above. On k3s the default class is `hcloud-volumes`: Hetzner Cloud block volumes through Hetzner's CSI driver. The database still uses `local-path`, the node's own disk.
 
 Rancher's [local-path-provisioner](https://github.com/rancher/local-path-provisioner) also uses folders on the node, but every PersistentVolume it creates carries **node affinity** to the node that holds the folder. With `volumeBindingMode: WaitForFirstConsumer`, the node is chosen when the first pod is scheduled. From then on the scheduler will only ever place that pod on that node. If the node is gone, the pod stays `Pending` instead of starting on an empty folder. That is the behaviour a database needs.
 
-Here is the live result, three volumes on three nodes:
+Here is the live result on k3s, two volumes on two workers:
 
 ```text
-$ kubectl --context mk4 get pv -o 'custom-columns=CLAIM:.spec.claimRef.name,NODE:.spec.nodeAffinity.required.nodeSelectorTerms[0].matchExpressions[0].values[0],POLICY:.spec.persistentVolumeReclaimPolicy'
-CLAIM                NODE      POLICY
-postgres-cluster-2   mk4-m03   Retain
-postgres-cluster-3   mk4-m06   Retain
-postgres-cluster-1   mk4       Retain
+$ kubectl get pv -o 'custom-columns=CLAIM:.spec.claimRef.name,NODE:.spec.nodeAffinity.required.nodeSelectorTerms[0].matchExpressions[0].values[0],POLICY:.spec.persistentVolumeReclaimPolicy'
+CLAIM                NODE                             POLICY
+postgres-cluster-1   jithendar-pool-workers-worker2   Retain
+postgres-cluster-2   jithendar-pool-workers-worker3   Retain
 ```
 
 The upstream project ships its Helm chart only inside its Git repository, not in a Helm repository, so we vendored it (copied it unchanged from tag `v0.0.37`) into `deploy/minikube/storage/local-path-provisioner`.
@@ -201,7 +203,7 @@ nodePathMap:
 
 Two details are easy to get wrong:
 
-- **The path.** The chart's default is `/opt/local-path-provisioner`. With Minikube's Docker driver each node is a container, and only `/var` is a named Docker volume, so `/var/...` survives the node container being recreated while `/opt` would not.
+- **The path.** The chart's default is `/opt/local-path-provisioner`. We chose `/var/...` on Minikube, where each node was a Docker container and only `/var` survived the container being recreated. On k3s the nodes are virtual machines and both paths are on the node's own disk; the setting stayed.
 - **`Retain`.** CloudNativePG PVCs are owned by the `Cluster` object. Delete the `Cluster` and Kubernetes deletes the PVCs with it. `Retain` keeps the PersistentVolume and its folder, so a mistake is recoverable.
 
 ### 4.2 The operator
@@ -244,12 +246,12 @@ version:
 mode: standalone
 
 cluster:
-  instances: 3
+  instances: 2                # primary + one replica, each on its own worker
   storage:
     size: 10Gi
     storageClass: local-path
   affinity:
-    topologyKey: kubernetes.io/hostname   # Minikube nodes have no zone label
+    topologyKey: kubernetes.io/hostname   # all mk4 nodes are in one zone (fsn1-dc14)
     enablePodAntiAffinity: true
     podAntiAffinityType: required         # never two instances on one node
   resources:
@@ -286,8 +288,8 @@ backups:
 
 Things worth explaining:
 
-- **`topologyKey: kubernetes.io/hostname`.** The chart's default is `topology.kubernetes.io/zone`. Minikube nodes have no zone label, so with the default every node counts as the same "zone" and anti-affinity spreads nothing.
-- **`podAntiAffinityType: required`.** With `preferred`, the scheduler may still put two instances on one node when it is busy. Then one node failure takes out two of the three copies.
+- **`topologyKey: kubernetes.io/hostname`.** The chart's default is `topology.kubernetes.io/zone`. Every mk4 node is in the same Hetzner zone (`fsn1-dc14`; on Minikube there was no zone label at all), so with the default every node counts as the same "zone" and anti-affinity spreads nothing.
+- **`podAntiAffinityType: required`.** With `preferred`, the scheduler may still put two instances on one node when it is busy. Then one node failure takes out both copies.
 - **`idle_in_transaction_session_timeout` (10 minutes).** On a shared server, one application holding a transaction open (and its locks) must not block the others.
 - **`pg_stat_statements.track`.** Setting any `pg_stat_statements.*` parameter makes CloudNativePG preload the library. Running `CREATE EXTENSION pg_stat_statements` in a database then shows which application's queries cost the most.
 - **The `app` database.** CloudNativePG always bootstraps one database. We keep it as a scratch database that no application uses.
@@ -514,7 +516,7 @@ ensure CRDs are installed first
 The Helm provider does a dry-run install during `plan`. The `Cluster`, `Pooler` and `Database` kinds do not exist until the operator chart has installed its CRDs, so the dry run cannot even map them. The fix is to install the foundation first, then everything else:
 
 ```bash
-cd miniKube
+cd kubernetes
 terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars \
   -target=helm_release.local_path_provisioner \
   -target=helm_release.cnpg_operator \
@@ -540,24 +542,22 @@ The first two CI runs failed at the plan; the third failed in this step with a p
 
 ### 5.3 What a healthy first start looks like
 
-The operator runs `initdb` on the first instance, then each replica clones the primary with `pg_basebackup` in a `join` job:
+The operator runs `initdb` on the first instance, then the replica clones the primary with `pg_basebackup` in a `join` job. On the first install (on Minikube, 9 November 2026) it took about six and a half minutes, most of it the replicas' base backups. On k3s, once both instances are up:
 
 ```text
-$ kubectl --context mk4 -n postgres-db get pods -o wide
-NAME                                READY  STATUS     NODE
-postgres-cluster-1                  1/1    Running    mk4
-postgres-cluster-1-initdb-jmcw4     0/1    Completed  mk4
-postgres-cluster-2                  1/1    Running    mk4-m03
-postgres-cluster-2-join-zcdqp       0/1    Completed  mk4-m03
-postgres-cluster-3-join-5l9kk       1/1    Running    mk4-m06
-postgres-cluster-pooler-rw-...-42v24 1/1   Running    mk4-m06
-postgres-cluster-pooler-rw-...-rr8g7 1/1   Running    mk4-m07
+$ kubectl -n postgres-db get pods -o wide
+NAME                                    READY  STATUS   NODE
+postgres-cluster-1                      1/1    Running  jithendar-pool-workers-worker2
+postgres-cluster-2                      1/1    Running  jithendar-pool-workers-worker3
+postgres-cluster-pooler-rw-...-5t6wb    1/1    Running  jithendar-pool-workers-worker2
+postgres-cluster-pooler-rw-...-ljxxh    1/1    Running  jithendar-pool-workers-worker1
+postgres-ui-...-rlktp                   1/1    Running  jithendar-pool-workers-worker1
 ```
 
 ```text
-$ kubectl --context mk4 -n postgres-db get cluster,pooler,database
-NAME                                          INSTANCES  READY  STATUS                  PRIMARY
-cluster.postgresql.cnpg.io/postgres-cluster   3          2      Creating a new replica  postgres-cluster-1
+$ kubectl -n postgres-db get cluster,pooler,database
+NAME                                          INSTANCES  READY  STATUS                    PRIMARY
+cluster.postgresql.cnpg.io/postgres-cluster   2          2      Cluster in healthy state  postgres-cluster-1
 
 NAME                                                   CLUSTER           TYPE  PHASE
 pooler.postgresql.cnpg.io/postgres-cluster-pooler-rw   postgres-cluster  rw    active
@@ -569,17 +569,10 @@ database.postgresql.cnpg.io/postgres-cluster-registry    registry   true
 database.postgresql.cnpg.io/postgres-cluster-shipping    shipping   true
 ```
 
-About six and a half minutes after the release was installed (03:52 to 03:59 UTC, most of it the replicas' base backups), the cluster reported healthy:
-
-```text
-NAME               AGE     INSTANCES   READY   STATUS                     PRIMARY
-postgres-cluster   6m38s   3           3       Cluster in healthy state   postgres-cluster-1
-```
-
-Then check from inside the primary:
+Then check from inside the primary (the output below is from the first install on Minikube, with three instances):
 
 ```bash
-kubectl --context mk4 -n postgres-db exec postgres-cluster-1 -c postgres -- psql -Atc "
+kubectl -n postgres-db exec postgres-cluster-1 -c postgres -- psql -Atc "
   select version();
   select rolname, rolconnlimit from pg_roles where rolname in ('jithendar','moks','registry','shipping');
   select datname, pg_get_userbyid(datdba) from pg_database where datname in ('jithendar','moks','registry','shipping');
@@ -599,20 +592,22 @@ shipping|shipping
 10.244.2.171|streaming|async
 ```
 
-Every role exists with its connection limit, every database is owned by its role, and the replicas stream from the primary. The credential Secrets are in place in each application namespace:
+Every role exists with its connection limit, every database is owned by its role, and the replicas stream from the primary (on k3s there is one replica). The credential Secrets are in place in each application namespace:
 
 ```text
-$ kubectl --context mk4 -n moks get secret postgres-db-credentials -o jsonpath='{.data.host}' | base64 -d
+$ kubectl -n moks get secret postgres-db-credentials -o jsonpath='{.data.host}' | base64 -d
 postgres-cluster-pooler-rw.postgres-db.svc.cluster.local
 ```
 
 ## 6. Moving an application onto the cluster
 
-**Status on 9 November 2026:** the operator, storage and cluster are live and healthy, and every application already has its database, role and credentials Secret. No application uses the cluster yet. The public side (the `/postgres` route, the gateway's TLS server, the access chart and the DNS record for `postgres.jithendar.com`) was not deployed yet: the CI run that installed the cluster stopped afterwards on two unrelated releases (the Istio `base` chart and the OpenTelemetry Collector), before it reached the edge. This article shows those parts from the configuration, not from live output.
+**Status on 9 November 2026 (Minikube):** the operator, storage and cluster were live and healthy, and every application already had its database, role and credentials Secret. No application used the cluster yet.
+
+**Since the move to k3s (14 November 2026):** jithendar.com and its SEO agent read `DATABASE_URL` from `postgres-db-credentials`, and pgAdmin runs at `/postgres`. The rest of this section is the procedure for each remaining application. The public side (the `/postgres` route, the gateway's TLS server, the access chart and the DNS record for `postgres.jithendar.com`) was not deployed yet: the CI run that installed the cluster stopped afterwards on two unrelated releases (the Istio `base` chart and the OpenTelemetry Collector), before it reached the edge. This article shows those parts from the configuration, not from live output.
 
 Each move follows the same steps, one application at a time:
 
-**Step 1: Backups first.** The cluster has no backups configured yet (`backups.enabled: false`). Replicas protect against a lost node, not against a bad migration or a dropped table. With every application in one place, an object-store backup (base backups plus WAL archive) is the first thing to add.
+**Step 1: Backups first.** Base backups and the WAL archive to a private Cloudflare R2 bucket, through the Barman Cloud plugin, are in the configuration but switched off on mk4: Terraform turns them on only when `postgres_backups` is set and the credentials Secret exists. Replicas protect against a lost node, not against a bad migration or a dropped table. With every application in one place, an object-store backup (base backups plus WAL archive) is the first thing to add.
 
 **Step 2: Allow the traffic.** If the application's namespace restricts egress with a NetworkPolicy (MOKS and jithendar.com do), add a rule for namespace `postgres-db` on port 5432.
 
@@ -620,7 +615,7 @@ Each move follows the same steps, one application at a time:
 
 ```bash
 # inside the old pod, as its own database user
-kubectl --context mk4 -n moks exec moks-postgres-0 -- sh -c 'pg_dump -U "$POSTGRES_USER" -Fc moks' > moks.dump
+kubectl -n moks exec moks-postgres-0 -- sh -c 'pg_dump -U "$POSTGRES_USER" -Fc moks' > moks.dump
 pg_restore --no-owner --role=moks \
   -d "host=postgres.jithendar.com port=443 dbname=moks user=moks sslmode=verify-full sslrootcert=system sslnegotiation=direct" \
   moks.dump
@@ -655,7 +650,7 @@ The cause is the Helm provider's `experiments = { manifest = true }` setting, wh
 
 What to do:
 
-1. Check whether Helm actually succeeded: `helm --kube-context mk4 list -A | grep cnpg`. In our case both releases were `deployed` and the operator pod was `Running`.
+1. Check whether Helm actually succeeded: `helm list -A | grep cnpg`. In our case both releases were `deployed` and the operator pod was `Running`.
 2. Terraform marks those resources as *tainted*, so the next apply would reinstall them. If the release is healthy, clear that: `terraform untaint helm_release.cnpg_operator` (and `helm_release.local_path_provisioner`). The next plan was clean.
 3. Prevent it: create namespaces as their own Terraform resource (`kubernetes_namespace_v1`) and include them in the bootstrap `-target`, instead of relying on `create_namespace = true` in the same apply as the release. Any **new** release that creates its namespace can hit this.
 
@@ -682,7 +677,7 @@ This is normal on a quiet server. `pg_basebackup` asks for a *spread* checkpoint
 That is `local-path` working as designed: the volume is pinned to the old node and the scheduler will not start the instance anywhere else. Two options:
 
 - **The node will come back:** wait, and the instance resumes with its data.
-- **The node is gone:** delete that instance's PVC (`kubectl -n postgres-db delete pvc postgres-cluster-3`) and its pod. The operator creates a new instance on another node and clones it from the primary. With `Retain`, the old PersistentVolume stays behind. Delete it with `kubectl delete pv <name>` once you are sure.
+- **The node is gone:** delete that instance's PVC (`kubectl -n postgres-db delete pvc postgres-cluster-2`) and its pod. The operator creates a new instance on another node and clones it from the primary. With `Retain`, the old PersistentVolume stays behind. Delete it with `kubectl delete pv <name>` once you are sure.
 
 If the lost node held the **primary**, the operator has already promoted a replica. Check with `kubectl -n postgres-db get cluster` (column `PRIMARY`).
 
@@ -733,7 +728,7 @@ Still there. Removing the entry drops the role's Secrets and login, but the `Dat
 
 ### The volume says 10Gi. Is that a quota?
 
-It is not a quota: `local-path` volumes are plain folders and the size is not enforced. All three copies share the node disks, which on `mk4` sit on one host disk that filled up completely on 8 November 2026. Watch `df` on the host, not the PVC size.
+It is not a quota: `local-path` volumes are plain folders and the size is not enforced. Each copy shares its worker's 80 GB disk with every other `local-path` volume and image on that node. (On Minikube all nodes sat on one host disk, which filled up completely on 8 November 2026.) Watch `df` on the node, not the PVC size.
 
 ### Why do I see a `postgres-cluster-ping-test` Job in `helm template` output?
 
@@ -742,7 +737,7 @@ It is a Helm **test hook** (`helm.sh/hook: test`) from the `cluster` chart. It i
 ## 8. Best practices we followed, and what is next
 
 - **Pin every chart version** (`0.29.1`, `0.9.0`) and upgrade them on purpose, in a pull request. Dependabot does not see chart versions inside `helm_release` blocks, so this is a manual check. The images use the floating major tag `18` with `imagePullPolicy: Always`, which follows PostgreSQL minor releases.
-- **Node-pinned storage for anything stateful.** Never `standard` on a multi-node Minikube.
+- **Node-pinned storage for anything stateful.** Never a provisioner without node affinity (Minikube's `standard`) on a multi-node cluster.
 - **Required anti-affinity by hostname**, so one node failure costs at most one copy.
 - **`Retain` everywhere data lives**: on the volumes and on the databases.
 - **Secrets generated, never typed.** Passwords come from `random_password`, are stored in encrypted state, and reach applications as a Secret in their own namespace.
@@ -751,11 +746,11 @@ It is a Helm **test hook** (`helm.sh/hook: test`) from the `cluster` chart. It i
 
 Open items, in order:
 
-1. **Backups.** Configure an object store (base backups plus continuous WAL archiving) and test a restore before any application moves.
+1. **Backups.** Switch on the R2 object store (base backups plus continuous WAL archiving) that is already in the configuration, and test a restore.
 2. **`REVOKE CONNECT ... FROM PUBLIC`** on each application database.
-3. **Move the applications** one at a time (section 6), then delete their PostgreSQL pods and volumes.
+3. **Move the remaining applications** one at a time (section 6), then delete their PostgreSQL pods and volumes.
 4. **Alerts** on `cnpg_collector_up == 0` and on replication lag.
 
 ### Conclusion
 
-One CloudNativePG cluster replaced four unmanaged PostgreSQL pods with a primary, two replicas on separate nodes, automatic failover, a connection pooler and one place to monitor. Terraform owns every database, role and credential. The two lessons that cost the most time had nothing to do with PostgreSQL. The first was storage: on a multi-node Minikube, use a provisioner that pins volumes to nodes. The second was Terraform: an operator's CRDs must exist before anything can plan against them.
+One CloudNativePG cluster replaced four unmanaged PostgreSQL pods with a primary and a replica on separate nodes, automatic failover, a connection pooler and one place to monitor. Terraform owns every database, role and credential. The two lessons that cost the most time had nothing to do with PostgreSQL. The first was storage: on a multi-node cluster, use a provisioner that pins volumes to nodes (it bit us on Minikube). The second was Terraform: an operator's CRDs must exist before anything can plan against them.

@@ -1,0 +1,107 @@
+<mxfile host="app.diagrams.net" agent="istio-minikube/build_diagrams.py" version="32.6.10" type="device">
+  <diagram id="mk4-k3s-ci-api" name="mk4-k3s-ci-api">
+    <mxGraphModel dx="1000" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="960" pageHeight="626" background="#ffffff" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="page" value="" vertex="1" parent="1" style="rounded=0;fillColor=#ffffff;strokeColor=none;locked=1;">
+          <mxGeometry x="0" y="0" width="960" height="626" as="geometry" />
+        </mxCell>
+        <mxCell id="z-m" value="jithendar-master1 (control plane)" style="rounded=1;arcSize=3;dashed=1;dashPattern=6 4;fillColor=#f8fafc;strokeColor=#1d4ed8;align=left;spacingRight=10;verticalAlign=top;spacingLeft=10;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontStyle=1;fontColor=#1d4ed8;whiteSpace=wrap;html=1;container=0;" parent="1" vertex="1">
+          <mxGeometry x="20" y="176" width="920" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="z-ns" value="namespace jithendar (on the workers)" style="rounded=1;arcSize=3;dashed=1;dashPattern=6 4;fillColor=#f8fafc;strokeColor=#1d4ed8;align=left;spacingRight=10;verticalAlign=top;spacingLeft=10;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontStyle=1;fontColor=#1d4ed8;whiteSpace=wrap;html=1;container=0;" parent="1" vertex="1">
+          <mxGeometry x="20" y="346" width="920" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" value="HTTPS 6443" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#475569;strokeWidth=1.5;endArrow=block;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontColor=#0f172a;labelBackgroundColor=#ffffff;jumpStyle=gap;jumpSize=6;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" edge="1" source="runner" target="fw">
+          <mxGeometry x="0.0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#475569;strokeWidth=1.5;endArrow=block;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontColor=#0f172a;labelBackgroundColor=#ffffff;jumpStyle=gap;jumpSize=6;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" edge="1" source="fw" target="api">
+          <mxGeometry x="0.0" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="735" y="166" />
+              <mxPoint x="225" y="166" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e2" value="bearer token" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#475569;strokeWidth=1.5;endArrow=block;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontColor=#0f172a;labelBackgroundColor=#ffffff;jumpStyle=gap;jumpSize=6;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" edge="1" source="api" target="auth">
+          <mxGeometry x="0.0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#0f766e;strokeWidth=1.5;endArrow=block;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontColor=#0f172a;labelBackgroundColor=#ffffff;jumpStyle=gap;jumpSize=6;dashed=1;dashPattern=8 4;exitX=0.25;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" edge="1" source="auth" target="rollout">
+          <mxGeometry x="0.0" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="640" y="336" />
+              <mxPoint x="320" y="336" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#0f766e;strokeWidth=1.5;endArrow=block;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontColor=#0f172a;labelBackgroundColor=#ffffff;jumpStyle=gap;jumpSize=6;dashed=1;dashPattern=8 4;exitX=0.75;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" edge="1" source="auth" target="apply">
+          <mxGeometry x="0.0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="heading" value="&lt;b&gt;GitHub Actions to the k3s API on mk4&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontFamily=Helvetica;fontSize=15;fontColor=#0f172a;spacing=0;" parent="1" vertex="1">
+          <mxGeometry x="20" y="12" width="920" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="runner" value="&lt;b style=&quot;font-size:13px&quot;&gt;GitHub-hosted runner, release job&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;kubeconfig built at run time from&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;MK4_API_SERVER, MK4_CA_DATA (variables)&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;and MK4_CI_TOKEN (secret)&lt;/span&gt;" style="whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#334155;strokeWidth=1.5;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;spacing=4;spacingLeft=2;rounded=1;arcSize=10;" parent="1" vertex="1">
+          <mxGeometry x="35" y="56" width="380" height="96" as="geometry" />
+        </mxCell>
+        <mxCell id="fw" value="&lt;b style=&quot;font-size:13px&quot;&gt;Hetzner Cloud firewall&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;allowed_networks.api: 0.0.0.0/0&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;runners have no fixed addresses&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;&lt;/span&gt;" style="whiteSpace=wrap;html=1;fillColor=#fef2f2;strokeColor=#b91c1c;strokeWidth=1.5;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;spacing=4;spacingLeft=2;rounded=1;arcSize=10;" parent="1" vertex="1">
+          <mxGeometry x="545" y="56" width="380" height="96" as="geometry" />
+        </mxCell>
+        <mxCell id="api" value="&lt;b style=&quot;font-size:13px&quot;&gt;k3s API server :6443&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;TLS: k3s-server-ca, SANs = node name&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;and addresses (not jithendar.com)&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;CI connects by IP and verifies the CA&lt;/span&gt;" style="whiteSpace=wrap;html=1;fillColor=#eef2ff;strokeColor=#4338ca;strokeWidth=1.5;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;spacing=4;spacingLeft=2;rounded=1;arcSize=10;" parent="1" vertex="1">
+          <mxGeometry x="35" y="208" width="380" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="auth" value="&lt;b style=&quot;font-size:13px&quot;&gt;Token to identity, then RBAC&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;github-ci-deployer: patch 4 Deployments&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;github-ci-applier: apply app objects&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;no Secrets, no create pods&lt;/span&gt;" style="whiteSpace=wrap;html=1;fillColor=#fef2f2;strokeColor=#b91c1c;strokeWidth=1.5;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;spacing=4;spacingLeft=2;rounded=1;arcSize=10;" parent="1" vertex="1">
+          <mxGeometry x="545" y="208" width="380" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="rollout" value="&lt;b style=&quot;font-size:13px&quot;&gt;scripts/ci-rollout.py&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;kubectl set image ... :pr-&amp;lt;n&amp;gt;&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;jithendar-com, practice-executor, seo-agent&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;&lt;/span&gt;" style="whiteSpace=wrap;html=1;fillColor=#f0fdfa;strokeColor=#0f766e;strokeWidth=1.5;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;spacing=4;spacingLeft=2;rounded=1;arcSize=10;" parent="1" vertex="1">
+          <mxGeometry x="35" y="378" width="380" height="92" as="geometry" />
+        </mxCell>
+        <mxCell id="apply" value="&lt;b style=&quot;font-size:13px&quot;&gt;deploy-kubernetes.yml&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;applies kubernetes/ on merge&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;keeps each Deployment&amp;#x27;s running image&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;&lt;/span&gt;" style="whiteSpace=wrap;html=1;fillColor=#f0fdfa;strokeColor=#0f766e;strokeWidth=1.5;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;spacing=4;spacingLeft=2;rounded=1;arcSize=10;" parent="1" vertex="1">
+          <mxGeometry x="545" y="378" width="380" height="92" as="geometry" />
+        </mxCell>
+        <mxCell id="note" value="Tokens are long-lived ServiceAccount token Secrets, issued on 10 November 2026 when the k3s cluster was set up. The kubeconfig exists only during one step (umask 077, deleted by a trap). Sources: .github/ in moks-cms, hetzner-k3s.yaml, the live API certificate and Role." style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontFamily=Helvetica;fontSize=11;fontColor=#334155;spacing=0;" parent="1" vertex="1">
+          <mxGeometry x="20" y="500" width="920" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-title" value="&lt;b&gt;Legend&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;spacing=0;" parent="1" vertex="1">
+          <mxGeometry x="20" y="568" width="80" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="lg0" value="" style="rounded=1;arcSize=20;fillColor=#f8fafc;strokeColor=#334155;strokeWidth=1.5;" parent="1" vertex="1">
+          <mxGeometry x="90" y="570" width="22" height="14" as="geometry" />
+        </mxCell>
+        <mxCell id="lgt0" value="Users and clients" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontFamily=Helvetica;fontSize=12;fontColor=#334155;spacing=0;" parent="1" vertex="1">
+          <mxGeometry x="120" y="569" width="118.24000000000001" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="lg1" value="" style="rounded=1;arcSize=20;fillColor=#eef2ff;strokeColor=#4338ca;strokeWidth=1.5;" parent="1" vertex="1">
+          <mxGeometry x="250.24" y="570" width="22" height="14" as="geometry" />
+        </mxCell>
+        <mxCell id="lgt1" value="Network and edge" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontFamily=Helvetica;fontSize=12;fontColor=#334155;spacing=0;" parent="1" vertex="1">
+          <mxGeometry x="280.24" y="569" width="111.52000000000001" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="lg2" value="" style="rounded=1;arcSize=20;fillColor=#f0fdfa;strokeColor=#0f766e;strokeWidth=1.5;" parent="1" vertex="1">
+          <mxGeometry x="403.76" y="570" width="22" height="14" as="geometry" />
+        </mxCell>
+        <mxCell id="lgt2" value="Delivery and operations" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontFamily=Helvetica;fontSize=12;fontColor=#334155;spacing=0;" parent="1" vertex="1">
+          <mxGeometry x="433.76" y="569" width="158.56" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="lg3" value="" style="rounded=1;arcSize=20;fillColor=#fef2f2;strokeColor=#b91c1c;strokeWidth=1.5;" parent="1" vertex="1">
+          <mxGeometry x="604.3199999999999" y="570" width="22" height="14" as="geometry" />
+        </mxCell>
+        <mxCell id="lgt3" value="Identity and control" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontFamily=Helvetica;fontSize=12;fontColor=#334155;spacing=0;" parent="1" vertex="1">
+          <mxGeometry x="634.3199999999999" y="569" width="138.4" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="lg4" value="" style="shape=line;strokeColor=#475569;strokeWidth=1.5;" parent="1" vertex="1">
+          <mxGeometry x="90" y="596" width="24" height="10" as="geometry" />
+        </mxCell>
+        <mxCell id="lgt4" value="Request and response" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontFamily=Helvetica;fontSize=12;fontColor=#334155;spacing=0;" parent="1" vertex="1">
+          <mxGeometry x="120" y="593" width="138.4" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="lg5" value="" style="shape=line;strokeColor=#0f766e;strokeWidth=1.5;dashed=1;dashPattern=8 4;" parent="1" vertex="1">
+          <mxGeometry x="270.4" y="596" width="24" height="10" as="geometry" />
+        </mxCell>
+        <mxCell id="lgt5" value="Deploy, approve or observe" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontFamily=Helvetica;fontSize=12;fontColor=#334155;spacing=0;" parent="1" vertex="1">
+          <mxGeometry x="300.4" y="593" width="178.72000000000003" height="18" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -24,9 +24,9 @@ def platform():
     d = Diagram("platform-architecture", 960, 900, "jithendar.com on mk4: request path and content pipeline")
     d.node("visitor", "client", 35, 56, 260, 56, "Reader", "browser")
     d.node("dns", "external", 360, 56, 280, 56, "Cloudflare DNS", "DNS only, no proxying")
-    d.zone("z-host", "Cluster host", 20, 132, 920, 92, corner="right")
-    d.node("haproxy", "network", 35, 156, 400, 56, "HAProxy :80 / :443", "TCP only, adds PROXY protocol v2")
-    d.zone("z-cluster", "minikube cluster mk4", 20, 244, 920, 494, "cluster", corner="right")
+    d.zone("z-host", "In front of the cluster (Hetzner Cloud, Falkenstein)", 20, 132, 920, 92, corner="right")
+    d.node("haproxy", "network", 35, 156, 400, 56, "Load balancer mk4-edge :80 / :443", "Hetzner LB11, TCP, adds the PROXY header")
+    d.zone("z-cluster", "k3s cluster mk4: 1 control plane, 3 Arm workers", 20, 244, 920, 494, "cluster", corner="right")
     d.node("gw", "network", 35, 274, 420, 74, "Istio ingress gateway", "wildcard TLS, www → apex, HTTP → HTTPS",
            "root VirtualService (cluster repo)")
     d.node("mcp", "optional", 505, 274, 420, 74, "/mcp/* route: not applied", "Kong decK file, or an Istio match",
@@ -44,14 +44,14 @@ def platform():
            "OTel → Jaeger, Alloy → Loki")
     d.node("pg", "data", 35, 646, 280, 76, "PostgreSQL", "CloudNativePG, shared", "pgvector, seo_flow_runs", shape="db")
     d.node("vk", "data", 335, 646, 280, 76, "Valkey (shared)", "site cache bus,", "pub/sub only", shape="db")
-    d.node("graf", "ops", 640, 646, 285, 76, "Grafana", "dashboards from sites/…/grafana", "synced by Argo CD")
+    d.node("graf", "ops", 640, 646, 285, 76, "Grafana", "dashboards from sites/…/grafana", "installed by Terraform")
     d.node("r2", "external", 35, 758, 280, 56, "Cloudflare R2", "media, backups, report PDFs")
     d.node("claude", "external", 335, 758, 280, 56, "Anthropic API", "every call budget-guarded")
     d.node("google", "external", 640, 758, 285, 56, "Google APIs", "Search Console, GA4 (site sync)")
 
     d.edge("visitor", "dns", exit=(1, 0.5), entry=(0, 0.5), label="lookup")
     d.edge("visitor", "haproxy", exit=(0.5, 1), entry=((165 - 35) / 400, 0), label="80 / 443")
-    d.edge("haproxy", "gw", exit=(0.5, 1), entry=((235 - 35) / 420, 0), label="NodePort, PROXY v2")
+    d.edge("haproxy", "gw", exit=(0.5, 1), entry=((235 - 35) / 420, 0), label="NodePort, PROXY")
     d.edge("gw", "web", exit=((185 - 35) / 420, 1), entry=(0.5, 0), label="delegate VirtualService")
     d.edge("mcp", "agent", exit=(0.1, 1), entry=(0.85, 0), kind="control", label=":8090 only")
     d.edge("cron", "agent", exit=(0, 0.5), entry=(1, 0.5))
@@ -61,7 +61,7 @@ def platform():
     d.edge("agent", "claude", exit=(1, 0.85), entry=(0.85, 0), via=[(627, 479), (627, 742), (573, 742)])
     d.edge("mon", "graf", exit=(0.5, 1), entry=(0.5, 0), kind="control")
     d.text("note", 20, 826, 920, 32, "seo-agent writes drafts to the site's callback port; CronJobs only POST a kickoff. The site owns only its delegate route; the Gateway, certificate and root routing table "
-           "live in the cluster repository. Traefik was removed on 9 November 2026; Kong was prepared but never became the edge.",
+           "live in the cluster repository. Traefik was removed on 9 November 2026; Kong was prepared but never became the edge. Since 10 November mk4 runs on k3s on Hetzner Cloud.",
            size=11)
     d.legend(866)
     return d

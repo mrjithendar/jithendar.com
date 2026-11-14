@@ -1,7 +1,7 @@
 ---
 title: "Four AI Systems, One Cluster: The model proposes, code decides"
 slug: four-ai-systems-one-cluster
-description: "How an SRE agent, an AI gateway, an MCP server and a shopping agent on one Minikube cluster keep scope, auth, budgets and side effects in code."
+description: "How an SRE agent, an AI gateway, an MCP server and a shopping agent on one k3s cluster keep scope, auth, budgets and side effects in code."
 author: jithendar-dharmapuri
 category: ai-engineering
 tags: [AI Architecture, AI Agents, MCP, LangGraph, CrewAI, SRE, AI Security]
@@ -25,7 +25,7 @@ sources:
 ---
 <Todo>Review every section against the repositories, add your own commentary, then set status to published with a publishedAt time.</Todo>
 
-I run four AI systems on one Minikube cluster. They do different jobs: one investigates production incidents, one fronts a shop, one exposes that shop to MCP clients, and one recommends products. They share one rule.
+I run four AI systems on one k3s cluster. They do different jobs: one investigates production incidents, one fronts a shop, one exposes that shop to MCP clients, and one recommends products. They share one rule.
 
 **The model proposes, code decides.** The language model receives evidence that has been redacted and wrapped in tags marking it as untrusted. It returns *requests* (tool calls, a plan, a list of SKUs) or *text*. It never holds credentials. Code decides what is in scope, who may do what, how much may be spent, and whether anything changes in the world.
 
@@ -37,7 +37,7 @@ I run four AI systems on one Minikube cluster. They do different jobs: one inves
 
 ## The platform
 
-Everything runs on **mk4**, a Minikube cluster on a single arm64 server. [Argo CD](https://argo-cd.readthedocs.io/) delivers both projects. MOKS has a root Application plus one per component (`moks-api`, `moks-worker`, `moks-executor`, `moks-crewai` and so on, see `moks/docs/ARGOCD_APP_SPLIT.md`). RoboShop has one `roboshop-<app>` Application per service, with manual sync and no pruning (`roboshop-ai/argocd-minikube/README.md`).
+Everything runs on **mk4**, a k3s cluster on Hetzner Cloud: one control-plane node and three arm64 workers (until 10 November 2026 it was a Minikube cluster on a single arm64 server). [Argo CD](https://argo-cd.readthedocs.io/) delivers both projects. MOKS has a root Application plus one per component (`moks-api`, `moks-worker`, `moks-executor`, `moks-crewai` and so on, see `moks/docs/ARGOCD_APP_SPLIT.md`). RoboShop has one `roboshop-<app>` Application per service, with manual sync and no pruning (`roboshop-ai/argocd-minikube/README.md`).
 
 Images come from my own Harbor registry, `registry.jithendar.com/jithendar/<image>:latest`. CI builds and pushes them on every push to `master`. For telemetry, services send OpenTelemetry traces to a collector and on to Jaeger, Prometheus scrapes metrics, and Alloy ships JSON logs to Loki. MOKS also *reads* that same Prometheus and Loki as evidence. That matters during an incident: if Loki is down, MOKS loses its own logs and a source of evidence at once.
 
@@ -261,7 +261,7 @@ These come straight from `moks/docs/LIMITATIONS.md`, `docs/crewai-investigation.
 - The docs record that no chat model has answered a live MOKS request. Gemini embeddings have run live; Bedrock has no AWS keys on mk4.
 - Claim support is identifier overlap, not meaning: a well-formed false sentence about the right resource can pass.
 - The Kubernetes connector shares one ServiceAccount across users, so isolation between users rests on MOKS's own checks.
-- All mk4 nodes share one disk, and there is no point-in-time recovery.
+- Stateful data sits on node-local `local-path` volumes, one disk per worker, and there is no point-in-time recovery yet (PostgreSQL backups to R2 are configured but switched off).
 
 **CrewAI flow**
 - No real model has run the crew. Small models may not follow CrewAI's Action/Observation text format.
