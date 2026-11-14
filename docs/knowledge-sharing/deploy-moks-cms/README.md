@@ -9,6 +9,9 @@ Drafts (status `draft`, written 2026-11-14, owner request):
 Renamed the same day at the owner's request: the product is **Moks CMS**, the AI/ML-powered CMS, and jithendar.com is
 the site deployed with it. Kubernetes and AWS resource names in the guides are `moks-cms` (database and user `moks`).
 
+Re-checked against the repository on 2026-11-14 after the move to `sites/`: the build step (`npm run site -- --copy`),
+the indexable host (`site.json`), and `TRUSTED_EDGE=gateway` in every deployment were added to all three.
+
 **None of the three was run end to end.** They were written from the repository and are guides for readers, not a
 record of how jithendar.com runs (it runs Moks CMS on k3s, mk4; Part 2's "How production differs" lists the gaps). Each article
 starts with a `<Todo>` listing what to run or confirm before publishing.
@@ -38,10 +41,11 @@ the SVG.
 | Required variables and their failure messages | `src/lib/auth.ts`, `src/lib/secrets.ts`, `src/db/index.ts`, `src/app/setup/actions.ts` |
 | Migrations on start under an advisory lock | `src/instrumentation.ts`, `src/db/migrate.ts` |
 | `/api/health` does not touch the database and reports `GIT_SHA` | `src/app/api/health/route.ts` |
-| Rate limiter trusts the right-most `X-Forwarded-For` hop | `src/app/api/ask/route.ts` (`clientAddress`) |
 | `sslmode` read from `DATABASE_URL`; pool of 5 (`DATABASE_POOL_MAX`) | `src/db/index.ts`, postgres.js 4.1.0 |
 | Probes, security context, resources, preStop, PDB, spread | `kubernetes/30-jithendar-com.yaml` |
-| Only `PRODUCTION_HOST` is indexable | `src/config/site.ts` (`isIndexableHost`) |
+| Only the site's `host` is indexable | `sites/<domain>/site.json` → `PRODUCTION_HOST` in `src/config/site.ts` (`isIndexableHost`) |
+| `npm run site -- --copy` before `docker build` | `services/www/Dockerfile` (guard before `npm run build`), `scripts/use-site.mjs` |
+| Visitor address: last `X-Forwarded-For` entry, `TRUSTED_EDGE=gateway` without a Cloudflare proxy | `src/lib/client-ip.ts`, `docs/DEPLOYMENT.md` ("Client addresses") |
 | Cache bus over Redis pub/sub, sessions in Postgres | `docs/DEPLOYMENT.md`, `src/lib/cache-bus.ts` |
 | GitHub OIDC role for ECR pushes | `infra/ci-role.tf` |
 | Action versions (checkout v7, configure-aws-credentials v6) | `.github/workflows/` |
@@ -61,6 +65,7 @@ the SVG.
 ## Naming to settle before publishing
 
 - "Moks CMS" is not used anywhere else on the site yet: `how-i-built-jithendar-com` and the code (`site.name`,
-  `appName: "Jithendar.com"` in Better Auth, the repository name) still call it jithendar.com.
+  `appName: "Jithendar.com"` in Better Auth) still call it jithendar.com. The repository itself was renamed
+  `moks-cms` on 2026-11-14.
 - The existing project `projects/moks` is MOKS, the AI SRE investigation portal. Readers may assume the two are the
   same product; consider a sentence or a project page for Moks CMS.

@@ -42,7 +42,7 @@ sources:
     url: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
     publisher: Kubernetes
 ---
-<Todo>Draft written from the repository on 2026-11-14 (kubernetes/30-jithendar-com.yaml and the Let's Encrypt and CloudNativePG articles). Not run end to end on a fresh k3s node: before publishing, (1) follow it on a new VM, (2) confirm the Traefik chart value names in the HelmChartConfig against the Traefik version k3s installs then, and that ServiceLB with externalTrafficPolicy Local really passes the visitor's address to the app (check the X-Forwarded-For the app logs), (3) pin cert-manager and CloudNativePG chart versions to the ones you tested, (4) check the "How production differs" section still matches mk4.</Todo>
+<Todo>Draft written from the repository on 2026-11-14 (kubernetes/30-jithendar-com.yaml and the Let's Encrypt and CloudNativePG articles). Not run end to end on a fresh k3s node: before publishing, (1) follow it on a new VM, (2) confirm the Traefik chart value names in the HelmChartConfig against the Traefik version k3s installs then, and that ServiceLB with externalTrafficPolicy Local really passes the visitor's address to the app (check the X-Forwarded-For the app logs), (3) pin cert-manager and CloudNativePG chart versions to the ones you tested, (4) check the "How production differs" section still matches mk4. Re-checked against the repository on 2026-11-14 after the move to sites/ (host from site.json, TRUSTED_EDGE, Cloudflare in front of production).</Todo>
 
 [Part 1](/blog/deploy-moks-cms-linux-server-ec2-docker) ran Moks CMS, the AI-powered CMS behind jithendar.com, on one server with Docker Compose. It works, and it is cheap, but every release costs a few seconds of errors and the database lives and dies with one disk. This part moves the same image to Kubernetes, on k3s, and fixes both: two app replicas roll one at a time with no gap, and PostgreSQL runs as a primary with a streaming replica that takes over on failure.
 
@@ -51,7 +51,7 @@ k3s is a full, certified Kubernetes distribution packaged as one binary. It inst
 ::toc
 
 :::callout{type="info" title="Adapting this guide"}
-The Moks CMS source is proprietary, so the manifests below are reproduced in full and written for your own image. They also work for any Next.js app built with `output: "standalone"` that uses PostgreSQL. Replace `example.com` and `ghcr.io/your-user/moks-cms` throughout. If you run Moks CMS under your own domain, change `PRODUCTION_HOST` in `src/config/site.ts` first: it still names jithendar.com, and on any other domain every page is served as `noindex`.
+The Moks CMS source is proprietary, so the manifests below are reproduced in full and written for your own image. They also work for any Next.js app built with `output: "standalone"` that uses PostgreSQL. Replace `example.com` and `ghcr.io/your-user/moks-cms` throughout. If you run Moks CMS under your own domain, build the image from your own site folder, `sites/example.com/`, with `host` set in its `site.json`: the CMS only lets search engines index that host, so on any other domain every page is served as `noindex`.
 :::
 
 :::callout{type="info" title="What about the AI features?"}
@@ -109,7 +109,7 @@ Between nodes, allow UDP 8472 (flannel VXLAN) and TCP 10250 (kubelet).
 
 ## Step 2: Keep the visitor's address at Traefik
 
-By default the node rewrites the source address of incoming connections, so Traefik, and then the app's rate limiter, see the node's IP instead of the visitor's. `externalTrafficPolicy: Local` keeps the real address. k3s manages Traefik as a Helm chart; you change its values with a `HelmChartConfig`:
+The app's rate limits and audit log take the visitor's address from the last `X-Forwarded-For` entry, the one Traefik adds. By default the node rewrites the source address of incoming connections, so Traefik sees a cluster address instead of the visitor's. `externalTrafficPolicy: Local` keeps the real address. k3s manages Traefik as a Helm chart; you change its values with a `HelmChartConfig`:
 
 ```yaml
 # traefik-config.yaml
@@ -129,6 +129,8 @@ spec:
 kubectl apply -f traefik-config.yaml
 kubectl -n kube-system rollout status deploy/traefik
 ```
+
+This matters more than it looks. When the address the app sees is a private one, it assumes a proxy it cannot see and, with the default `TRUSTED_EDGE=cloudflare`, believes a `CF-Connecting-IP` header that any client can send. The Deployment in step 6 sets `TRUSTED_EDGE=gateway`, which ignores Cloudflare's headers. Keep that setting unless Cloudflare's proxy sits in front of the cluster.
 
 The HTTP-to-HTTPS redirect is set on the app's Ingress in step 7, not here. A redirect on Traefik's whole HTTP entry point would also catch cert-manager's challenge requests.
 
@@ -299,6 +301,7 @@ spec:
           env:
             - { name: APP_ENV, value: production }
             - { name: SITE_URL, value: https://example.com }
+            - { name: TRUSTED_EDGE, value: gateway }      # no Cloudflare proxy in front (step 2)
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef: { name: postgres-app, key: uri }
@@ -526,6 +529,7 @@ curl -s -o /dev/null -w '%{http_code}\n' "$D/no-such-page"        # 404
 curl -s -o /dev/null -w '%{redirect_url}\n' "http://example.com/"            # https://example.com/
 curl -s -o /dev/null -w '%{redirect_url}\n' "https://www.example.com/blog"   # https://example.com/blog
 kubectl -n moks-cms get pods -o wide                             # two web pods, two postgres pods
+kubectl -n moks-cms logs deploy/moks-cms --tail=20 | grep '"ip"'  # your own public address, not 10.42.x
 ```
 
 Then test the thing the cluster is for. Delete a web pod while you watch the site, and promote the database replica by hand:
@@ -634,7 +638,7 @@ jithendar.com runs Moks CMS on k3s too, but its cluster grew into a few things t
 
 | This guide | Production |
 | --- | --- |
-| Traefik (bundled) | Istio ingress gateway, behind a cloud load balancer that passes the client address through with the PROXY protocol |
+| Traefik (bundled), DNS only | Cloudflare's proxy in front of an Istio ingress gateway, which learns the connecting address through the PROXY protocol; the app reads the visitor from `CF-Connecting-IP` (`TRUSTED_EDGE=cloudflare`) |
 | HTTP-01 certificate for two names | DNS-01 wildcard certificate through Cloudflare ([how it renews](/blog/lets-encrypt-k3s-cert-manager-automatic-renewal)) |
 | One CloudNativePG cluster per app | One shared CloudNativePG cluster with a PgBouncer pooler, created by Terraform ([the setup](/blog/cloudnativepg-postgres-cluster-minikube-terraform)) |
 | Articles come from the app image | A separate small content image, copied in by an init container, so publishing an article does not rebuild the app |
@@ -651,8 +655,8 @@ None of these are needed to run the site well. They exist because the same clust
 | Pods never ready, log shows connection errors | `postgres-app` missing (cluster not healthy yet) or blocked by NetworkPolicy | `kubectl -n moks-cms get cluster postgres`, remove `postgres-from-web` briefly |
 | `ImagePullBackOff` | Wrong tag, private image without `registry-pull`, or an image built for the wrong architecture | `kubectl -n moks-cms describe pod <pod>` |
 | Rollout stuck at "1 old replica pending termination" | The new pod is not ready (see above), or `DoNotSchedule` spread on too few nodes | `kubectl -n moks-cms get pods`, `describe` the new pod |
-| Everyone shares one rate limit | Traefik sees the node's address | step 2, `externalTrafficPolicy: Local` |
-| Every page is `noindex` | `APP_ENV` is not `production`, or the domain is not `PRODUCTION_HOST` | page source |
+| Everyone shares one rate limit | Traefik sees a cluster address, or Cloudflare's proxy is on while `TRUSTED_EDGE=gateway` | the `ip` field in the app's logs; step 2, `externalTrafficPolicy: Local` |
+| Every page is `noindex` | `APP_ENV` is not `production`, or the domain is not `host` in the `site.json` the image was built with | page source |
 
 ## Where to go next
 

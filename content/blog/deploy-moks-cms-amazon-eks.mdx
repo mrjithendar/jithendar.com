@@ -44,7 +44,7 @@ sources:
     url: https://docs.github.com/en/actions/security-for-github-actions/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services
     publisher: GitHub
 ---
-<Todo>Draft written on 2026-11-14 from the repository (services/www, kubernetes/30-jithendar-com.yaml, and infra/ci-role.tf as it was before #77 removed it) and the RoboShop AI EKS article. jithendar.com does not run on EKS, and this guide has not been run: before publishing, (1) follow it in a test account and record the versions that worked (EKS, eksctl, the two Helm charts, the RDS engine version), (2) confirm the eksctl podIdentityAssociations fields, the metrics-server EKS add-on and the External Secrets API version (external-secrets.io/v1) against those versions, (3) check every price in "What it costs" on the AWS pricing pages, (4) tear the test stack down and confirm nothing is left billing.</Todo>
+<Todo>Draft written on 2026-11-14 from the repository (services/www, kubernetes/30-jithendar-com.yaml, and infra/ci-role.tf as it was before #77 removed it) and the RoboShop AI EKS article. jithendar.com does not run on EKS, and this guide has not been run: before publishing, (1) follow it in a test account and record the versions that worked (EKS, eksctl, the two Helm charts, the RDS engine version), (2) confirm the eksctl podIdentityAssociations fields, the metrics-server EKS add-on and the External Secrets API version (external-secrets.io/v1) against those versions, (3) check every price in "What it costs" on the AWS pricing pages, (4) tear the test stack down and confirm nothing is left billing. Re-checked against the repository on 2026-11-14 after the move to sites/ (npm run site -- --copy before docker build, host from site.json, TRUSTED_EDGE).</Todo>
 
 [Part 1](/blog/deploy-moks-cms-linux-server-ec2-docker) put Moks CMS, the AI-powered CMS behind jithendar.com, on one server for about $32 a month. [Part 2](/blog/deploy-moks-cms-kubernetes-k3s) moved it to a k3s cluster you run yourself. This part hands the undifferentiated work to AWS: the Kubernetes control plane (EKS), the database (RDS, with a standby in a second Availability Zone), the load balancer (ALB), certificates (ACM) and secrets (Secrets Manager). What remains yours is the application and how it is wired together.
 
@@ -55,7 +55,7 @@ jithendar.com runs Moks CMS on k3s today, not on EKS. This guide is the EKS desi
 ::toc
 
 :::callout{type="info" title="Adapting this guide"}
-The Moks CMS source is proprietary, so the manifests are reproduced here for your own image. They also work for any Next.js app built with `output: "standalone"` that uses PostgreSQL. Replace `example.com` and the account ID, and keep the domain's hosted zone in Route 53. If you run Moks CMS under your own domain, change `PRODUCTION_HOST` in `src/config/site.ts` first: it still names jithendar.com, and on any other domain every page is served as `noindex`.
+The Moks CMS source is proprietary, so the manifests are reproduced here for your own image. They also work for any Next.js app built with `output: "standalone"` that uses PostgreSQL. Replace `example.com` and the account ID, and keep the domain's hosted zone in Route 53. If you run Moks CMS under your own domain, build the image from your own site folder, `sites/example.com/`, with `host` set in its `site.json`: the CMS only lets search engines index that host, so on any other domain every page is served as `noindex`.
 :::
 
 :::callout{type="info" title="What about the AI features?"}
@@ -114,6 +114,7 @@ REGISTRY=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
 aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
 
 TAG=$(git rev-parse --short=12 HEAD)
+(cd services/www && SITE=example.com npm run site -- --copy)   # the site folder into the build context
 docker buildx build services/www --platform linux/arm64 \
   --build-arg GIT_SHA="$TAG" -t "$REGISTRY/moks-cms:$TAG" --push
 ```
@@ -339,7 +340,7 @@ kubectl apply -f secrets.yaml
 kubectl -n moks-cms get externalsecret moks-cms-env   # STATUS SecretSynced
 ```
 
-The Deployment is Part 2's with three changes: the image comes from ECR (nodes can pull from ECR in their own account with no pull secret), `DATABASE_URL` arrives with the other settings, and replicas spread across zones rather than hosts.
+The Deployment is Part 2's with three changes: the image comes from ECR (nodes can pull from ECR in their own account with no pull secret), `DATABASE_URL` arrives with the other settings, and replicas spread across zones rather than hosts. `TRUSTED_EDGE=gateway` stays: the ALB appends the visitor's address to `X-Forwarded-For`, and the app's rate limits read that last entry.
 
 ```yaml
 # app.yaml
@@ -383,6 +384,7 @@ spec:
           env:
             - { name: APP_ENV, value: production }
             - { name: SITE_URL, value: https://example.com }
+            - { name: TRUSTED_EDGE, value: gateway }      # the ALB adds the visitor's address to X-Forwarded-For
           envFrom:
             - secretRef: { name: moks-cms-env }
           resources:
@@ -636,6 +638,7 @@ jobs:
           TAG=$(git rev-parse --short=12 HEAD)
           REGISTRY=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com
           aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
+          (cd services/www && SITE=example.com npm run site -- --copy)
           docker buildx build services/www --platform linux/arm64 \
             --build-arg GIT_SHA="$TAG" -t "$REGISTRY/moks-cms:$TAG" --push
           echo "IMAGE=$REGISTRY/moks-cms:$TAG" >> "$GITHUB_ENV"
@@ -677,7 +680,8 @@ With immutable tags, `rollout undo` returns exactly the previous image. Migratio
 | Logs show `no pg_hba.conf entry ... no encryption` | `sslmode=require` missing from `DATABASE_URL` | the secret's value |
 | Rollouts cause a burst of 502s | Pods stop before the ALB has deregistered them | `preStop` sleep and `deregistration_delay` from step 7 |
 | Sign-in fails | `SITE_URL` does not match the address in the browser | the Deployment's env |
-| Every page is `noindex` | `APP_ENV` is not `production`, or the domain is not `PRODUCTION_HOST` | page source |
+| Every page is `noindex` | `APP_ENV` is not `production`, or the domain is not `host` in the `site.json` the image was built with | page source |
+| Everyone shares one rate limit | Cloudflare's proxy is on in front of the ALB while `TRUSTED_EDGE=gateway` | the `ip` field in `kubectl -n moks-cms logs deploy/moks-cms` |
 
 ## What it costs
 

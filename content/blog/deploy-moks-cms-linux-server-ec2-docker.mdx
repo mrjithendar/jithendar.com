@@ -38,7 +38,7 @@ sources:
     url: https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager.html
     publisher: Amazon Web Services
 ---
-<Todo>Draft written from the repository on 2026-11-14 (services/www Dockerfile, .env.example, src/db, kubernetes/30-jithendar-com.yaml). Not run end to end: before publishing, (1) launch a fresh t4g.medium and follow every step, (2) confirm the Compose file starts on Docker Compose v2 with Postgres 18's volume path, (3) confirm the prices in "What it costs" on the AWS pricing pages, (4) decide whether to make PRODUCTION_HOST configurable first (see "Adapting this guide").</Todo>
+<Todo>Draft written from the repository on 2026-11-14 (services/www Dockerfile, .env.example, src/db, kubernetes/30-jithendar-com.yaml). Not run end to end: before publishing, (1) launch a fresh t4g.medium and follow every step, (2) confirm the Compose file starts on Docker Compose v2 with Postgres 18's volume path, (3) confirm the prices in "What it costs" on the AWS pricing pages, (4) check that the access log's ip field shows your own address behind Caddy with TRUSTED_EDGE=gateway. Re-checked against the repository on 2026-11-14 after the move to sites/ (npm run site -- --copy before docker build, host from site.json, TRUSTED_EDGE).</Todo>
 
 Moks CMS is the AI/ML-powered content management system I built, and jithendar.com is the site it runs. Besides posts, pages and an editor, it answers readers' questions from its own articles (Ask the Blog), drafts and reviews articles with an editorial agent crew, ranks SEO work with machine-learning models fed by Search Console, and generates images. This series shows how to deploy it three ways: on one Linux server, on Kubernetes, and on Amazon EKS.
 
@@ -49,7 +49,7 @@ This guide puts Moks CMS on one Amazon EC2 instance with Docker Compose, Caddy f
 ::toc
 
 :::callout{type="info" title="Adapting this guide"}
-The Moks CMS source is proprietary, so you cannot clone it. The guide reproduces the files that matter, and they also work for any Next.js app built with `output: "standalone"` that keeps its data in PostgreSQL. Replace `example.com` with your domain throughout. If you run Moks CMS under your own domain, change `PRODUCTION_HOST` in `src/config/site.ts` first: it still names jithendar.com, and the CMS only lets search engines index that host, so on any other domain every page is served as `noindex`.
+The Moks CMS source is proprietary, so you cannot clone it. The guide reproduces the files that matter, and they also work for any Next.js app built with `output: "standalone"` that keeps its data in PostgreSQL. Replace `example.com` with your domain throughout. If you run Moks CMS under your own domain, give it its own site folder first (`cp -R sites/_template sites/example.com`) and set `host` in its `site.json`: the CMS only lets search engines index that host, so a build for jithendar.com serves every page on any other domain as `noindex`.
 :::
 
 :::callout{type="info" title="What about the AI features?"}
@@ -78,6 +78,7 @@ Before any infrastructure, it helps to know exactly what the Moks CMS container 
 | --- | --- | --- |
 | `APP_ENV` | yes | `production`. Anything else is never indexable and allows development fallbacks. |
 | `SITE_URL` | yes | `https://example.com`, no trailing slash. Sign-in only accepts requests from this origin. |
+| `TRUSTED_EDGE` | yes, here | `gateway` when no Cloudflare proxy sits in front, as in this guide. The default, `cloudflare`, reads the visitor's address from Cloudflare's `CF-Connecting-IP` header. |
 | `DATABASE_URL` | yes | `postgres://user:password@host:5432/db`. Without it in production the app refuses to start. |
 | `BETTER_AUTH_SECRET` | yes | Signs sessions. Long random string. |
 | `SETTINGS_ENCRYPTION_KEY` | yes | 32+ characters. Encrypts the credentials you later save in the admin (storage, email, social sign-in). **Back it up with the database**: without it those credentials cannot be read. |
@@ -184,7 +185,9 @@ aws route53 change-resource-record-sets --hosted-zone-id "$ZONE_ID" --change-bat
   ]}"
 ```
 
-If the domain is on Cloudflare, create the same two records and leave them **DNS only** (grey cloud) for now. Two things break behind Cloudflare's proxy until you configure for it: Caddy's HTTP challenge when Cloudflare's own TLS mode is wrong, and the app's per-visitor rate limits. The app trusts the right-most `X-Forwarded-For` address, which behind the proxy is a Cloudflare edge, so every visitor would share one limit.
+If the domain is on Cloudflare, create the same two records and leave them **DNS only** (grey cloud) while you follow this guide. The rate limits depend on it. The app takes the visitor's address from the last `X-Forwarded-For` entry, the one Caddy adds, and this guide sets `TRUSTED_EDGE=gateway` so it ignores Cloudflare's headers.
+
+To put Cloudflare's proxy in front later, do three things together. Set SSL/TLS to **Full (strict)**. Set `TRUSTED_EDGE=cloudflare`, so the app reads the visitor from `CF-Connecting-IP` when a request arrives from one of Cloudflare's addresses. Then limit ports 80 and 443 in the security group to [Cloudflare's ranges](https://www.cloudflare.com/ips/). Without that last step, anyone who finds the server's address can bypass the proxy.
 
 Check before moving on:
 
@@ -245,6 +248,9 @@ ARG APP_ENV=production
 ENV APP_ENV=$APP_ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+# The site (site.json, content/, public/images/) must be real copies, not symlinks into sites/<domain>/.
+RUN test -f site/site.json && test ! -L content && test ! -L public/images \
+  || { echo 'Run `npm run site -- --copy` in services/www before docker build' >&2; exit 1; }
 RUN --mount=type=cache,target=/app/.next/cache npm run build
 
 FROM node:26-alpine AS runtime
@@ -259,13 +265,15 @@ EXPOSE 3000
 CMD ["node", "server.js"]
 ```
 
-The standalone output also carries the `content/` folder and the SQL migrations (`outputFileTracingIncludes` in `next.config.ts`), so the image is complete on its own.
+Moks CMS serves one site per build, and each site's identity, articles and images live in their own folder, `sites/<domain>/`, at the root of the repository. That folder sits outside the Docker build context, so `npm run site -- --copy` first copies it into `services/www` (`SITE=example.com` picks a site other than jithendar.com). The check before `npm run build` stops a build that skipped this step. The standalone output then carries the site's `content/` folder and the SQL migrations (`outputFileTracingIncludes` in `next.config.ts`), so the image is complete on its own.
 
 Build on your laptop or in CI, not on the server: `next build` for a site this size wants more memory than a small instance has spare. Match the server's architecture. Graviton is `linux/arm64`; most other servers are `linux/amd64`. Tag every image with the commit, and pass the same value as `GIT_SHA` so the health endpoint reports it:
 
 ```bash
 TAG=$(git rev-parse --short=12 HEAD)
 IMAGE_REPO=ghcr.io/your-user/moks-cms
+
+(cd services/www && SITE=example.com npm run site -- --copy)
 
 echo "$GHCR_TOKEN" | docker login ghcr.io -u your-user --password-stdin
 docker buildx build services/www \
@@ -346,6 +354,8 @@ services:
     environment:
       APP_ENV: production
       SITE_URL: ${SITE_URL}
+      # No Cloudflare proxy in front: the visitor is the address Caddy adds to X-Forwarded-For.
+      TRUSTED_EDGE: gateway
       DATABASE_URL: postgres://moks:${POSTGRES_PASSWORD}@postgres:5432/moks
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
       SETTINGS_ENCRYPTION_KEY: ${SETTINGS_ENCRYPTION_KEY}
@@ -410,7 +420,7 @@ www.{$DOMAIN} {
 }
 ```
 
-That is the entire HTTPS setup. On first start, Caddy asks Let's Encrypt for certificates for both names, answers the challenge on port 80 or 443, stores the result in `caddy_data`, and renews well before expiry. It also redirects HTTP to HTTPS on its own. `reverse_proxy` adds the visitor's address to `X-Forwarded-For`, which is what the app's rate limiter reads.
+That is the entire HTTPS setup. On first start, Caddy asks Let's Encrypt for certificates for both names, answers the challenge on port 80 or 443, stores the result in `caddy_data`, and renews well before expiry. It also redirects HTTP to HTTPS on its own. `reverse_proxy` adds the visitor's address to `X-Forwarded-For`, and with `TRUSTED_EDGE=gateway` that last entry is the address the app's rate limits and audit log use.
 
 ## Step 8: Start it and finish the setup
 
@@ -449,7 +459,9 @@ curl -s -o /dev/null -w '%{redirect_url}\n' "https://www.example.com/blog"  # ht
 curl -s "$D/robots.txt" | grep Sitemap
 ```
 
-If the homepage source contains `<meta name="robots" content="noindex`, either `APP_ENV` is not `production` or the domain does not match `PRODUCTION_HOST` (see "Adapting this guide").
+If the homepage source contains `<meta name="robots" content="noindex`, either `APP_ENV` is not `production` or the domain does not match `host` in the `site.json` the image was built with (see "Adapting this guide").
+
+Then sign in to the admin once and look at the `web` logs: each request's `ip` field should be your own public address. A `172.` address means the app is seeing Docker's network rather than the visitor, and every visitor would share one rate limit.
 
 ## Step 10: Back up the database
 
@@ -572,8 +584,9 @@ Two limits to know:
 | `web` keeps restarting | A required variable is missing; the log names it (for example `BETTER_AUTH_SECRET is required in production.`) | `docker compose logs web` |
 | `web` exits with `DATABASE_URL is required in production.` | The variable is empty or misspelled in `compose.yaml` | `docker compose config` |
 | Sign-in fails or loops back to the sign-in page | `SITE_URL` is not exactly the address in the browser (scheme, host, no trailing slash) | `.env` |
-| Every page is `noindex` | `APP_ENV` is not `production`, or the domain is not `PRODUCTION_HOST` | page source, `src/config/site.ts` |
-| Everyone hits the rate limit together | A proxy in front (such as Cloudflare) is the right-most `X-Forwarded-For` hop | put DNS back to DNS only, or terminate at Cloudflare and configure the trusted proxy chain |
+| Every page is `noindex` | `APP_ENV` is not `production`, or the domain is not `host` in the site's `site.json` | page source, `sites/<domain>/site.json` |
+| `docker build` stops with `Run npm run site -- --copy` | The site folder was not copied into the build context | run it in `services/www`, then build again |
+| Everyone hits the rate limit together | Cloudflare's proxy is on while `TRUSTED_EDGE=gateway`, so every request seems to come from a Cloudflare edge | the `ip` field in `docker compose logs web`; set DNS only, or follow the Cloudflare steps in step 2 |
 | 502 for a minute after a release | The new container is still starting or applying migrations | `docker compose ps`, `docker compose logs web` |
 
 ## What it costs
