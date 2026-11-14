@@ -10,7 +10,7 @@ file by hand, run only export.sh, or this script overwrites the edits.
 
 Sources (13 November 2026): .github/workflows/rag-eval.yml and ci-seo-agent.yml, services/seo-agent/scripts/rag_eval.py,
 app/rag_eval.py, app/seo_ml/train.py (run_rag_eval), app/services/ask_pipeline.py, tests/fixtures/rag_eval.yaml,
-minikube/seo-agent-40-seo-agent.yaml, docs/seo/RAG.md and docs/seo/rag-eval/.
+kubernetes/seo-agent-40-seo-agent.yaml, docs/seo/RAG.md and docs/seo/rag-eval/.
 """
 import sys
 from pathlib import Path

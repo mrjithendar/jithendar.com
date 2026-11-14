@@ -107,7 +107,7 @@ Because `jithendar.com` is in the certificate, `kubectl` can verify the server n
 
 ## 4. The identity: one ServiceAccount, one Role
 
-The account CI uses is defined in `minikube/80-ci-deployer.yaml`. It has a ServiceAccount, a Role, a RoleBinding and a token Secret, all in namespace `jithendar`.
+The account CI uses is defined in `kubernetes/80-ci-deployer.yaml`. It has a ServiceAccount, a Role, a RoleBinding and a token Secret, all in namespace `jithendar`.
 
 ```yaml
 apiVersion: v1
@@ -181,7 +181,7 @@ On mk4 that token was issued on 30 October 2026 and has not been rotated since.
 `scripts/setup-ci-deployer.sh` is run once from my Mac, where `kubectl` has admin access to mk4 and `gh` is signed in. It does the whole setup:
 
 1. Reads the API URL and CA certificate from my own `mk4` kubeconfig context.
-2. Applies `minikube/80-ci-deployer.yaml` and waits for the token controller to fill in the token.
+2. Applies `kubernetes/80-ci-deployer.yaml` and waits for the token controller to fill in the token.
 3. Builds a kubeconfig exactly as CI will, in a temporary file, and checks that it can patch `deployment/jithendar-com`.
 4. Stores three values in the repository:
 
@@ -270,7 +270,7 @@ jithendar-com@sha256:ab475be7…   (commit a153283)
 
 while `:latest` in the registry pointed to commit `dc249e8`. A restart re-creates pods from the same pod template, so they pulled the pinned digest again. CI reported success, and the site kept serving `a153283`, which is exactly what `/api/health` returned.
 
-The fix (14 November 2026) used a permission the Role already had: CI now sets the image instead of only restarting. Each release pushes the image under the pull request's own tag, `moks-cms:pr-<number>` (the image was renamed from `jithendar-com` along with the repository), and `scripts/ci-rollout.py` points every Deployment that runs that image at the new tag with `kubectl set image`, which is a `patch` like `restart`. Only a Deployment that is already on that tag, because the job was run again, is restarted. `deploy.sh` is gone: `deploy-minikube.yml` applies manifest changes and keeps the image each Deployment is running, so applying manifests never rolls the site back. The Deployment now records which release is live:
+The fix (14 November 2026) used a permission the Role already had: CI now sets the image instead of only restarting. Each release pushes the image under the pull request's own tag, `moks-cms:pr-<number>` (the image was renamed from `jithendar-com` along with the repository), and `scripts/ci-rollout.py` points every Deployment that runs that image at the new tag with `kubectl set image`, which is a `patch` like `restart`. Only a Deployment that is already on that tag, because the job was run again, is restarted. `deploy.sh` is gone: `deploy-kubernetes.yml` applies manifest changes and keeps the image each Deployment is running, so applying manifests never rolls the site back. The Deployment now records which release is live:
 
 ```bash
 kubectl -n jithendar get deploy jithendar-com -o wide
@@ -292,7 +292,7 @@ This setup is deliberately small, but it has real limits.
 
 **The secret is repository-wide.** `MK4_CI_TOKEN` is a repository secret, so a workflow running on any branch pushed to this repository can read it. The `if:` on the release job does not protect it; a changed workflow file on another branch could print or use it. Forks do not get repository secrets. The Harbor robot's password is a repository secret too.
 
-**Comments have drifted.** The header of `minikube/80-ci-deployer.yaml` still says CI restarts the site after pushing a new `:latest` image, and the kubeconfig template says a step called "Restart jithendar-com" fills it in "with envsubst". Neither is true any more.
+**Comments have drifted.** The header of `kubernetes/80-ci-deployer.yaml` still says CI restarts the site after pushing a new `:latest` image, and the kubeconfig template says a step called "Restart jithendar-com" fills it in "with envsubst". Neither is true any more.
 
 ## 10. What I would change next
 

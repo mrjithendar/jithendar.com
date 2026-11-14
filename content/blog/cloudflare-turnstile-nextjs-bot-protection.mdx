@@ -152,7 +152,7 @@ export async function turnstileKeys(): Promise<{ siteKey: string | undefined; se
 
 - `effectiveEnv()` merges two sources: keys saved in **Admin → Advanced settings** win, otherwise the process environment applies. In production that comes from the Kubernetes Secret `jithendar-com-env`, created by `scripts/create-secrets.sh` with a hidden prompt for the secret.
 - Admin-saved secrets are stored sealed and unsealed with `SETTINGS_ENCRYPTION_KEY`; the admin form only learns *whether* a secret is stored.
-- **Test-key fallback:** with no key configured *and* `isProductionEnv()` false, the always-pass test keys apply; in production the functions return `undefined`. `APP_ENV=production` is set by the `Dockerfile` default and `minikube/30-jithendar-com.yaml`.
+- **Test-key fallback:** with no key configured *and* `isProductionEnv()` false, the always-pass test keys apply; in production the functions return `undefined`. `APP_ENV=production` is set by the `Dockerfile` default and `kubernetes/30-jithendar-com.yaml`.
 - `production` is only a display flag for the admin dashboard.
 
 The site key reaches the browser as a prop from a **server component** (a React component that runs only on the server):

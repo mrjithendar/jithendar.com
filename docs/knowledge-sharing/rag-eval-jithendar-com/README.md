@@ -6,7 +6,7 @@ Article: `content/blog/rag-evaluation-ask-the-blog-jithendar-com.mdx` (`status: 
 
 Every claim comes from the repository on 13 November 2026: `.github/workflows/rag-eval.yml` and `ci-seo-agent.yml`,
 `services/seo-agent/scripts/rag_eval.py`, `rag_mine_eval.py`, `app/rag_eval.py`, `app/seo_ml/train.py` (`run_rag_eval`),
-`app/metrics.py`, `tests/fixtures/rag_eval.yaml`, `minikube/seo-agent-40-seo-agent.yaml`, `docs/seo/RAG.md`, `ML.md`,
+`app/metrics.py`, `tests/fixtures/rag_eval.yaml`, `kubernetes/seo-agent-40-seo-agent.yaml`, `docs/seo/RAG.md`, `ML.md`,
 `prometheus-alerts.yml` and the reports in `docs/seo/rag-eval/` (2026-11-10). GitHub shows one run of `rag-eval.yml`
 (2026-11-11, commit `2293d8d`, 95 questions, success); its report was not committed.
 

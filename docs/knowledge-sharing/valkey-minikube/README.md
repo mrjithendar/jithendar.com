@@ -8,7 +8,7 @@ Article: `content/blog/valkey-redis-sentinel-minikube-terraform.mdx` (`status: r
 - miniKube repository: `minikube-infrastructure/redis.tf`, `_variables.tf` (`redis_tenants`, `redis_allowed_ips`),
   `vars/mk4.tfvars`, `deploy/minikube/redis/` (values, post-renderer, access chart), `tests/test_redis.py`,
   Prometheus alerts, and the "Redis (Valkey)" section of `minikube-infrastructure/README.md`.
-- This repository: `minikube/practice-executor-40-executor.yaml`, `minikube/practice-executor-50-networkpolicies.yaml`.
+- This repository: `kubernetes/practice-executor-40-executor.yaml`, `kubernetes/practice-executor-50-networkpolicies.yaml`.
 - Live mk4, read only, on 9 November 2026: pods and nodes, PVCs, PDB, Sentinel master and `ckquorum`, `info
   replication`, `info keyspace`, `client list` per user, `acl getuser` / `acl dryrun` for user `practice`, images,
   Helm releases, and `redis.jithendar.com` (DNS, wildcard certificate, `NOAUTH` reply to an unauthenticated `PING`).

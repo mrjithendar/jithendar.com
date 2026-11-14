@@ -40,7 +40,7 @@ the SVG.
 | `/api/health` does not touch the database and reports `GIT_SHA` | `src/app/api/health/route.ts` |
 | Rate limiter trusts the right-most `X-Forwarded-For` hop | `src/app/api/ask/route.ts` (`clientAddress`) |
 | `sslmode` read from `DATABASE_URL`; pool of 5 (`DATABASE_POOL_MAX`) | `src/db/index.ts`, postgres.js 4.1.0 |
-| Probes, security context, resources, preStop, PDB, spread | `minikube/30-jithendar-com.yaml` |
+| Probes, security context, resources, preStop, PDB, spread | `kubernetes/30-jithendar-com.yaml` |
 | Only `PRODUCTION_HOST` is indexable | `src/config/site.ts` (`isIndexableHost`) |
 | Cache bus over Redis pub/sub, sessions in Postgres | `docs/DEPLOYMENT.md`, `src/lib/cache-bus.ts` |
 | GitHub OIDC role for ECR pushes | `infra/ci-role.tf` |

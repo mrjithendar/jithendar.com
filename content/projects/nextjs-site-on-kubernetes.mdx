@@ -151,7 +151,7 @@ curl -s https://jithendar.com/api/health
 {"status":"ok","version":"6bc23040ea8dcc867e9defd1cb9c7db9cf8bb537"}
 ```
 
-Manifest changes take a second path: `deploy-minikube.yml` applies `minikube/` when a merged pull request changes it, as a ServiceAccount that may apply application objects but never RBAC or Secrets. It keeps the image each Deployment is already running (`scripts/keep-live-images.py`), so applying manifests never rolls the site back. Harbor keeps every `pr-<number>` tag, and those are the rollback targets: `kubectl -n jithendar set image deploy/jithendar-com web=…/moks-cms:pr-<n>`.
+Manifest changes take a second path: `deploy-kubernetes.yml` applies `kubernetes/` when a merged pull request changes it, as a ServiceAccount that may apply application objects but never RBAC or Secrets. It keeps the image each Deployment is already running (`scripts/keep-live-images.py`), so applying manifests never rolls the site back. Harbor keeps every `pr-<number>` tag, and those are the rollback targets: `kubectl -n jithendar set image deploy/jithendar-com web=…/moks-cms:pr-<n>`.
 
 Until November 2026 CI only restarted the Deployment, which relied on `:latest` with `imagePullPolicy: Always`: a pod restart could pick up a newer image, and the running version wasn't recorded anywhere. Each release now has its own tag, so the Deployment itself records which release is live (`kubectl -n jithendar get deploy -o wide`), and a pod that restarts gets the same image again.
 

@@ -191,7 +191,7 @@ def mk4_lab():
         ("Delivery", [
             ("gateway", "Argo CD v3.5.5", "Helm chart 10.10.5", "35 live Applications", "manual sync, Harbor auto"),
             ("service", "Helm", "Argo sources: Grafana, Harbor,", "metrics-server, MOKS chart", "Traefik installed by hand"),
-            ("service", "Kustomize", "RoboShop apps through Argo", "jithendar.com: apply -k", "from its minikube/ folder"),
+            ("service", "Kustomize", "RoboShop apps through Argo", "jithendar.com: apply -k", "from its kubernetes/ folder"),
         ]),
         ("Edge, TLS and registry", [
             ("edge", "Traefik v3.7.14", "the only way in from outside", "Ingress + Traefik CRDs", "HAProxy on the host in front"),

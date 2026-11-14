@@ -106,7 +106,7 @@ The articles use verified behaviour in every case.
 | Root README: `evaluation*/` directories | None exist at this commit | A4 says so |
 | `tests/load/VERIFICATION.md`: "Agent evaluations: 6 passed" (2026-10-23) | Source not found in the current tree | A4 flags it as unconfirmed |
 | Root and service READMEs link to `tools/.../roboshop/...` | `tools` has no `roboshop/` directory now. Content moved to `tools/deploy` and `docs/` | Articles do not use those links |
-| MCP README deployment section: `argocd/mcp-server.yaml`, `scripts/deploy/deploy-minikube.sh` | Application is `argocd-eks/mcp-server.yaml`; imperative scripts retired | A3 omits those commands |
+| MCP README deployment section: `argocd/mcp-server.yaml`, `scripts/deploy/deploy-kubernetes.sh` | Application is `argocd-eks/mcp-server.yaml`; imperative scripts retired | A3 omits those commands |
 | Gateway README: "Port 3000 serves the storefront" | On EKS `web` serves it. `static` runs only if `FRONTEND_DIST` is set | A1 uses `web` |
 
 ## External sources checked

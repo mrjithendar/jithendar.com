@@ -191,7 +191,7 @@ shouldSample(context, _traceId, _name, _kind, attributes) {
 }
 ```
 
-The `isRemote` check is deliberate. Next.js continues any W3C `traceparent` it receives, so without it a request carrying the "not sampled" flag (`00-…-00`) would switch off its own trace, completion line and request metric. A Traefik middleware also removes `traceparent`, `tracestate` and `baggage` from internet requests (`minikube/40-middlewares.yaml`), so visitors cannot pick the trace id that becomes their error reference.
+The `isRemote` check is deliberate. Next.js continues any W3C `traceparent` it receives, so without it a request carrying the "not sampled" flag (`00-…-00`) would switch off its own trace, completion line and request metric. A Traefik middleware also removes `traceparent`, `tracestate` and `baggage` from internet requests (`kubernetes/40-middlewares.yaml`), so visitors cannot pick the trace id that becomes their error reference.
 
 ### Across the one internal service boundary
 
@@ -333,7 +333,7 @@ Everything below was observed on mk4 on 4 November 2026.
 
 ### Deploy
 
-1. Site: push so CI builds the image, then run `./deploy.sh` from the repository root. It applies `minikube/`, including the `strip-trace-headers` middleware, and restarts the Deployment.
+1. Site: push so CI builds the image, then run `./deploy.sh` from the repository root. It applies `kubernetes/`, including the `strip-trace-headers` middleware, and restarts the Deployment.
 2. `tools`: push, then sync `loki`, `prometheus`, `grafana`, `otel-collector` and `jaeger` in Argo CD. Jaeger restarts with an empty store.
 
 **Rollback:** `kubectl rollout undo deployment/<name> -n <namespace>` for the site; for `tools`, revert the commit and sync again. Remove `strip-trace-headers` only after re-applying the old Ingress annotation.

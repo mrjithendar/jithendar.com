@@ -26,8 +26,8 @@ The SVGs are rendered by the script (shared writer in `../roboshop-ai/diagrams`)
 | NodePort 30080/30443, PROXY protocol trusted from 192.168.49.0/24 | values.yaml | Service, pod args |
 | HAProxy 3.2 TCP forwarder with send-proxy-v2 | `deploy/minikube/expose-ingress.sh` | indirect: allowlisted `/db/` returns 200 from the listed address; host container not inspected |
 | DNS-only Cloudflare A records to Hetzner | — | `dig` (Cloudflare NS, Hetzner IP via whois) |
-| Default TLSStore → jithendar-com-tls, LE cert apex + www | jithendar.com `minikube/50-certificate.yaml`, `55-tlsstore.yaml` | `openssl s_client`, expiry 2027-01-25 |
-| Routes and middlewares (inventory table) | jithendar.com `minikube/`, tools `deploy/minikube/{argocd,observability}`, moks `deploy/helm/moks/templates/ingress.yaml` | `kubectl get ingress,ingressroute*,middleware* -A`, curl status codes |
+| Default TLSStore → jithendar-com-tls, LE cert apex + www | jithendar.com `kubernetes/50-certificate.yaml`, `55-tlsstore.yaml` | `openssl s_client`, expiry 2027-01-25 |
+| Routes and middlewares (inventory table) | jithendar.com `kubernetes/`, tools `deploy/minikube/{argocd,observability}`, moks `deploy/helm/moks/templates/ingress.yaml` | `kubectl get ingress,ingressroute*,middleware* -A`, curl status codes |
 | Argo apps manual sync | tools `deploy/minikube/applications`, moks `deploy/argocd/minikube` | `spec.syncPolicy.automated` empty |
 | Metrics exposed but not scraped | tools `observability/prometheus/values.yaml` (no traefik job) | pod args `--metrics.prometheus`, pod annotations |
 | loki-read routers skipped | tools `observability/loki/loki-read-*.yaml` | Traefik log `secret 'monitoring/loki-read-auth' not found`; curl 404 |

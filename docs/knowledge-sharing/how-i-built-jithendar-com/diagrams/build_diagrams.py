@@ -8,7 +8,7 @@ The first command writes one editable .drawio file per figure beside this script
 CLI export each to public/images/how-i-built-jithendar-com/<name>.svg and .png. After editing a .drawio file by hand,
 run only export.sh, or this script overwrites the edits.
 
-Sources: minikube/*.yaml, minikube/kong/seo-agent-mcp.deck.yaml, .github/workflows/*.yml, services/seo-agent/app
+Sources: kubernetes/*.yaml, kubernetes/kong/seo-agent-mcp.deck.yaml, .github/workflows/*.yml, services/seo-agent/app
 (flows, crews, runs.py) and docs/seo/FLOWS.md, CREWS.md, COSTS.md (13 November 2026). Internal hostnames are left out.
 """
 import sys
@@ -141,7 +141,7 @@ def release():
     d.zone("z-other", "Other workflows", 20, 640, 920, 100)
     d.node("content", "ops", 50, 668, 270, 62, "ci-content.yml (push)", "MDX checks, content image;",
            "restart only if published")
-    d.node("manifests", "security", 345, 668, 270, 62, "deploy-minikube.yml", "merged PR touching minikube/:",
+    d.node("manifests", "security", 345, 668, 270, 62, "deploy-kubernetes.yml", "merged PR touching kubernetes/:",
            "applier SA, app objects only")
     d.node("infra", "ops", 640, 668, 270, 62, "ci-seo-agent.yml,", "ci-practice-executor.yml:", "same pr-<n> releases")
 

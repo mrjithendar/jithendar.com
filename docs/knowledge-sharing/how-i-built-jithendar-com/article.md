@@ -19,7 +19,7 @@ The edge has changed twice, and the commit history shows both changes.
 It started on **Traefik**. In early November I prepared a **Kong Gateway** migration. The `kong migration` commit moved the Traefik manifests into a `traefik-backup-conf/` folder, and the plan was a Kong instance in DB mode with its entities managed by decK. The SEO agent's MCP routes were even written as a decK file:
 
 ```yaml
-# minikube/kong/seo-agent-mcp.deck.yaml (excerpt)
+# kubernetes/kong/seo-agent-mcp.deck.yaml (excerpt)
 routes:
   - name: jithendar-mcp-public
     protocols: [https]
@@ -38,7 +38,7 @@ That file's own header reads "NOT APPLIED BY ANYTHING." Kong never became the si
 Running one component as both ingress and mesh made the rest simpler. The site doesn't own the Gateway. It only contributes a **delegate VirtualService**: the root routing table (in the separate cluster repo) handles hosts, TLS, redirects and compression, and the site adds its default route:
 
 ```yaml
-# minikube/60-istio-routing.yaml (excerpt)
+# kubernetes/60-istio-routing.yaml (excerpt)
 spec:
   http:
   - name: site
@@ -68,7 +68,7 @@ I spend my days on AWS EKS, so I copied the habits that matter there, even where
 **Availability basics.** Two replicas, a PodDisruptionBudget, and a topology spread that is *required*:
 
 ```yaml
-# minikube/30-jithendar-com.yaml (excerpt)
+# kubernetes/30-jithendar-com.yaml (excerpt)
 topologySpreadConstraints:
 - labelSelector:
     matchLabels:
@@ -116,7 +116,7 @@ The Editorial Crew has one detail I like: the SEO editor returns metadata only. 
 Each scheduled flow has its own CronJob running `python -m app.trigger <flow>`. That script posts to `/flows/{name}/kickoff` with a service token, and that is all it does:
 
 ```yaml
-# minikube/seo-agent-60-flow-triggers.yaml (excerpt)
+# kubernetes/seo-agent-60-flow-triggers.yaml (excerpt)
 spec:
   schedule: "10 6 * * *"        # daily Search Console sync
   timeZone: Etc/UTC
@@ -166,7 +166,7 @@ For content suggestions, the weekly flow takes the top-scoring articles without 
 
 ## CI/CD: tagged by PR number, built only on merge
 
-![How releases work. Opening, updating or reopening a pull request runs the check job: lint, typecheck, test, build, and rendering the production manifests with kubectl kustomize. A push straight to master runs nothing, because there is no push trigger. When the pull request is merged into master, the release job runs on a GitHub-hosted arm64 runner from the merge commit: scope checks whether image files changed, then lint, test and build run one step at a time, an image size gate fails above 15 percent over the baseline, a smoke test checks that /api/health reports the commit and that the image optimiser serves AVIF or WebP, and two tags are pushed, pr-number and latest. The Harbor registry keeps every pr tag. A least-privilege deployer identity that may only restart and watch runs a rollout restart, and deploy/jithendar-com pulls latest with imagePullPolicy Always. Rollback is kubectl set image to the last good pr tag. Other workflows: ci-content.yml on push checks MDX, builds a content image and restarts the site only for published changes; deploy-minikube.yml applies application objects with the applier identity when a merged pull request touches minikube/; infra.yml on push applies Terraform in infra/ on the default branch.](/images/how-i-built-jithendar-com/release-pipeline.svg)
+![How releases work. Opening, updating or reopening a pull request runs the check job: lint, typecheck, test, build, and rendering the production manifests with kubectl kustomize. A push straight to master runs nothing, because there is no push trigger. When the pull request is merged into master, the release job runs on a GitHub-hosted arm64 runner from the merge commit: scope checks whether image files changed, then lint, test and build run one step at a time, an image size gate fails above 15 percent over the baseline, a smoke test checks that /api/health reports the commit and that the image optimiser serves AVIF or WebP, and two tags are pushed, pr-number and latest. The Harbor registry keeps every pr tag. A least-privilege deployer identity that may only restart and watch runs a rollout restart, and deploy/jithendar-com pulls latest with imagePullPolicy Always. Rollback is kubectl set image to the last good pr tag. Other workflows: ci-content.yml on push checks MDX, builds a content image and restarts the site only for published changes; deploy-kubernetes.yml applies application objects with the applier identity when a merged pull request touches kubernetes/; infra.yml on push applies Terraform in infra/ on the default branch.](/images/how-i-built-jithendar-com/release-pipeline.svg)
 
 Every workflow runs on `pull_request` and starts its release job only when the PR is merged into the default branch:
 
