@@ -44,7 +44,7 @@ def platform():
            "OTel → Jaeger, Alloy → Loki")
     d.node("pg", "data", 35, 646, 280, 76, "PostgreSQL", "CloudNativePG, shared", "pgvector, seo_flow_runs", shape="db")
     d.node("vk", "data", 335, 646, 280, 76, "Valkey (shared)", "site cache bus,", "pub/sub only", shape="db")
-    d.node("graf", "ops", 640, 646, 285, 76, "Grafana", "dashboards from services/grafana", "synced by Argo CD")
+    d.node("graf", "ops", 640, 646, 285, 76, "Grafana", "dashboards from sites/…/grafana", "synced by Argo CD")
     d.node("r2", "external", 35, 758, 280, 56, "Cloudflare R2", "media, backups, report PDFs")
     d.node("claude", "external", 335, 758, 280, 56, "Anthropic API", "every call budget-guarded")
     d.node("google", "external", 640, 758, 285, 56, "Google APIs", "Search Console, GA4 (site sync)")
