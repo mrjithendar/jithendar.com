@@ -7,7 +7,6 @@ belongs to; each group is applied on its own, and `scripts/manifests.sh <group>`
 | Group | Files | Applied by |
 |---|---|---|
 | `site` | `00-…` to `85-…`, listed in `kustomization.yaml` | CI (`deploy-kubernetes.yml`) on merge: all of it except the two token Secrets and the ClusterRole/ClusterRoleBinding in `85-`, which `scripts/setup-ci-applier.sh` and `setup-ci-deployer.sh` apply |
-| `practice-executor` | `practice-executor-*.yaml` | a person, once, after gVisor is verified; then CI (application objects) |
 | `seo-agent` | `seo-agent-*.yaml` (SEO v4 agent service: internal API + MCP edge, flow-trigger CronJobs, including `seo-agent-62-promotion-triggers.yaml` for the two promotion flows). Kong entities for `/mcp/*` are in `kong/seo-agent-mcp.deck.yaml` (decK, not kubectl) | a person the first time (`scripts/manifests.sh seo-agent \| kubectl apply -f -`), after `scripts/create-seo-agent-secrets.sh` and pgvector (moks-cms `services/www/docs/seo/MANUAL_SETUP.md` §13–15 and "v4"); then CI applies the application objects on merge (ConfigMap, Deployment, Services, NetworkPolicies) and restarts the agent when its ConfigMap changed. The CronJobs stay with a person |
 
 ## Site (`kustomization.yaml`)
@@ -24,28 +23,14 @@ belongs to; each group is applied on its own, and `scripts/manifests.sh <group>`
 The Grafana dashboards are not cluster manifests here: they live in [`../grafana/`](../grafana/README.md) and
 reach Grafana through Argo CD.
 
-## Python practice executor (`practice-executor-*.yaml`)
+## Python practice (moved)
 
-Code runner in namespace `jithendar`, next to the site (moks-cms `services/www/docs/PYTHON_PRACTICE_EXECUTOR.md`). Not in
-`kustomization.yaml` on purpose, so its RBAC, quota, RuntimeClass and admission policies are never applied by CI. Apply it by hand, only after gVisor is
-installed (`scripts/install-gvisor-mk4.sh`), then prove isolation with `scripts/verify-practice-sandbox.sh`:
-
-```sh
-scripts/manifests.sh practice-executor | kubectl apply -f -
-```
-
-| File | Resources |
-|---|---|
-| `practice-executor-05-runtimeclass.yaml` | RuntimeClass `gvisor-nonet` (runsc, no network) |
-| `practice-executor-10-rbac.yaml` | ServiceAccounts `practice-dispatcher`, `practice-api`, `practice-sandbox`; Role/RoleBinding for the dispatcher |
-| `practice-executor-15-admission.yaml` | ValidatingAdmissionPolicies that pin down sandbox pods |
-| `practice-executor-20-quota.yaml` | ResourceQuota for all sandboxes together |
-| `practice-executor-40-executor.yaml` | ConfigMap, API and dispatcher Deployments, Service `practice-executor` |
-| `practice-executor-50-networkpolicies.yaml` | Allowed traffic |
-
-moks-cms's CI (`ci-practice-executor.yml`) pushes `:pr-<number>` and `:latest`; the manifests name the tag both
-Deployments run (`deploy-kubernetes.yml` moves it when moks-cms announces a release, and applies the application
-objects); sandbox pods keep using `practice-sandbox:latest`.
+The practice executor (code runner, namespace `jithendar`), its sandboxes, the problems and their manifests moved to
+[`mrjithendar/practice-programming`](https://github.com/mrjithendar/practice-programming) on 2026-11-16; its CI deploys
+the executor. Two things stay here: the site's egress rule to `app=practice-executor-api` (`30-jithendar-com.yaml`)
+and the init container `practice-catalog`, which copies that repository's `practice-catalog:latest` into
+`/app/practice` (`PRACTICE_CATALOG_PATH`). The CI deployer (`80-ci-deployer.yaml`) may still roll the two executor
+Deployments: practice-programming's CI uses the same token.
 
 ## Database (shared CloudNativePG cluster)
 
@@ -106,8 +91,7 @@ gh workflow run deploy-kubernetes.yml --ref master     # or Actions → deploy t
 
 By hand, with the `mk4` kubeconfig, the same objects are `kubectl apply -k kubernetes`.
 
-**Kube context.** Every script that changes the cluster (`scripts/create-*`, `set-*`, `setup-ci-*`,
-`verify-practice-sandbox.sh`) sources `scripts/lib/kube-context.sh`: it targets `KUBE_CONTEXT` if set, otherwise the
+**Kube context.** Every script that changes the cluster (`scripts/create-*`, `set-*`, `setup-ci-*`) sources `scripts/lib/kube-context.sh`: it targets `KUBE_CONTEXT` if set, otherwise the
 current kubectl context, refuses a context that doesn't exist, prints the context and its API server, and passes
 `--context` to every kubectl call so the whole run stays on one cluster. Without `KUBE_CONTEXT` it asks for confirmation
 when run from a terminal (`YES=1` skips the question; CI and pipes never prompt). `scripts/manifests.sh` only prints,

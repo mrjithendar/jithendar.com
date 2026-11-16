@@ -58,10 +58,16 @@ def documents(name: str) -> list[dict]:
     return [d for d in yaml.safe_load_all((KUBERNETES / name).read_text(encoding="utf-8")) if d]
 
 
+# Deployments the deployer's Role may patch whose manifests live in another repository: the practice executor's, in
+# mrjithendar/practice-programming (kubernetes/practice-executor-40-executor.yaml), whose CI rolls them out with this
+# ServiceAccount. Their specs are checked against these policies there, not here.
+ELSEWHERE = {"practice-executor-api", "practice-dispatcher"}
+
+
 def deployer_deployments() -> set[str]:
-    """The Deployments the deployer's Role lets it patch."""
+    """The Deployments the deployer's Role lets it patch whose manifests are in this repository."""
     role = next(d for d in documents("80-ci-deployer.yaml") if d["kind"] == "Role")
-    return {n for rule in role["rules"] if "patch" in rule["verbs"] for n in rule.get("resourceNames", [])}
+    return {n for rule in role["rules"] if "patch" in rule["verbs"] for n in rule.get("resourceNames", [])} - ELSEWHERE
 
 
 def pod_specs(names: set[str]) -> dict[str, dict]:

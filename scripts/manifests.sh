@@ -3,11 +3,12 @@
 # kubernetes/ is one flat folder; the file name says which group a manifest belongs to:
 #
 #   site               kustomization.yaml (00-… to 85-…): the site, routing, mesh, CI accounts
-#   practice-executor  practice-executor-*.yaml: Python practice runner (applied by hand once gVisor is verified)
 #   seo-agent          seo-agent-*.yaml: SEO v4 agent service + flow-trigger CronJobs (applied by hand, docs/seo/MANUAL_SETUP.md)
 #
 #   scripts/manifests.sh site | kubectl apply -f -
-#   scripts/manifests.sh practice-executor | kubectl diff -f -
+#   scripts/manifests.sh seo-agent | kubectl diff -f -
+#
+# The Python practice executor's manifests moved to mrjithendar/practice-programming on 2026-11-16.
 #
 # Only the site uses kustomize (Kustomize allows one kustomization per folder). The other group is plain
 # files, printed in name order, which is the order they must be applied in.
@@ -20,7 +21,7 @@ case "$group" in
   site)
     kubectl kustomize "$dir"
     ;;
-  practice-executor|seo-agent)
+  seo-agent)
     shopt -s nullglob
     files=("$dir/$group"-*.yaml)
     [[ ${#files[@]} -gt 0 ]] || { echo "No kubernetes/$group-*.yaml files" >&2; exit 1; }
@@ -31,7 +32,7 @@ case "$group" in
     done
     ;;
   *)
-    echo "usage: $0 site|practice-executor|seo-agent" >&2
+    echo "usage: $0 site|seo-agent" >&2
     exit 2
     ;;
 esac

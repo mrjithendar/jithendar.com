@@ -1,14 +1,15 @@
 name: deploy to kubernetes
 
-# Deploys the whole site from kubernetes/ to the mk4 cluster: the CMS (moks-cms), the SEO agent and the practice
-# executor run the image tags the manifests name, so moving to a new moks-cms release is a change of tag here (by hand
-# in a pull request, or automatically, below). The site's own files ship in the content image (content.yml), whose
-# :latest the manifests name. A manifest that names :latest keeps the image a workload already runs
+# Deploys the whole site from kubernetes/ to the mk4 cluster: the CMS (moks-cms) and the SEO agent run the image tags
+# the manifests name, so moving to a new moks-cms release is a change of tag here (by hand in a pull request, or
+# automatically, below). The site's own files ship in the content image (content.yml), and the practice problems in
+# practice-catalog (mrjithendar/practice-programming, which also deploys the practice executor); the manifests name
+# :latest of both. A manifest that names :latest keeps the image a workload already runs
 # (scripts/keep-live-images.py); one that names a tag is applied as written. Moved here from moks-cms on 2026-11-16.
 #
 # bump   → repository_dispatch "moks-cms-released" {component, tag}, sent by moks-cms's CI after it pushes an image
 #          (its scripts/notify-sites.sh): put the tag in the manifests (www → moks-cms in 30-jithendar-com.yaml,
-#          seo-agent → seo-agent-*.yaml, practice-executor → practice-executor-*.yaml), commit it to master as
+#          seo-agent → seo-agent-*.yaml), commit it to master as
 #          github-actions[bot], then plan and deploy that commit as below.
 #
 # plan   → pull requests touching the manifests (and manual runs): render the three groups of kubernetes/
@@ -25,7 +26,6 @@ name: deploy to kubernetes
 #                      (including CI's own), quotas, PeerAuthentication and AuthorizationPolicy.
 #                      Owner decision 2026-11-14 (moks-cms, services/www/docs/DEPLOYMENT.md): a merged pull request can
 #                      therefore change what CI itself may do in the namespace.
-#   practice-executor  application objects only (Deployments, Services, ConfigMaps, NetworkPolicies, …)
 #   seo-agent          application objects only; its CronJobs stay with a person
 # Never applied by CI: Secrets, ClusterRoles and ClusterRoleBindings, ClusterIssuers, the RuntimeClass, admission
 # policies, CronJobs. Nothing is ever deleted (no --prune).
@@ -89,7 +89,6 @@ jobs:
           case "$COMPONENT" in
             www) image=moks-cms files=(kubernetes/30-jithendar-com.yaml) ;;
             seo-agent) image=seo-agent files=(kubernetes/seo-agent-*.yaml) ;;
-            practice-executor) image=practice-executor files=(kubernetes/practice-executor-*.yaml) ;;
             *) echo "::error::Unknown component: $COMPONENT"; exit 1 ;;
           esac
           [[ "$TAG" =~ ^(pr|manual)-[0-9]+$ ]] || { echo "::error::Not a moks-cms release tag: $TAG"; exit 1; }
@@ -132,7 +131,7 @@ jobs:
         run: |
           set -euo pipefail
           # The site group is applied in full (--all); the other two only as application objects.
-          for group in site practice-executor seo-agent; do
+          for group in site seo-agent; do
             echo "::group::$group"
             flags=(); [[ "$group" == site ]] && flags=(--all)
             scripts/manifests.sh "$group" | python scripts/ci-app-manifests.py "${flags[@]}" > /dev/null
@@ -172,7 +171,7 @@ jobs:
           set -euo pipefail
           : > "$RUNNER_TEMP/rollouts.txt"
           # The site group is applied in full (--all); the other two only as application objects.
-          for group in site practice-executor seo-agent; do
+          for group in site seo-agent; do
             flags=(); [[ "$group" == site ]] && flags=(--all)
             scripts/manifests.sh "$group" | python scripts/ci-app-manifests.py "${flags[@]}" --rollouts "$RUNNER_TEMP/$group.rollouts" > "$RUNNER_TEMP/$group.yaml"
             cat "$RUNNER_TEMP/$group.rollouts" >> "$RUNNER_TEMP/rollouts.txt"
@@ -192,7 +191,7 @@ jobs:
           export KUBECONFIG="$RUNNER_TEMP/kubeconfig"
           trap 'rm -f "$KUBECONFIG"' EXIT
           (umask 077; perl -pe 's/\$\{(MK4_[A-Z_]+)\}/$ENV{$1}/g' .github/jithendar-ci-applier.yaml > "$KUBECONFIG")
-          groups=(site practice-executor seo-agent)
+          groups=(site seo-agent)
 
           # The image workflows decide what each workload runs (pr-<number>, or an earlier one after a rollback); the
           # manifests name :latest only so that a first apply has something to start. Without this step every
@@ -256,7 +255,7 @@ jobs:
             if [[ $changed -eq 1 ]]; then echo '- Changes applied (see the "Changes" group in the log).'; else echo '- No changes: the cluster already matched.'; fi
             if [[ ${#restarted[@]} -gt 0 ]]; then echo "- Restarted: ${restarted[*]}"; fi
             echo "- Ready: $(paste -sd ' ' "$RUNNER_TEMP/rollouts.txt")"
-            echo '- Not applied by CI: Secrets, ClusterRoles and ClusterRoleBindings, ClusterIssuers, RuntimeClass, admission policies, CronJobs; and for practice-executor and seo-agent also RBAC, ServiceAccounts and quotas.'
+            echo '- Not applied by CI: Secrets, ClusterRoles and ClusterRoleBindings, ClusterIssuers, RuntimeClass, admission policies, CronJobs; and for seo-agent also RBAC, ServiceAccounts and quotas. The practice executor deploys from mrjithendar/practice-programming.'
           } >> "$GITHUB_STEP_SUMMARY"
       # The site is checked even when another workload failed to roll out, so that failure cannot hide a broken site.
       # Cloudflare answers 403 to GitHub-hosted runners, so the app is tested through a port-forward to the site

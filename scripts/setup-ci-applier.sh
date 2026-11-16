@@ -67,7 +67,7 @@ for denied in "get secrets" "delete deployments" "create pods" "create namespace
   [[ "$(can $denied 2>/dev/null || true)" == no ]] || { echo "The ServiceAccount may '$denied'; it must not." >&2; exit 1; }
 done
 echo "→ Dry run of every object the workflow applies, as $SA"
-for group in site practice-executor seo-agent; do
+for group in site seo-agent; do
   flags=(); [[ "$group" == site ]] && flags=(--all)
   scripts/manifests.sh "$group" | python3 scripts/ci-app-manifests.py "${flags[@]}" 2>/dev/null \
     | command kubectl --kubeconfig "$KCFG" apply --dry-run=server -f - >/dev/null
