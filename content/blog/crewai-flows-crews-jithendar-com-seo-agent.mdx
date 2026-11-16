@@ -1,0 +1,447 @@
+---
+title: "CrewAI as the Only Job Engine: Flows and Crews Behind jithendar.com"
+slug: crewai-flows-crews-jithendar-com-seo-agent
+description: "How jithendar.com runs every AI workflow and scheduled SEO job as a CrewAI Flow: Postgres state, one kickoff path, capped crews and a human approval gate."
+seoTitle: "CrewAI Flows in Production: State, Limits and Approval"
+seoDescription: "A real CrewAI Flows setup: typed state in Postgres, one kickoff path, a BaseLLM adapter with a budget guard, capped and cancellable crews, human approval."
+author: jithendar-dharmapuri
+category: ai-agents
+tags: [CrewAI, AI Agents, LLMOps, Claude, PostgreSQL, Kubernetes, FastAPI, SEO]
+contentType: analysis
+status: draft
+featuredImage:
+  src: /images/crewai/seo-agent-crewai-kickoff.png
+  alt: "One kickoff path in seo-agent. CronJobs, the admin UI and the admin MCP server all call POST /flows/{name}/kickoff. FlowRunner.kickoff applies the start policy, validates inputs, creates the run row and takes a lock. A CrewAI Flow runs its steps, a Crew runs in a worker thread, and ClaudeCrewLLM sends each model call through the budget guard to the Anthropic API. PostgreSQL holds the run state and the web app serves callbacks."
+  width: 1800
+  height: 880
+related:
+  - blog/crewai-moks-sre-agent-kubernetes-investigation-crew
+  - blog/how-i-built-jithendar-com
+  - blog/rag-evaluation-ask-the-blog-jithendar-com
+  - blog/four-ai-systems-one-cluster
+  - blog/multi-ai-agent-systems-with-crewai-course-notes
+sources:
+  - title: "Flows"
+    url: https://docs.crewai.com/en/concepts/flows
+    publisher: CrewAI
+  - title: "Mastering Flow State Management"
+    url: https://docs.crewai.com/en/guides/flows/mastering-flow-state
+    publisher: CrewAI
+  - title: "Human Feedback in Flows"
+    url: https://docs.crewai.com/en/learn/human-feedback-in-flows
+    publisher: CrewAI
+  - title: "Custom LLM Implementation"
+    url: https://docs.crewai.com/en/learn/custom-llm
+    publisher: CrewAI
+---
+<Todo>Draft written on 2026-11-16 from Git only: moks-tech/moks-cms at bb6a4ba (services/seo-agent, services/www/docs/seo) and this repository's kubernetes/ folder. Nothing was run and the cluster was not inspected. Before publishing: (1) docs/seo/FLOWS.md and DECISIONS.md D-54 still say crewai 1.15.30, while pyproject.toml pins 1.15.34: this article follows pyproject.toml; (2) "How I built jithendar.com" quotes the older crew limits (150k tokens, 600 seconds), while kubernetes/seo-agent-40-seo-agent.yaml now sets 300000 and 1200: align one of them; (3) moks-cms is private, so the code here has no links; say so or make the snippets you are happy to show public. Evidence table: docs/knowledge-sharing/crewai/README.md.</Todo>
+
+Every AI workflow and every scheduled SEO job on this site runs as a [CrewAI Flow](https://docs.crewai.com/en/concepts/flows) inside one small Python service, `seo-agent`. There is no LangGraph, n8n, Airflow, Temporal or Celery next to it. Kubernetes CronJobs only trigger flows.
+
+The design rule fits in one line: **Flows orchestrate, Crews reason, plain Python does the data work.** [How I built jithendar.com](/blog/how-i-built-jithendar-com) gives the overview of the platform. This article is the implementation: what a flow looks like, where its state lives, how a crew is capped and cancelled, and why no flow, crew or tool can publish.
+
+The code is from the CMS repository at commit `bb6a4ba` (16 November 2026): crewai 1.15.34, anthropic 2.3.0, Python 3.13. That repository is private, so file paths are given for orientation and long lines are re-wrapped. If agents, tasks and crews are new to you, start with [six ideas from the crewAI course](/blog/multi-ai-agent-systems-with-crewai-course-notes).
+
+::toc
+
+## Why one engine
+
+The previous version of the SEO platform used LangGraph for the workflow and LangChain for model wrappers. Version 4 removed both and moved everything onto CrewAI, which took the service from 177 locked packages to 161.
+
+One engine means one of each thing we have to operate:
+
+- one table of runs (`seo_flow_runs`), whatever started them;
+- one kickoff endpoint, used by CronJobs, admin buttons and MCP tools alike;
+- one set of limits and one budget for every model call.
+
+The flows fall into three groups.
+
+| Group | Flows | Uses a crew |
+| --- | --- | --- |
+| Data jobs | `gsc_sync_flow`, `ga4_sync_flow`, `tech_audit_flow`, `reindex_flow`, `ask_gaps_flow`, `seo_ml_flow`, `internal_linking_flow` | No. Plain Python steps |
+| Drafting and reporting | `optimize_article_flow`, `new_article_flow`, `report_flow`, `promotion_flow`, `content_ideas_flow`, and `weekly_recommendations_flow`, which fans out to `optimize_article_flow` | Yes. Optimization, Editorial, Report and Promotion crews |
+| Publishing | `publish_flow` | No. Started only by a human approval |
+
+The news desk runs on the same machinery, with eight `news_*` flows and a six-agent crew. It deserves its own article.
+
+## One kickoff path
+
+![One kickoff path. CronJobs, the admin UI and the admin MCP server all call POST /flows/{name}/kickoff. Inside the single seo-agent pod, FlowRunner.kickoff applies the start policy, validates inputs, creates the run row, takes the lock and starts a background task. The CrewAI Flow runs its steps, a Crew runs in a worker thread, and ClaudeCrewLLM calls the Anthropic API through the budget guard. PostgreSQL holds the runs and the usage rows, and the web app's callback API serves articles, validators and the draft API.](/images/crewai/seo-agent-crewai-kickoff.svg)
+
+`FlowRunner.kickoff` is the only entry point. The HTTP API, the review decision, the CronJob trigger, the weekly fan-out and the admin MCP tool all call it. It does five things in order:
+
+1. Applies the start policy (who may start which flow).
+2. Validates the inputs against that flow's strict Pydantic model. Extra fields are refused.
+3. Creates the run row with status `queued`.
+4. Starts a background task and returns the run id.
+5. In that task, takes the lock for this flow and target, then runs the flow.
+
+Each flow is registered once, with its factory, its input model and its lock target. From `app/flows/__init__.py`:
+
+```python
+"new_article_flow": FlowSpec("new_article_flow", NewArticleFlow.create, NewArticleInput, _draft, _draft_of),
+"publish_flow": FlowSpec("publish_flow", PublishFlow.create, PublishInput, _draft, _draft_of),
+```
+
+The start policy is nine lines in the same file:
+
+```python
+def check_kickoff(name: str, triggered_by: str) -> None:
+    if name not in SPECS:
+        raise RunError(404, f"unknown flow {name}")
+    if name in APPROVAL_ONLY and triggered_by != "approval":
+        raise RunError(403, f"{name} starts only from a human approval in the review UI")
+    if triggered_by == "approval" and name not in APPROVAL_ONLY:
+        raise RunError(400, "only publish_flow is started by an approval")
+    if triggered_by == "mcp" and name not in MCP_KICKOFF_ALLOWLIST:
+        raise RunError(403, f"{name} cannot be started from MCP")
+```
+
+`APPROVAL_ONLY` holds one name, `publish_flow`. We come back to it in [The human gate](#the-human-gate).
+
+## A flow in full
+
+![new_article_flow. load_brief is the start method. draft listens to it and to the router label to_retry, and runs the Editorial Crew. The router after_draft returns to_paused or to_validate. validate_draft calls the web app's validators, and the router after_validate returns to_ok, to_retry or to_fail. save_draft is the flow's only write. After every method, PgFlowPersistence.save_state writes the state into the run's row in seo_flow_runs.](/images/crewai/seo-agent-new-article-flow.svg)
+
+`new_article_flow` turns an approved calendar idea into a draft that waits for review. It shows every construct we use: a start method, listeners, two routers and a retry loop. From `app/flows/new_article.py`:
+
+```python
+@persist(INSTANCE_ONLY)
+class NewArticleFlow(SeoFlow[NewArticleState]):
+    FLOW: ClassVar[str] = "new_article_flow"
+
+    @start()
+    async def load_brief(self) -> None:
+        async with self.step("load_brief"):
+            s, web = self.state, self.deps.web
+            if s.feedback:
+                await self.retry(lambda: web.set_draft_status(s.draft_id, "generating", None))
+            b = await self.retry(lambda: web.calendar_brief(s.calendar_id))
+            s.brief = b
+            s.article_id = b.get("postId") or s.article_id
+
+    @listen(or_(load_brief, "to_retry"))
+    async def draft(self) -> None:
+        async with self.step("draft"):
+            s = self.state
+            s.attempts += 1
+            crew = self.deps.editorial_crew() if self.deps.editorial_crew else None
+            if crew is None:
+                raise RuntimeError("editorial crew is not configured")
+            try:
+                r = await crew.run(s.brief, feedback=s.feedback, validator_feedback=s.validator_feedback,
+                                   feedback_untrusted=s.triggered_by == "mcp", draft_id=s.draft_id)
+            except BudgetExceeded as e:
+                self.add_budget_cost(e)
+                s.outcome = "paused_budget"
+                s.errors.append(f"budget: {e.detail}")
+                return
+```
+
+The two routers decide what runs next:
+
+```python
+@router(draft)
+def after_draft(self) -> str:
+    return "to_paused" if self.state.outcome == "paused_budget" else "to_validate"
+```
+
+```python
+@router(validate_draft)
+def after_validate(self) -> str:
+    s = self.state
+    errors = s.validation_report.get("errors")
+    incomplete = bool((s.document or {}).get("incomplete"))
+    if errors and not incomplete:
+        return "to_retry" if s.attempts < MAX_ATTEMPTS else "to_fail"
+    return "to_ok"
+```
+
+Three things to notice:
+
+- **The crew is one step.** The flow does not know how many agents wrote the draft. It gets a result, a cost and a status.
+- **Validation is not the model's job.** `validate_draft` sends the document to the web app's validators. Their errors go back to the crew once as `validator_feedback`, kept apart from the human reviewer's feedback so that a retry never drops what the reviewer asked for.
+- **An incomplete draft is still saved.** A crew that hit a limit returns a partial result marked `incomplete`. It is saved with error flags that block approval, because a partial draft is more useful to a reviewer than nothing.
+
+`self.step(name)` is our own context manager on the base class. It sets the run's `current_step`, opens an OpenTelemetry span named `flow.<flow>.<step>` and records the step's duration.
+
+## Five things CrewAI did that we had to handle
+
+We read the installed package instead of trusting memory, and found five behaviours on the 1.15 line that changed our code.
+
+| What CrewAI does | What we did |
+| --- | --- |
+| A Flow creates CrewAI's unified `Memory` (LanceDB) for itself | The base class sets `_skip_auto_memory`, and LanceDB is not installed |
+| `@persist()` without a backend creates a SQLite `flow_states.db`, even when the instance is given another backend | Every class uses `@persist(INSTANCE_ONLY)`, a backend that raises |
+| A router label equal to a method name is refused | Router labels carry a `to_` prefix |
+| `@start` and `@listen` methods inherited from a base class are not registered | The three job flows are built by a factory, each with its own methods |
+| A flow method named `validate` shadows Pydantic's `BaseModel.validate` | The method is `validate_draft`. mypy found this one |
+
+The base class, from `app/flows/base.py`:
+
+```python
+class SeoFlow(Flow[S]):
+    """Base class. Subclasses set FLOW (the registry name) and define their steps."""
+
+    FLOW: ClassVar[str] = "flow"
+    _skip_auto_memory: ClassVar[bool] = True  # CrewAI would otherwise create a Memory (LanceDB) per flow
+    _deps: Any = PrivateAttr(default=None)
+
+    @classmethod
+    def create(cls, deps: Deps, persistence: Any) -> SeoFlow[Any]:
+        f = cls(persistence=persistence, suppress_flow_events=True, tracing=False)
+        f._deps = deps
+        return f
+```
+
+And the placeholder backend that makes a forgotten Postgres binding fail loudly, from `app/runs.py`:
+
+```python
+def save_state(self, flow_uuid: str, method_name: str, state_data: dict[str, Any] | BaseModel) -> None:
+    raise RuntimeError("flow persistence must be set per instance (PgFlowPersistence); local SQLite is not allowed")
+```
+
+LanceDB is a hard dependency of crewai, for the memory feature we never enable. We resolve it away in `pyproject.toml`:
+
+```toml
+override-dependencies = ["lancedb; sys_platform == 'never'"]
+```
+
+chromadb cannot be dropped the same way, because crewai imports it at load. The image keeps the client-side types and deletes the Chroma server from site-packages, and a test fails if the service ever imports the server.
+
+## State in Postgres, one run at a time
+
+Each flow has a typed Pydantic state. CrewAI calls the persistence backend after every flow method, and ours writes into the run's own row. From `app/runs.py`:
+
+```python
+def save_state(self, flow_uuid: str, method_name: str, state_data: dict[str, Any] | BaseModel) -> None:
+    st = _state_dict(state_data)
+    with self._pool.connection() as c:
+        c.execute(
+            "update seo_flow_runs set state_json = %s::jsonb, current_step = %s, tokens = %s, cost_usd = %s, updated_at = now() where run_id::text = %s",
+            (json.dumps(st, default=str), method_name, int(st.get("tokens") or 0), float(st.get("cost_usd") or 0), flow_uuid),
+        )
+```
+
+CrewAI calls `save_state` synchronously, so this backend has a small synchronous pool of its own. The row is also what the admin UI and the MCP tools read, so "what is this run doing" has one answer.
+
+Two mechanisms allow one active run per flow and target:
+
+- **A partial unique index** on `(flow_name, target_id)` for queued and running rows. A second kickoff inserts nothing and gets the existing run back, marked `existing: true`.
+- **A session advisory lock** on a dedicated connection that lives exactly as long as the run. If the pod dies, the connection closes and the lock is released.
+
+```python
+conn = await psycopg.AsyncConnection.connect(self.dsn, autocommit=True, prepare_threshold=None)
+try:
+    cur = await conn.execute("select pg_try_advisory_lock(hashtextextended(%s, 0)) as ok", (f"seo_flow:{key}",))
+    row = await cur.fetchone()
+    if row and row[0]:
+        return conn
+```
+
+Runs are not resumed after a crash. On start-up, runs the previous process left queued or running are marked failed, and a drafting run's draft is set to "regenerate". A rerun starts from the beginning, which is safe because the steps are idempotent: upserts, one open draft per article, single-use approvals.
+
+## Crews: capped, cancellable, on our own model client
+
+![The Editorial Crew. Four agents run in sequence: a researcher, a technical writer, a technical reviewer and an SEO editor, each with its own model, turn limit and read-only tools. Code then assembles the draft: the body is the reviewer's corrected text, the SEO editor's answer is parsed as SeoMetadata, and every URL a tool fetched is recorded so that a cited source the crew never fetched is flagged.](/images/crewai/seo-agent-editorial-crew.svg)
+
+All crews share one module, `app/crews/common.py`. An agent is built the same way whichever crew it belongs to:
+
+```python
+out[d.key] = Agent(
+    role=d.role,
+    goal=d.goal,
+    backstory=f"{d.backstory}\n\n{UNTRUSTED}",
+    tools=tools,
+    llm=agent_llm,
+    allow_delegation=False,
+    allow_code_execution=False,
+    max_iter=settings.crew_max_iters.get(f"{crew}.{d.key}") or settings.crew_max_iter,
+    max_rpm=settings.crew_max_rpm,
+    max_execution_time=max(30, settings.crew_timeout_s // 2),
+    max_retry_limit=1,
+    memory=False,
+    verbose=False,
+)
+```
+
+The crew itself is `Process.sequential` with `memory=False`, `planning=False`, `share_crew=False` and `tracing=False`.
+
+### The model client
+
+`ClaudeCrewLLM` is a CrewAI [`BaseLLM`](https://docs.crewai.com/en/learn/custom-llm) over the service's own Anthropic client. CrewAI has a built-in Anthropic provider, but it pins an older `anthropic` release than the 2.3.0 we use, and it would bypass the budget guard. Every call starts like this:
+
+```python
+run: CrewRun = self._run
+run.check()  # cancelled, failed or over the token cap: no call is sent
+system, user = _messages_to_prompt(messages)
+spec = CallSpec(model=self.model, purpose=self._purpose, prompt_version=self._prompt_version,
+                cached_system=[UNTRUSTED, system], user=user,
+                max_tokens=int(self.max_tokens or DEFAULT_MAX_TOKENS),
+                draft_id=self._draft_id, run_id=run.run_id, agent=self._agent)
+```
+
+That one `CallSpec` buys four things:
+
+- **Budget.** The call goes through the monthly budget guard. A call that would cross the cap is never sent, and the flow run ends as `paused_budget`.
+- **Accounting.** Each call writes a usage row with its run id and the agent's key, so cost can be attributed to a run and to an agent.
+- **Prompt caching.** The stable prefix (our untrusted-data rule plus CrewAI's system prompt for that agent) is sent as cached system blocks, so the repeated calls of one agent can read it from the cache.
+- **Per-agent models.** `SEO_CREW_MODELS` maps `"<crew>.<agent>"` to a model. In production the Editorial Crew's writer and technical reviewer run on Opus, and the researcher and SEO editor on Sonnet.
+
+Like the MOKS adapter in [the first article](/blog/crewai-moks-sre-agent-kubernetes-investigation-crew), it reports `supports_function_calling()` as `False`, so CrewAI uses its text protocol. That is also what lets a scripted model drive the real crews in tests.
+
+### Limits that return a result
+
+`CrewRun.check()` runs before every model call:
+
+```python
+def check(self) -> None:
+    if self.cancelled:
+        raise CrewCancelled("crew run cancelled (wall-clock limit or cancelled run)")
+    if self.failure is not None:
+        raise CrewAborted(f"crew stopped after an invalid model answer: {self.failure}")
+    if self.tokens >= self.max_tokens:
+        raise TokenCapExceeded(f"crew token cap {self.max_tokens} reached")
+```
+
+The crew runs in an executor thread with a wall clock around it:
+
+```python
+fut = loop.run_in_executor(None, crew.kickoff)
+try:
+    output = await asyncio.wait_for(fut, timeout=settings.crew_timeout_s)
+except TimeoutError:
+    run.cancel()
+    status, reason = "incomplete", f"wall-clock limit {settings.crew_timeout_s}s reached"
+except BudgetExceeded as e:
+    budget = e
+except TokenCapExceeded as e:
+    status, reason = "incomplete", str(e)
+```
+
+asyncio cannot stop a thread. `run.cancel()` marks the run cancelled and cancels the model call in flight, and from then on `check()` refuses every call, so the thread stops calling Claude at its next step. The same path handles a reviewer who rejects a draft while it is still being written.
+
+| Limit | Production value | When it is hit |
+| --- | --- | --- |
+| Turns per agent (`CREW_MAX_ITER`) | 4, with researcher 10, writer 6 and technical reviewer 8 in the Editorial Crew | CrewAI asks that agent for its final answer |
+| Tokens per crew run (`CREW_MAX_TOKENS_PER_RUN`) | 300,000 | Result marked `incomplete` |
+| Wall clock per crew (`CREW_TIMEOUT_SECONDS`) | 1,200 seconds | Result marked `incomplete` |
+| Wall clock per flow run (`SEO_FLOW_TIMEOUT_SECONDS`) | 2,700 seconds | Run marked `failed` |
+| Output tokens per call | 4,096, or 16,000 for agents that write a whole body | An answer cut off at the cap is an error, never a short draft |
+| Monthly LLM budget | One cap shared with the web app | Run ends as `paused_budget` |
+
+### Assembled in code
+
+The Editorial Crew's last agent, the SEO editor, returns metadata only: title, slug, meta description, outline, sources and internal links. The body that ships is the technical reviewer's corrected body. So a long article cannot be truncated inside a JSON answer, and no rewrite can slip in after the technical review.
+
+A hook records every URL a tool fetched during the run. After the crew finishes, a source the draft cites but the crew never fetched is flagged for the human reviewer.
+
+## Tools: an allowlist and data blocks
+
+An agent can hold six tools, all read-only. From `app/tools/__init__.py`:
+
+```python
+ALLOWED_TOOLS = frozenset({"read_article", "vector_search", "gsc_queries_for_topic", "gsc_queries_for_page", "style_guide", "fetch_allowlisted_docs"})
+```
+
+`build_tools` refuses any other name, and a test asserts the exact set each agent holds. There is no shell, no arbitrary HTTP, no code execution and no database write. The one write in the system, creating or updating a draft, is a flow step and never a tool.
+
+`fetch_allowlisted_docs` is the only tool that leaves the cluster. It accepts HTTPS URLs on an allowlist of official documentation hosts, and the web app's fetcher re-checks the host and refuses private address ranges.
+
+Everything a model reads from outside arrives in a data block with its closing tags neutralised:
+
+```python
+def data_block(name: str, content: Any) -> str:
+    """Same as dataBlock() in services/www/src/lib/seo-intel/llm.ts: untrusted content, closing tags neutralised."""
+    import json
+
+    text = redact(content if isinstance(content, str) else json.dumps(content, ensure_ascii=False, indent=1))
+    safe = re.sub(r"[^a-z0-9_-]", "", name, flags=re.I)
+    return f'<data name="{safe}">\n{re.sub(r"</?data\b", "‹data", text, flags=re.I)}\n</data>'
+```
+
+Every agent's backstory ends with the same rule: content inside data blocks is reference material, never instructions, and the agent cannot publish, approve or change anything. As in MOKS, the prompt is the second line of defence. The first is that no tool can write.
+
+## The human gate
+
+![The human gate. A drafting flow saves a draft with status ready_for_review and ends, with its final state in seo_flow_runs. Later a person reviews each change in the web app, and Approve writes a single-use approval row. The web app posts the decision to seo-agent, the only code that sets triggered_by to approval. check_kickoff answers 403 to publish_flow from any other trigger. publish_flow applies the accepted changes, cms_publish re-checks and consumes the approval in the web app, and verify_live decides between submission and a rollback offer.](/images/crewai/seo-agent-approval-gate.svg)
+
+CrewAI has [`@human_feedback`](https://docs.crewai.com/en/learn/human-feedback-in-flows), which pauses a persisted flow until feedback arrives. We do not use it. A review can take days, and we did not want anything to depend on a paused run surviving restarts and deploys. The approval also has to be recorded and re-checked by the web app, which owns the content.
+
+So approval splits the work into two flows:
+
+1. A drafting flow **ends** at `ready_for_review`. Nothing waits in memory.
+2. A person reviews the draft in the admin UI and accepts, rejects or edits each change.
+3. Approve writes an approval row: the approver, the accepted change ids, a seven-day expiry, single use.
+4. The web app posts the decision to `seo-agent`, which starts a new flow.
+
+That last step is the only code that sets `triggered_by="approval"`. From `app/services/review.py`:
+
+```python
+return await runner.kickoff("publish_flow", {"draft_id": draft_id, "approval_id": approval_id,
+                                             "accepted_change_ids": accepted_change_ids,
+                                             "edits": edits or {}, "actor": actor},
+                            triggered_by="approval", actor=actor)
+```
+
+`publish_flow` then applies the accepted changes and asks the web app to publish. The web app checks the approval again (unused, unexpired, for this draft, with exactly these change ids, by someone who is still an admin) and consumes it. `verify_live` tries the live page three times. If it passes, the URL is submitted to search engines and reindexed. If it fails, nothing is submitted and the admin gets an alert with a one-click rollback.
+
+Three guarantees are tested:
+
+- No drafting flow, crew, tool or MCP module calls the publish, verify or submit callbacks. A static test over the source enforces it.
+- `publish_flow` is refused for every trigger except `approval`: 403 from the generic kickoff endpoint, refused from MCP.
+- A forged or reused approval never publishes.
+
+## Triggers are configuration
+
+Each scheduled flow has a CronJob in this site's repository, in `kubernetes/seo-agent-60-flow-triggers.yaml`. Its container runs one command:
+
+```yaml
+containers:
+  - name: trigger
+    image: registry.jithendar.com/jithendar/seo-agent:latest
+    imagePullPolicy: Always
+    command: ["python", "-m", "app.trigger", "gsc_sync_flow"]
+```
+
+`app/trigger.py` holds no business logic. It makes one authenticated request:
+
+```python
+r = httpx.post(f"{url}/flows/{name}/kickoff", json={"inputs": inputs, "triggered_by": "cron"},
+               headers={"Authorization": f"Bearer {token}"}, timeout=60)
+```
+
+An "existing" answer counts as success: the previous run is still going, which is `concurrencyPolicy: Forbid` at the flow level too. Then the script calls the Istio sidecar's quit endpoint so the Job's pod can finish.
+
+Changing a schedule is a one-line change to a manifest. Ten CronJobs cover the SEO flows, two the promotion flows and three the news desk.
+
+## How we test it
+
+No test calls Claude. `tests/test_crews.py` runs the real CrewAI crews with a deterministic model that plays scripted ReAct turns, and real tool calls go through a fake web app. `tests/test_flows.py` runs the flows against fake crews. Some of the test names say what we care about:
+
+- `test_token_cap_returns_a_partial_draft_marked_incomplete`
+- `test_wall_clock_timeout_returns_incomplete`
+- `test_injected_instructions_in_article_text_change_nothing`
+- `test_publish_flow_cannot_be_started_without_an_approval`
+- `test_no_drafting_code_path_reaches_publish`
+- `test_no_sqlite_or_crewai_memory_is_created`
+- `test_third_party_telemetry_is_off`
+
+The last one matters because CrewAI's telemetry is on by default. The image sets `CREWAI_DISABLE_TELEMETRY`, `CREWAI_DISABLE_TRACKING` and `CREWAI_TRACING_ENABLED=false`, and every flow and crew is created with `tracing=False`.
+
+## What this design costs
+
+- **One replica.** Flows run as background tasks in a single pod, and the Deployment's strategy is `Recreate`. A deploy interrupts running flows, which are then failed on start-up and have to be rerun.
+- **No resume.** A crashed run starts again from its first step. That is acceptable because drafting is idempotent and publishing is guarded by a single-use approval, but a long crew run can be paid for twice.
+- **A heavy dependency.** crewai brings packages we never use. We override one away, strip the server out of another and keep a test that watches the import surface.
+- **A fast-moving library.** Our rule is to pin the newest stable release that is at least two weeks old, and to read the installed source for every API we rely on. The five behaviours above came from that reading, not from release notes.
+
+## Summary
+
+- A Flow is the unit of work: typed state, explicit routers, one row per run.
+- Crews are a step inside a flow, with limits that return a partial result instead of looping.
+- Models are reached through our own client, so budget, accounting and caching are the same everywhere.
+- Agents hold read-only tools. Writing a draft is a flow step, and publishing is a different flow that only a recorded human approval can start.
+- CronJobs, buttons and MCP tools are three ways to call the same kickoff.
+
+The same ideas, applied to an agent that reads production clusters instead of articles, are in [How we added CrewAI to MOKS](/blog/crewai-moks-sre-agent-kubernetes-investigation-crew).

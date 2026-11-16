@@ -1,0 +1,100 @@
+<mxfile host="app.diagrams.net" agent="build_diagrams.py" version="24.7.17" type="device">
+  <diagram id="seo-agent-crewai-kickoff-0" name="One kickoff path">
+    <mxGraphModel dx="800" dy="800" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="440" background="#ffffff" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="z0" value="Triggers" style="rounded=1;arcSize=2;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=left;verticalAlign=top;spacingLeft=8;spacingRight=8;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=wrap;html=0;" vertex="1" parent="1">
+          <mxGeometry x="15" y="12" width="870" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="z1" value="" style="rounded=1;arcSize=2;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=left;verticalAlign=top;spacingLeft=8;spacingRight=8;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=wrap;html=0;" vertex="1" parent="1">
+          <mxGeometry x="15" y="150" width="870" height="136" as="geometry" />
+        </mxCell>
+        <mxCell id="z2" value="Outside the pod" style="rounded=1;arcSize=2;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=left;verticalAlign=top;spacingLeft=8;spacingRight=8;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=wrap;html=0;" vertex="1" parent="1">
+          <mxGeometry x="15" y="314" width="870" height="114" as="geometry" />
+        </mxCell>
+        <mxCell id="cron" value="CronJobs seo-flow-*&#10;python -m app.trigger &lt;flow&gt;&#10;triggered_by = cron" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f1f5f9;strokeColor=#64748b;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="40" width="250" height="68" as="geometry" />
+        </mxCell>
+        <mxCell id="admin" value="Admin UI&#10;Run now, review decision&#10;manual or approval" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f8fafc;strokeColor=#334155;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="325" y="40" width="250" height="68" as="geometry" />
+        </mxCell>
+        <mxCell id="mcp" value="Admin MCP: kickoff_flow&#10;allowlisted flows only&#10;triggered_by = mcp" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f0fdfa;strokeColor=#0f766e;fontColor=#134e4a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="620" y="40" width="250" height="68" as="geometry" />
+        </mxCell>
+        <mxCell id="runner" value="FlowRunner.kickoff()&#10;start policy, strict inputs,&#10;run row, lock, task" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e3a8a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="178" width="200" height="94" as="geometry" />
+        </mxCell>
+        <mxCell id="flow" value="CrewAI Flow[State]&#10;@start @listen @router&#10;data steps in Python" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f5f3ff;strokeColor=#6d28d9;fontColor=#2e1065;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="240" y="178" width="200" height="94" as="geometry" />
+        </mxCell>
+        <mxCell id="crew" value="Crew (worker thread)&#10;sequential, read-only tools,&#10;token cap + wall clock" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f5f3ff;strokeColor=#6d28d9;fontColor=#2e1065;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="450" y="178" width="200" height="94" as="geometry" />
+        </mxCell>
+        <mxCell id="llm" value="ClaudeCrewLLM&#10;a CrewAI BaseLLM over the&#10;budget guard + Anthropic SDK" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#fdf2f8;strokeColor=#be185d;fontColor=#500724;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="660" y="178" width="210" height="94" as="geometry" />
+        </mxCell>
+        <mxCell id="pg" value="PostgreSQL&#10;seo_flow_runs: state_json after every step, one active run&#10;per flow + target; advisory lock; seo_llm_usage" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#fffbeb;strokeColor=#b45309;fontColor=#451a03;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="342" width="410" height="72" as="geometry" />
+        </mxCell>
+        <mxCell id="web" value="Web app callback API&#10;articles, validators,&#10;the draft API" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eef2ff;strokeColor=#4338ca;fontColor=#1e1b4b;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="450" y="342" width="200" height="72" as="geometry" />
+        </mxCell>
+        <mxCell id="claude" value="Anthropic API&#10;Sonnet, Opus, Haiku&#10;per agent" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f1f5f9;strokeColor=#64748b;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="660" y="342" width="210" height="72" as="geometry" />
+        </mxCell>
+        <mxCell id="t0" value="seo-agent: one replica" style="text=1;html=0;align=left;verticalAlign=top;resizable=1;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=nowrap;" vertex="1" parent="1">
+          <mxGeometry x="690" y="154" width="147.84" height="17" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.28;exitY=1;exitDx=0;exitDy=0;entryX=0.35;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="cron" target="runner">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.7;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="admin" target="runner">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="450" y="136" />
+              <mxPoint x="170" y="136" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e2" value="POST /flows/{name}/kickoff" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.7;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="mcp" target="runner">
+          <mxGeometry x="-0.46744186046511627" y="0" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="745" y="136" />
+              <mxPoint x="170" y="136" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e3" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="runner" target="flow">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="flow" target="crew">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="crew" target="llm">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#b45309;strokeWidth=2.2;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.8;exitY=1;exitDx=0;exitDy=0;entryX=0.3902439024390244;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="runner" target="pg">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#b45309;strokeWidth=2.2;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.3;exitY=1;exitDx=0;exitDy=0;entryX=0.6585365853658537;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="flow" target="pg">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.8;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="flow" target="web">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="400" y="300" />
+              <mxPoint x="500" y="300" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e9" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#64748b;strokeWidth=1.4;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.7;exitY=1;exitDx=0;exitDy=0;entryX=0.7;entryY=0;entryDx=0;entryDy=0;dashed=1;dashPattern=6 4;" edge="1" parent="1" source="crew" target="web">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="llm" target="claude">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

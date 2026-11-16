@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 440" width="900" height="440" role="img" aria-labelledby="seo-agent-crewai-kickoff-title seo-agent-crewai-kickoff-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="seo-agent-crewai-kickoff-title">Three triggers, one kickoff: how a flow run starts and where its work goes</title>
+<desc id="seo-agent-crewai-kickoff-desc">Top: three triggers. CronJobs named seo-flow-* run python -m app.trigger, the admin UI has Run now buttons and the review decision, and the admin MCP server has a kickoff_flow tool limited to an allowlist. All three call POST /flows/{name}/kickoff. Middle, inside the single seo-agent pod: FlowRunner.kickoff applies the start policy, validates the inputs against a strict model, creates the run row, takes the lock and starts a background task. The CrewAI Flow runs its start, listen and router methods, with data steps in plain Python. A Crew runs in a worker thread, sequentially, with read-only tools, a token cap and a wall clock. ClaudeCrewLLM, a CrewAI BaseLLM, sends each call through the budget guard to the Anthropic SDK. Bottom: PostgreSQL holds seo_flow_runs with the state after every step, the lock and the usage rows; the web app&#x27;s callback API serves articles, validators and the draft API; the Anthropic API answers the model calls.</desc>
+<rect width="900" height="440" fill="#ffffff"/>
+<defs>
+<marker id="seo-agent-crewai-kickoff-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+<marker id="seo-agent-crewai-kickoff-write" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b45309"/></marker>
+<marker id="seo-agent-crewai-kickoff-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#be123c"/></marker>
+<marker id="seo-agent-crewai-kickoff-reject" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b91c1c"/></marker>
+<marker id="seo-agent-crewai-kickoff-dashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+<marker id="seo-agent-crewai-kickoff-life" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#cbd5e1"/></marker>
+</defs>
+<rect x="15" y="12" width="870" height="110" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="28" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Triggers</text>
+<rect x="15" y="150" width="870" height="136" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="166" text-anchor="start" font-size="12" font-weight="600" fill="#475569"></text>
+<rect x="15" y="314" width="870" height="114" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="330" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Outside the pod</text>
+<polyline points="100.0,108 100.0,178" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#seo-agent-crewai-kickoff-sync)"/>
+<polyline points="450.0,108 450,136 170,136 170.0,178" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#seo-agent-crewai-kickoff-sync)"/>
+<polyline points="745.0,108 745,136 170,136 170.0,178" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#seo-agent-crewai-kickoff-sync)"/>
+<polyline points="230,225.0 240,225.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#seo-agent-crewai-kickoff-sync)"/>
+<polyline points="440,225.0 450,225.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#seo-agent-crewai-kickoff-sync)"/>
+<polyline points="650,225.0 660,225.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#seo-agent-crewai-kickoff-sync)"/>
+<polyline points="190.0,272 190.0,342" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#seo-agent-crewai-kickoff-write)"/>
+<polyline points="300.0,272 300.0,342" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#seo-agent-crewai-kickoff-write)"/>
+<polyline points="400.0,272 400,300 500,300 500.0,342" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#seo-agent-crewai-kickoff-sync)"/>
+<polyline points="590.0,272 590.0,342" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#seo-agent-crewai-kickoff-dashed)"/>
+<polyline points="765.0,272 765.0,342" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#seo-agent-crewai-kickoff-sync)"/>
+<rect x="30" y="40" width="250" height="68" rx="7" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+<text x="155.0" y="65.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">CronJobs seo-flow-*</text>
+<text x="155.0" y="81.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">python -m app.trigger &lt;flow&gt;</text>
+<text x="155.0" y="97.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">triggered_by = cron</text>
+<rect x="325" y="40" width="250" height="68" rx="7" fill="#f8fafc" stroke="#334155" stroke-width="1.4"/>
+<text x="450.0" y="65.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Admin UI</text>
+<text x="450.0" y="81.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Run now, review decision</text>
+<text x="450.0" y="97.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">manual or approval</text>
+<rect x="620" y="40" width="250" height="68" rx="7" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.4"/>
+<text x="745.0" y="65.0" text-anchor="middle" font-size="14" font-weight="600" fill="#134e4a">Admin MCP: kickoff_flow</text>
+<text x="745.0" y="81.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">allowlisted flows only</text>
+<text x="745.0" y="97.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">triggered_by = mcp</text>
+<rect x="30" y="178" width="200" height="94" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="130.0" y="216.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">FlowRunner.kickoff()</text>
+<text x="130.0" y="232.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">start policy, strict inputs,</text>
+<text x="130.0" y="248.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">run row, lock, task</text>
+<rect x="240" y="178" width="200" height="94" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="340.0" y="216.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">CrewAI Flow[State]</text>
+<text x="340.0" y="232.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">@start @listen @router</text>
+<text x="340.0" y="248.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">data steps in Python</text>
+<rect x="450" y="178" width="200" height="94" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="550.0" y="216.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">Crew (worker thread)</text>
+<text x="550.0" y="232.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">sequential, read-only tools,</text>
+<text x="550.0" y="248.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">token cap + wall clock</text>
+<rect x="660" y="178" width="210" height="94" rx="7" fill="#fdf2f8" stroke="#be185d" stroke-width="1.4"/>
+<text x="765.0" y="216.0" text-anchor="middle" font-size="14" font-weight="600" fill="#500724">ClaudeCrewLLM</text>
+<text x="765.0" y="232.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">a CrewAI BaseLLM over the</text>
+<text x="765.0" y="248.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">budget guard + Anthropic SDK</text>
+<rect x="30" y="342" width="410" height="72" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="235.0" y="369.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">PostgreSQL</text>
+<text x="235.0" y="385.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">seo_flow_runs: state_json after every step, one active run</text>
+<text x="235.0" y="401.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">per flow + target; advisory lock; seo_llm_usage</text>
+<rect x="450" y="342" width="200" height="72" rx="7" fill="#eef2ff" stroke="#4338ca" stroke-width="1.4"/>
+<text x="550.0" y="369.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e1b4b">Web app callback API</text>
+<text x="550.0" y="385.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">articles, validators,</text>
+<text x="550.0" y="401.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">the draft API</text>
+<rect x="660" y="342" width="210" height="72" rx="7" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+<text x="765.0" y="369.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Anthropic API</text>
+<text x="765.0" y="385.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Sonnet, Opus, Haiku</text>
+<text x="765.0" y="401.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">per agent</text>
+<rect x="516.1" y="127.5" width="170.2" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="601.2" y="139.5" text-anchor="middle" font-size="12" fill="#0f172a">POST /flows/{name}/kickoff</text>
+<text x="690" y="166" font-size="12" font-weight="600" fill="#475569">seo-agent: one replica</text>
+</svg>

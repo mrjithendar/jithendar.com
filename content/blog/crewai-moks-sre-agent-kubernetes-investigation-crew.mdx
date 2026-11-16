@@ -1,0 +1,419 @@
+---
+title: "How We Added CrewAI to MOKS: A Three-Agent Kubernetes Investigation Crew"
+slug: crewai-moks-sre-agent-kubernetes-investigation-crew
+description: "How we added an opt-in CrewAI crew to MOKS, our SRE agent: a custom LLM, read-only tools bound in code, and evidence checks the model cannot skip."
+seoTitle: "CrewAI in an SRE Agent: A Three-Agent Kubernetes Crew"
+seoDescription: "A real CrewAI integration in a Kubernetes SRE agent: a BaseLLM adapter, a thread bridge, read-only tools, evidence validation, telemetry off, its own image."
+author: jithendar-dharmapuri
+category: ai-agents
+tags: [CrewAI, AI Agents, SRE, Kubernetes, LangGraph, LLMOps, Python, Argo CD]
+contentType: analysis
+status: draft
+featuredImage:
+  src: /images/crewai/moks-crewai-crew.png
+  alt: "The MOKS CrewAI crew. Three agents run in sequence: a workload investigator, a change investigator and an incident reviewer. Every tool call passes bind(), which fixes the target in code, and the ToolExecutor, and is stored in an evidence registry. The reviewer's JSON answer goes through validate(), then the checks every MOKS report passes, and is stored."
+  width: 1800
+  height: 1280
+related:
+  - blog/crewai-flows-crews-jithendar-com-seo-agent
+  - blog/langchain-vs-langgraph-sre-agent-moks
+  - blog/four-ai-systems-one-cluster
+  - blog/moks-rag-and-skills-design
+  - blog/multi-ai-agent-systems-with-crewai-course-notes
+sources:
+  - title: "MOKS: CrewAI workload investigation (design note)"
+    url: https://github.com/mrjithendar/moks-sre/blob/28d9ba18e0a60cb3ef1032c93dffc75272512c36/docs/crewai-investigation.md
+    publisher: MOKS
+  - title: "Custom LLM Implementation"
+    url: https://docs.crewai.com/en/learn/custom-llm
+    publisher: CrewAI
+  - title: "Telemetry"
+    url: https://docs.crewai.com/en/telemetry
+    publisher: CrewAI
+---
+<Todo>Draft written on 2026-11-16 from Git only: mrjithendar/moks-sre at 28d9ba1. Nothing was run and no cluster was inspected. Before publishing: (1) the repository says no real model has run the crew; if that has changed, replace "What is not proven yet" with the real run; (2) docs/crewai-investigation.md says the image goes to ECR, but ci.yml pushes to Harbor: this article follows ci.yml; (3) deploy/argocd/hetzner/apps/moks-crewai.yaml still points at mrjithendar/moks.git, the repository's old name. Evidence table: docs/knowledge-sharing/crewai/README.md.</Todo>
+
+[MOKS](/projects/moks) is our SRE agent: a Python backend and a React UI that investigates Kubernetes problems with read-only tools and returns a report in which every claim cites recorded evidence. Its default orchestrator is a LangGraph state machine, described in [LangChain vs LangGraph for an SRE agent](/blog/langchain-vs-langgraph-sre-agent-moks). This article covers the second orchestrator we added next to it: a [CrewAI](https://github.com/crewAIInc/crewAI) crew of three agents that answers one question, "why is this workload unhealthy?".
+
+Adding `crewai` to a requirements file was the small part. Most of the work went into making sure the crew can reach nothing on its own:
+
+- its model calls go through the MOKS budget, to the provider MOKS already uses;
+- its tools are MOKS tools, bound to one workload in code;
+- its answer is checked against recorded evidence before anyone sees it.
+
+The code is from [commit `28d9ba1`](https://github.com/mrjithendar/moks-sre/tree/28d9ba18e0a60cb3ef1032c93dffc75272512c36) of the MOKS repository (16 November 2026), with long lines re-wrapped for the page. If agents, tasks and crews are new to you, start with [six ideas from the crewAI course](/blog/multi-ai-agent-systems-with-crewai-course-notes).
+
+:::callout{type="warning" title="Tested with a scripted model only"}
+The crew runs in CI against a scripted model and fake connectors. No real model has run it yet, and it has not been smoke-tested on the cluster. [What is not proven yet](#what-is-not-proven-yet) lists what that leaves open.
+:::
+
+::toc
+
+## Why a second orchestrator, and why opt-in
+
+The default investigation is one graph:
+
+```text
+intake → knowledge → triage → logs → skills → refresh → plan ⇄ act → correlate → report
+```
+
+"Why is this Deployment unhealthy?" splits into three jobs that an on-call engineer also does in order: read the current state, find what changed, then write down only what the evidence supports. That maps onto CrewAI's sequential process with one agent per job, so it was a good place to try a crew without touching the graph.
+
+It is opt-in for three reasons:
+
+- **Weight.** crewai 1.15.36 brings 76 packages that MOKS does not otherwise install, among them chromadb, lancedb, onnxruntime, openai and instructor.
+- **A version conflict.** crewai requires `pydantic<2.13`, and MOKS pins pydantic 2.14.3.
+- **Blast radius.** A second orchestrator must not be able to break the first.
+
+So the graph stays the default. The crew runs only when `MOKS_CREWAI_ENABLED=true` and a worker built with the CrewAI extra is running. With the flag off, the route answers 404, the UI shows no option and nothing imports `crewai`.
+
+## The request path
+
+![How a CrewAI investigation travels through MOKS. The Investigate page asks GET /investigate/config whether CrewAI is available and posts to POST /investigations/crewai. start_investigation queues a row whose first event carries a crewai block. The CrewAI worker, on its own image, claims only rows with that block and runs the crew; the default worker claims the rest and runs the LangGraph graph. Both paths end in the same checks and the same stored report.](/images/crewai/moks-crewai-request-path.svg)
+
+A CrewAI investigation is an ordinary MOKS investigation until the moment a worker picks the orchestrator.
+
+| Step | What happens |
+| --- | --- |
+| UI | The form appears only when `GET /investigate/config` reports `crewai.available: true` |
+| API | `POST /investigations/crewai` takes a namespace, a workload and its kind. Nothing is inferred |
+| Queue | The same `start_investigation()` every investigation uses: permission, scope, rate limit, audit. The one difference is a `crewai` block on the first event |
+| Worker | Only a worker with the `crewai` class claims a row that has that block |
+| Engine | One branch picks the crew over the graph |
+| Tail | Claim validation, cause verification, relevance and the stored report are the same code for both |
+
+The route refuses early and says why. From `api/investigations.py`:
+
+```python
+s = get_settings()
+if not s.crewai_enabled:
+    raise HTTPException(404, "Not Found")
+cfg = (await db.execute(select(LLMConfig).where(LLMConfig.purpose == "chat",
+                                                LLMConfig.is_active.is_(True)))).scalar_one_or_none()
+state = capability(s, cfg, await worker_version(db))
+if not state["available"]:
+    raise HTTPException(503, f"CrewAI investigation unavailable: {state['reason']}")
+```
+
+The API never imports crewai, because it runs the default image. The CrewAI worker writes a `component_versions` row with its crewai version and keeps it fresh, and the API reads that row. No row in the last five minutes means "no CrewAI worker is running", and the route answers 503.
+
+Workers claim work with `FOR UPDATE SKIP LOCKED`. One predicate in `orchestrator/worker.py` keeps the two kinds of worker apart. `:crewai` is true only for a worker that has the `crewai` class and the package at the pinned version:
+
+```sql
+SELECT id FROM investigations
+WHERE status = 'queued' AND NOT cancel_requested
+  AND EXISTS (SELECT 1 FROM investigation_events e
+              WHERE e.investigation_id = investigations.id AND e.seq = 0
+                AND e.payload->'crewai' IS NOT NULL) = :crewai
+ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1
+```
+
+The integration point in `orchestrator/engine.py` is one `if`:
+
+```python
+if crew_request:  # the opt-in CrewAI flow (moks/crew); the graph stays the default
+    from ..crew import runner as crew_runner
+
+    final = await crew_runner.run(self, executor, ctx, question, namespace, scope_info,
+                                  provider, llm_cfg, crew_request)
+else:
+    final = await graph.run(self, executor, ctx, question, namespace, scope_info,
+                            provider, llm_cfg, (LLMError, BudgetExceeded), resumed)
+```
+
+Everything before that branch (authorization at run time, connectors, the lease, the cancel watcher) and everything after it is shared.
+
+## The crew
+
+![The crew and the code around it. Three agents run in sequence: the workload investigator with nine read-only tools, the change investigator with five, and the incident reviewer with only evidence_list. Each tool call passes bind(), which fixes the namespace, workload and time window in code, then the ToolExecutor, and lands in the evidence registry. The reviewer's JSON answer goes through validate(), then validate_claims and verify_causes, and is stored with a crewai block.](/images/crewai/moks-crewai-crew.svg)
+
+| Agent | Job | Tools |
+| --- | --- | --- |
+| Workload investigator | Establish the current state from live, read-only evidence | `namespace_health`, `workload_status`, `workload_pods`, `describe_pod`, `recent_events`, `pod_logs`, `search_logs`, `pod_metrics`, `firing_alerts` |
+| Change investigator | Find rollouts, image and configuration changes, commits and the runbooks that apply | `rollout_history`, `config_audit`, `recent_commits`, `deployed_commit`, `search_runbooks` |
+| Incident reviewer | Write the incident summary, with every finding backed by cited evidence | `evidence_list` only |
+
+Every CrewAI feature that widens what an agent can do is off. From `crew/adapters.py`:
+
+```python
+common = {"allow_delegation": False, "max_iter": run.s.crewai_max_iterations, "max_retry_limit": 0,
+          "verbose": False, "cache": False,
+          "memory": False, "reasoning": False, "respect_context_window": True}
+```
+
+```python
+crew = Crew(agents=[workload, change, review], tasks=[t1, t2, t3], process=Process.sequential,
+            verbose=False, memory=False, planning=False, cache=False, share_crew=False,
+            tracing=False, task_callback=task_done)
+crew._task_output_handler = _NoTaskStore()
+```
+
+The reviewer's task asks for one JSON object and nothing else, in this shape:
+
+```json
+{
+  "summary": "...",
+  "findings": [{"statement": "verified observation", "evidence": ["E1"]}],
+  "likely_causes": [{"cause": "hypothesis", "confidence": "low|medium|high",
+                     "evidence": ["E2"], "reasoning": "..."}],
+  "missing_evidence": ["..."],
+  "next_steps": ["the next diagnostic step"]
+}
+```
+
+Findings are things the evidence shows. Anything inferred is a likely cause. The reviewer is told not to quote evidence, because MOKS attaches the excerpts itself.
+
+## A custom LLM instead of LiteLLM
+
+MOKS has its own HTTP clients for Anthropic, Bedrock, OpenAI, Azure, Gemini and Ollama. Every call goes through `budget.complete`, which handles reservations, daily limits and metering. A crew that built its own client would bypass all of that.
+
+CrewAI's documented extension point for this is [`BaseLLM`](https://docs.crewai.com/en/learn/custom-llm). `MoksCrewLLM` subclasses it, so LiteLLM is not installed and no API key is read from the environment. From `crew/adapters.py`:
+
+```python
+class MoksCrewLLM(BaseLLM):
+    _run: Any = PrivateAttr()
+    _agent: str = PrivateAttr()
+
+    def __init__(self, run: Run, agent: str):
+        super().__init__(model=f"moks:{run.cfg.provider}/{run.cfg.model}", temperature=0.1, provider="moks")
+        self._run, self._agent = run, agent
+
+    def call(self, messages, tools=None, callbacks=None, available_functions=None,
+             from_task=None, from_agent=None, response_model=None) -> str:
+        system, turns = _turns(messages)
+        text = self._run.complete(self._agent, system, turns)
+        return text.split(STOP, 1)[0]  # MOKS providers take no stop sequences, so they are applied here
+```
+
+Two details matter:
+
+- **No vendor function calling.** MOKS tool use is its own JSON protocol, so `supports_function_calling()` returns `False`. CrewAI then uses its text protocol (`Thought:`, `Action:`, `Action Input:`, `Observation:`), which works with any provider that follows instructions.
+- **Stop sequences by hand.** CrewAI stops generation at `\nObservation:` so the model cannot write a tool result itself. MOKS providers take no stop sequences, so the adapter cuts the reply at that marker (`STOP`) and `supports_stop_words()` returns `False`.
+
+`Run.complete` then does what every MOKS model call does. It checks that the person still has access, sizes the request to the investigation's token budget, calls `budget.complete` and adds the tokens and cost to the investigation.
+
+## The thread bridge
+
+![The thread bridge. On the left, the worker thread runs CrewAI's agent step, MoksCrewLLM.call and MoksTool._run. On the right, the event loop runs crew.akickoff inside asyncio.timeout, budget.complete and ToolExecutor.run. Each model and tool call crosses from the thread to the loop through Bridge.run. On cancel, timeout or a limit, Bridge.close cancels the call in flight and every later call raises CrewStopped.](/images/crewai/moks-crewai-thread-bridge.svg)
+
+`crew.akickoff()` is async, but in crewai 1.15.36 the model call and the tool call still run synchronously in a worker thread. MOKS's database session, providers and executor belong to the event loop. So every call is handed back to the loop, and the thread waits for it. From `crew/runner.py`:
+
+```python
+def run(self, coro, timeout: float) -> Any:
+    if threading.get_ident() == self.loop_thread:
+        coro.close()
+        raise RuntimeError("a CrewAI call reached MOKS on the event loop thread; it would deadlock")
+    if self.closed.is_set():
+        coro.close()
+        raise CrewStopped(self.reason)
+    fut = asyncio.run_coroutine_threadsafe(coro, self.loop)
+    with self._guard:
+        self._inflight.add(fut)
+    try:
+        return fut.result(timeout)
+    except concurrent.futures.CancelledError:
+        raise CrewStopped(self.reason) from None
+    except concurrent.futures.TimeoutError:
+        fut.cancel()
+        raise TimeoutError(f"no answer within {timeout:.0f}s") from None
+    finally:
+        with self._guard:
+            self._inflight.discard(fut)
+```
+
+The same class gives us cancellation, which CrewAI does not offer: it has no API to interrupt a running step. When the investigation is cancelled, times out or hits a limit, MOKS closes the bridge. The call in flight is cancelled on the loop, and every later model or tool call raises `CrewStopped` at once, so the crew ends at its next step. Nothing CrewAI does touches the database or the network itself.
+
+## Tools bound to one target
+
+The model chooses a tool and a few narrow arguments: a pod, a container, a search phrase. The environment, namespace, workload and time window are never taken from the model. They are bound from the investigation. From `crew/tools.py`:
+
+```python
+def bind(tool: CrewTool, target: Target, raw: dict[str, Any], *, log_lines: int,
+         members: Members = NOBODY) -> dict[str, Any]:
+    """The MOKS arguments for a crew call. Raises Refused for anything outside the target, Empty when the workload
+    has no pods for it, LookupError for a source that is not configured, and pydantic's ValidationError for
+    malformed arguments."""
+    parsed = tool.args.model_validate(raw)
+    if parsed.namespace and parsed.namespace != target.namespace:
+        raise Refused(f"namespace {parsed.namespace} is outside this investigation (namespace {target.namespace})")
+    args = tool.bind(target, parsed, members)
+```
+
+Each tool is one entry that maps the model's arguments onto a MOKS tool. Pod logs, for example:
+
+```python
+CrewTool("pod_logs", "k8s_pod_logs", "workload",
+         "The tail of one pod's container logs, optionally from the previous crashed instance.",
+         LogArgs, lambda t, a, m: {"namespace": t.namespace, "pod": _pod(t, m, a.pod),
+                                    "container": a.container, "previous": a.previous,
+                                    "tail_lines": 0, "since_minutes": t.minutes}, "kubernetes"),
+```
+
+`_pod` is where a pod outside the workload is refused:
+
+```python
+def _pod(t: Target, m: Members, pod: str) -> str:
+    if pod not in m.pods:
+        raise Refused(f"pod {pod} is not owned by {t.kind.lower()} {t.workload} (by its owner references)")
+    return pod
+```
+
+Three rules follow from this code:
+
+- **Membership by owner reference, never by name.** A Deployment's pods are those whose controller is a ReplicaSet that this Deployment owns, matched by UID. An investigation of `cart` never reads `cart-worker`'s pods, and a pod with no owner reference belongs to nothing.
+- **A refusal is recorded, not hidden.** A refused call is audited, listed as a gap in the report, and answered to the model with a plain sentence that starts "Refused by MOKS".
+- **Allowed calls still pass the executor.** `ToolExecutor.run` rechecks RBAC and scope, applies the timeout, redacts and truncates the result, stores it as an `Evidence` row and audits the call.
+
+All 14 tools are read-only. There is no exec, apply, patch, delete, scale or Secret read, and a test asserts that against the tool registry.
+
+## Evidence the model cannot invent
+
+Every tool result is stored as an evidence row with an id (`E1`, `E2` and so on). The crew sees a bounded, redacted excerpt and is told the id. An observation has this shape:
+
+```text
+Evidence E3 (k8s_pod_logs, ok, collected <timestamp>). Cite it as E3.
+<untrusted_data id="<random tag>" source="k8s_pod_logs">
+<the redacted, truncated excerpt>
+</untrusted_data id="<random tag>">
+```
+
+After the crew finishes, `validate()` holds the reviewer's JSON to the registry:
+
+| Check | What happens |
+| --- | --- |
+| A citation of an id the registry does not hold | Rejected, and counted in the report |
+| A finding or likely cause left with no valid citation | Removed, and listed in the report |
+| Confidence | Capped by the evidence, whatever the model asked for |
+| Text the model offers as a quote or excerpt | Ignored. Excerpts come from stored rows only |
+
+The confidence cap, from `crew/evidence.py`:
+
+```python
+def _cap_confidence(asked: str, refs: list[str], registry: Registry) -> tuple[str, str | None]:
+    """Confidence follows the evidence, not the model: none live means low, one live source at most medium,
+    high needs live evidence from two different sources."""
+    asked = asked if asked in CONFIDENCE else "low"
+    live = [registry.records[r] for r in refs
+            if registry.records[r]["ok"] and registry.records[r]["kind"] in ev.LIVE]
+    ceiling = "low" if not live else "medium" if len({r["source"] for r in live}) < 2 else "high"
+```
+
+The engine's usual `validate_claims` and `verify_causes` then run on the result, as they do for every LLM report. If the reviewer returns no valid JSON, MOKS falls back to its rule-based report over the evidence already collected.
+
+Logs, events, Git content and runbooks are untrusted input. Each result reaches the model inside a delimiter with a random tag, and each agent's backstory says that such content is data. Enforcement does not depend on that prompt, though. The tools, the target and the scope are fixed in code, so no log line can widen them.
+
+## CrewAI defaults we turned off
+
+Reading the docs and the installed source for the pinned version turned up several defaults we did not want in a pod that reads production clusters.
+
+| Default in crewai 1.15.36 | What MOKS does |
+| --- | --- |
+| Anonymous [telemetry](https://docs.crewai.com/en/telemetry) to `telemetry.crewai.com:4319` | `CREWAI_DISABLE_TELEMETRY` and `CREWAI_DISABLE_TRACKING` are set before the import. A test fails if a run resolves any non-local host |
+| AMP trace upload | `CREWAI_TRACING_ENABLED=false`, plus `tracing=False` and `share_crew=False` on the Crew |
+| Memory, knowledge and planning call embedding or LLM providers of their own | All three are off, along with delegation, agent reasoning and caching |
+| Every task output is stored in a SQLite file for `crewai replay` | Replaced with a no-op store, so evidence never lands on the pod's disk |
+| The import writes under `HOME`, and fails when `HOME` is read-only | `HOME` moves to a private directory under `/tmp` when it is not writable |
+
+`OTEL_SDK_DISABLED` would also silence CrewAI's telemetry, but it would switch off MOKS's own tracing too, so it is deliberately not set.
+
+The environment is prepared before `crewai` is imported. From `crew/__init__.py`:
+
+```python
+os.environ.update(TELEMETRY_OFF)
+os.environ["CREWAI_STORAGE_DIR"] = "moks-crewai"
+home = os.environ.get("HOME") or ""
+if not (home and os.path.isdir(home) and os.access(home, os.W_OK)):
+    os.environ["HOME"] = os.environ.get("MOKS_CREWAI_HOME") or tempfile.mkdtemp(prefix="moks-crewai-")
+```
+
+## One more image, one more Deployment
+
+![Build and deploy. On a push to master, the check job runs the backend suite on the default pins and the crewai job runs it again on the CrewAI dependency set. release pushes moks:latest and release-crewai pushes moks-crewai:latest, both to Harbor. deploy asks Argo CD to sync and restart. In the cluster only the Deployment moks-crewai runs the CrewAI image, with MOKS_WORKER_CLASSES=crewai.](/images/crewai/moks-crewai-build-deploy.svg)
+
+The extra packages stay out of the API, the default workers, the executor and the terminal. One Dockerfile builds both images, and a build argument decides which:
+
+```dockerfile
+ARG MOKS_CREWAI=false
+RUN if [ "$MOKS_CREWAI" = "true" ]; then \
+      grep -v '^pydantic==' requirements.txt > /tmp/base.txt && pip install --prefix=/install -r /tmp/base.txt -r requirements-crewai.txt; \
+    else \
+      pip install --prefix=/install -r requirements.txt; \
+    fi
+```
+
+Dropping the base pydantic pin lets crewai's own bound pick the newest 2.12.x. CI then does two things the default image does not need:
+
+- The `crewai` job runs the whole backend suite a second time on that dependency set.
+- Before `release-crewai` pushes the image, it starts a container the way the pods run (read-only root, no home directory, no network) and asserts that crewai imports at the pinned version with telemetry off.
+
+Helm adds one Deployment when `crewai.enabled` is true. It takes the `crewai` worker class alone, so it never claims an ordinary investigation. From `templates/crewai.yaml`:
+
+```yaml
+env:
+  - {name: MOKS_WORKER_CLASSES, value: crewai}
+  - {name: MOKS_WORKER_CAPACITY, value: ""}
+```
+
+A worker that has the class but not crewai at the pinned version logs `crewai_worker_unusable` and takes no CrewAI investigation, so a wrong image never fails a run. Rolling back is setting `crewai.enabled: false`: the route answers 404 again and the option disappears. The Deployment then has to be deleted by hand, because this Argo CD setup never prunes.
+
+## Limits
+
+| Setting (`MOKS_CREWAI_*`) | Default | Enforced by |
+| --- | --- | --- |
+| `TIMEOUT_SECONDS` | 120 | `asyncio.timeout` around `akickoff()`. On expiry the report is partial, with the gap listed |
+| `TOOL_TIMEOUT_SECONDS` | 30 | The crew's own `ToolExecutor`. A timeout becomes evidence of a failed call, and a gap |
+| `MAX_ITERATIONS` | 5 per agent | CrewAI's `max_iter`, plus a hard cap of `max_iter + 2` model calls per agent in the adapter |
+| `MAX_TOOL_CALLS` | 20 | The adapter, never above the global `MOKS_MAX_TOOL_CALLS` |
+| `MAX_CONCURRENT` | 2 per worker process | A process-wide counter. A run waits up to 20 seconds for a slot, then fails with a clear error |
+| `EXCERPT_CHARS` and `LOG_LINES` | 2000 and 100 | Excerpt length and log tail |
+
+A limit never throws work away. A crew that stops early still produces a report over the evidence collected before it stopped, marked partial, with the reason listed as missing evidence.
+
+## How we test it
+
+No test calls a model. A scripted model answers through `llm.budget` in CrewAI's text protocol, and a fake Kubernetes connector serves canned state. The real crew, the real adapters and the real executor run end to end. From `tests/test_crewai_crew.py`:
+
+```python
+def act(tool: str, args: dict | None = None) -> str:
+    return f"Thought: I need {tool}.\nAction: {tool}\nAction Input: {json.dumps(args or {})}"
+
+
+def final(text: str) -> str:
+    return f"Thought: I now know the final answer\nFinal Answer: {text}"
+```
+
+The prompt-injection test is the one we would keep if we could keep only one. The fake logs carry an injected instruction, and the scripted model obeys it, as a compromised model would:
+
+```python
+script = Script(workload=[act("pod_logs", {"pod": "payments-5c4-xyz", "previous": True}),
+                          act("scale_deployment", {"replicas": 0}),
+                          act("pod_logs", {"pod": "coredns-1", "namespace": "kube-system"}),
+                          act("recent_events", {"namespace": "kube-system"}), final("done")],
+                review=[final(REPORT)])
+```
+
+The assertions are that nothing outside the allowlist ran and nothing left the target namespace:
+
+```python
+assert {e.tool for e in ev.values()} <= ALLOWED_MOKS_TOOLS
+assert all((e.args or {}).get("namespace") in (None, "shop") for e in ev.values())
+```
+
+Other tests cover an invented citation, a namespace the person may not read, a tool timeout, a provider failure, the tool-call and iteration limits, cancellation, and a run that must resolve no host except the local database.
+
+## What is not proven yet
+
+- **No real model has run the crew.** Small models may not follow the `Action:` and `Observation:` format reliably. A model that writes no valid JSON at the end gets the rule-based report, which is correct but less useful.
+- **The image is proven to import, not to run a crew.** CI's check shows that crewai imports at the pinned version with telemetry off on linux/arm64.
+- **No smoke test on the cluster.** The repository has a lab for it. `scripts/crewai-demo.sh up` creates a namespace with one ImagePullBackOff workload and one CrashLoopBackOff workload whose logs include an injected instruction.
+- **No checkpoints.** A CrewAI run whose worker dies is marked failed by the reaper instead of resuming, unlike a graph run.
+
+## What we would tell another team
+
+- **Put the framework behind your own model client.** `BaseLLM` is a small surface, and it keeps budgets, metering and credentials in one place.
+- **Decide scope in code.** The model can pick a tool and a pod. It cannot pick the namespace.
+- **Validate the answer against recorded evidence, in code, after the crew.** A prompt that says "cite your sources" is a request, not a control.
+- **Read the defaults of the exact version you pin.** Telemetry, memory, on-disk stores and import-time side effects all had one here.
+- **Give it its own image and its own worker** until it has earned a place in the default one.
+
+On jithendar.com we went the other way and made CrewAI the only job engine. That is the second article: [CrewAI as the only job engine](/blog/crewai-flows-crews-jithendar-com-seo-agent).

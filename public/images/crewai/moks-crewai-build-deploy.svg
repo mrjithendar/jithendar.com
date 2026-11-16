@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 560" width="900" height="560" role="img" aria-labelledby="moks-crewai-build-deploy-title moks-crewai-build-deploy-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="moks-crewai-build-deploy-title">One commit, two images: only the CrewAI worker runs the image that carries crewai</title>
+<desc id="moks-crewai-build-deploy-desc">Top: GitHub Actions on a push to master. The check job runs the backend suite on the default pins and the crewai job runs it again on the CrewAI dependency set. release builds and pushes moks:latest. release-crewai needs both test jobs, builds the same commit with the build argument MOKS_CREWAI=true, proves crewai imports on a read-only root with no network, and pushes moks-crewai:latest. Both images go to the Harbor registry. deploy runs only when MK4_DEPLOY is true and asks Argo CD to sync and restart. In the cluster, the api, worker, executor and terminal Deployments run moks:latest; the Deployment moks-crewai runs moks-crewai:latest with MOKS_WORKER_CLASSES=crewai and is rendered by the Argo CD app moks-crewai only when crewai.enabled is true.</desc>
+<rect width="900" height="560" fill="#ffffff"/>
+<defs>
+<marker id="moks-crewai-build-deploy-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+<marker id="moks-crewai-build-deploy-write" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b45309"/></marker>
+<marker id="moks-crewai-build-deploy-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#be123c"/></marker>
+<marker id="moks-crewai-build-deploy-reject" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b91c1c"/></marker>
+<marker id="moks-crewai-build-deploy-dashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+<marker id="moks-crewai-build-deploy-life" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#cbd5e1"/></marker>
+</defs>
+<rect x="15" y="12" width="870" height="236" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="28" text-anchor="start" font-size="12" font-weight="600" fill="#475569">GitHub Actions: push to master</text>
+<rect x="15" y="276" width="870" height="98" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="292" text-anchor="start" font-size="12" font-weight="600" fill="#475569"></text>
+<rect x="15" y="402" width="870" height="146" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="418" text-anchor="start" font-size="12" font-weight="600" fill="#475569"></text>
+<polyline points="105.0,120 105.0,150" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#moks-crewai-build-deploy-sync)"/>
+<polyline points="217.5,120 217.5,135 387.5,135 387.5,150" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#moks-crewai-build-deploy-sync)"/>
+<polyline points="500.0,120 500.0,150" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#moks-crewai-build-deploy-sync)"/>
+<polyline points="575,192.0 620,192.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#moks-crewai-build-deploy-sync)"/>
+<polyline points="155.0,234 155.0,304" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#moks-crewai-build-deploy-write)"/>
+<polyline points="450.0,234 450.0,304" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#moks-crewai-build-deploy-write)"/>
+<polyline points="155.0,362 155.0,430" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#moks-crewai-build-deploy-dashed)"/>
+<polyline points="450.0,362 450.0,430" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#moks-crewai-build-deploy-dashed)"/>
+<polyline points="745.0,234 745.0,430" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#moks-crewai-build-deploy-sync)"/>
+<polyline points="620,476.0 575,476.0" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#moks-crewai-build-deploy-write)"/>
+<rect x="30" y="40" width="250" height="80" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="155.0" y="71.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">check</text>
+<text x="155.0" y="87.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">backend suite on the default pins</text>
+<text x="155.0" y="103.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">(pydantic 2.14.3)</text>
+<rect x="325" y="40" width="250" height="80" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="450.0" y="71.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">crewai</text>
+<text x="450.0" y="87.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">the same suite on the CrewAI set</text>
+<text x="450.0" y="103.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">crewai 1.15.36, pydantic &lt; 2.13</text>
+<rect x="30" y="150" width="250" height="84" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="155.0" y="183.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">release</text>
+<text x="155.0" y="199.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">docker build</text>
+<text x="155.0" y="215.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">pushes moks:latest</text>
+<rect x="325" y="150" width="250" height="84" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="450.0" y="183.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">release-crewai</text>
+<text x="450.0" y="199.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">--build-arg MOKS_CREWAI=true</text>
+<text x="450.0" y="215.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">import check: read-only, no network</text>
+<rect x="620" y="150" width="250" height="84" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="745.0" y="183.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">deploy</text>
+<text x="745.0" y="199.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">only when MK4_DEPLOY is true</text>
+<text x="745.0" y="215.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Argo CD: sync, then restart</text>
+<rect x="30" y="304" width="250" height="58" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="155.0" y="332.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">moks:latest</text>
+<text x="155.0" y="348.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">the default image</text>
+<rect x="325" y="304" width="250" height="58" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="450.0" y="332.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">moks-crewai:latest</text>
+<text x="450.0" y="348.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">the same commit + 76 packages</text>
+<rect x="30" y="430" width="250" height="92" rx="7" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+<text x="155.0" y="467.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Every other Deployment</text>
+<text x="155.0" y="483.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">api, worker, executor, terminal</text>
+<text x="155.0" y="499.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">image moks:latest</text>
+<rect x="325" y="430" width="250" height="92" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="450.0" y="467.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">Deployment moks-crewai</text>
+<text x="450.0" y="483.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">image moks-crewai:latest</text>
+<text x="450.0" y="499.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">MOKS_WORKER_CLASSES=crewai</text>
+<rect x="620" y="430" width="250" height="92" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="745.0" y="467.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">Argo CD app moks-crewai</text>
+<text x="745.0" y="483.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Helm resourceGroup crewai</text>
+<text x="745.0" y="499.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">renders only if crewai.enabled</text>
+<rect x="753.3" y="253.5" width="95.4" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="801.0" y="265.5" text-anchor="middle" font-size="12" fill="#0f172a">sync + restart</text>
+<text x="168" y="292" font-size="12" font-weight="600" fill="#475569">Harbor: registry.jithendar.com/jithendar</text>
+<text x="168" y="418" font-size="12" font-weight="600" fill="#475569">mk4 cluster: namespace moks</text>
+</svg>

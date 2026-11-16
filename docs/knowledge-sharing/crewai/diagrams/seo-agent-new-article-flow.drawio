@@ -1,0 +1,76 @@
+<mxfile host="app.diagrams.net" agent="build_diagrams.py" version="24.7.17" type="device">
+  <diagram id="seo-agent-new-article-flow-0" name="new_article_flow">
+    <mxGraphModel dx="800" dy="800" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="512" background="#ffffff" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="z0" value="NewArticleFlow(SeoFlow[NewArticleState])" style="rounded=1;arcSize=2;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=left;verticalAlign=top;spacingLeft=8;spacingRight=8;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=wrap;html=0;" vertex="1" parent="1">
+          <mxGeometry x="15" y="12" width="870" height="400" as="geometry" />
+        </mxCell>
+        <mxCell id="lb" value="@start load_brief&#10;calendar brief from the web app" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#ecfdf5;strokeColor=#047857;fontColor=#064e3b;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="40" width="230" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="dr" value="@listen draft&#10;Editorial Crew, attempts += 1&#10;BudgetExceeded: paused_budget" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f5f3ff;strokeColor=#6d28d9;fontColor=#2e1065;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="335" y="40" width="230" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ad" value="@router after_draft&#10;to_paused or to_validate" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e3a8a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="640" y="40" width="230" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="fl" value="@listen failed&#10;draft: generation_failed&#10;with the validator's errors" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#fef2f2;strokeColor=#b91c1c;fontColor=#7f1d1d;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="170" width="230" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="av" value="@router after_validate&#10;to_ok, to_retry or to_fail&#10;MAX_ATTEMPTS = 2" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e3a8a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="335" y="170" width="230" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="vd" value="@listen validate_draft&#10;the web app's validators&#10;errors: validator_feedback" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#ecfdf5;strokeColor=#047857;fontColor=#064e3b;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="640" y="170" width="230" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="sd" value="@listen save_draft&#10;the flow's only write&#10;outcome: draft_ready" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#fffbeb;strokeColor=#b45309;fontColor=#451a03;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="335" y="300" width="230" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ps" value="@listen paused&#10;draft: generation_failed&#10;Paused: LLM budget reached" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#fef2f2;strokeColor=#b91c1c;fontColor=#7f1d1d;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="640" y="300" width="230" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="pg" value="After every method: PgFlowPersistence.save_state()&#10;writes state_json, current_step, tokens and cost_usd into the run's seo_flow_runs row (never SQLite)" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#fffbeb;strokeColor=#b45309;fontColor=#451a03;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="440" width="840" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="lb" target="dr">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="dr" target="ad">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="to_validate" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="ad" target="vd">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="-48" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e3" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="vd" target="av">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="to_retry" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="av" target="dr">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="-38" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e5" value="to_fail" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="av" target="fl">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="to_ok" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="av" target="sd">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <mxPoint x="-30" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e7" value="to_paused" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="ad" target="ps">
+          <mxGeometry x="0.4710144927536233" y="0" relative="1" as="geometry">
+            <mxPoint x="-40" y="0" as="offset" />
+            <Array as="points">
+              <mxPoint x="878" y="80" />
+              <mxPoint x="878" y="340" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

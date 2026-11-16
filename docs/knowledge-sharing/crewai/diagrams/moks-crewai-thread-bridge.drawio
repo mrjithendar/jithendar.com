@@ -1,0 +1,67 @@
+<mxfile host="app.diagrams.net" agent="build_diagrams.py" version="24.7.17" type="device">
+  <diagram id="moks-crewai-thread-bridge-0" name="Thread bridge">
+    <mxGraphModel dx="800" dy="800" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="500" background="#ffffff" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="z0" value="Worker thread: CrewAI's synchronous calls" style="rounded=1;arcSize=2;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=left;verticalAlign=top;spacingLeft=8;spacingRight=8;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=wrap;html=0;" vertex="1" parent="1">
+          <mxGeometry x="15" y="12" width="380" height="330" as="geometry" />
+        </mxCell>
+        <mxCell id="z1" value="Event loop: database session, providers, executor" style="rounded=1;arcSize=2;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=left;verticalAlign=top;spacingLeft=8;spacingRight=8;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=wrap;html=0;" vertex="1" parent="1">
+          <mxGeometry x="505" y="12" width="380" height="330" as="geometry" />
+        </mxCell>
+        <mxCell id="z2" value="Stopping: cancel, timeout or a limit" style="rounded=1;arcSize=2;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=left;verticalAlign=top;spacingLeft=8;spacingRight=8;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=wrap;html=0;" vertex="1" parent="1">
+          <mxGeometry x="15" y="358" width="870" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="t1" value="Agent step&#10;CrewAI builds the prompt and parses&#10;Thought / Action / Observation" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f5f3ff;strokeColor=#6d28d9;fontColor=#2e1065;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="40" width="350" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="t2" value="MoksCrewLLM.call()&#10;BaseLLM, function calling off&#10;cuts the reply at \nObservation:" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f5f3ff;strokeColor=#6d28d9;fontColor=#2e1065;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="144" width="350" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="t3" value="MoksTool._run()&#10;BaseTool with a pydantic args_schema&#10;returns: Evidence E7 … Cite it as E7." style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f5f3ff;strokeColor=#6d28d9;fontColor=#2e1065;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="248" width="350" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="l1" value="crew.akickoff()&#10;inside asyncio.timeout&#10;120 s by default" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#ecfdf5;strokeColor=#047857;fontColor=#064e3b;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="520" y="40" width="350" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="l2" value="budget.complete()&#10;the active chat LLM only&#10;reservations, daily limits, metering" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#ecfdf5;strokeColor=#047857;fontColor=#064e3b;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="520" y="144" width="350" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="l3" value="ToolExecutor.run()&#10;RBAC, scope, timeout, redaction&#10;Evidence row + audit record" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#ecfdf5;strokeColor=#047857;fontColor=#064e3b;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="520" y="248" width="350" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="s1" value="Bridge.close(reason)&#10;called from the loop side&#10;the first reason wins" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e3a8a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="386" width="270" height="88" as="geometry" />
+        </mxCell>
+        <mxCell id="s2" value="The call in flight&#10;its future is cancelled&#10;on the event loop" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#ecfdf5;strokeColor=#047857;fontColor=#064e3b;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="315" y="386" width="270" height="88" as="geometry" />
+        </mxCell>
+        <mxCell id="s3" value="Every later call&#10;raises CrewStopped at once:&#10;the crew ends at its next step" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#fef2f2;strokeColor=#b91c1c;fontColor=#7f1d1d;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="600" y="386" width="270" height="88" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" value="runs the crew" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="l1" target="t1">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="Bridge.run()" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="t2" target="l2">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="Bridge.run()" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="t3" target="l3">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#64748b;strokeWidth=1.4;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;dashed=1;dashPattern=6 4;" edge="1" parent="1" source="t1" target="t2">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#64748b;strokeWidth=1.4;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;dashed=1;dashPattern=6 4;" edge="1" parent="1" source="t2" target="t3">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="s1" target="s2">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="s2" target="s3">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -1,0 +1,99 @@
+<mxfile host="app.diagrams.net" agent="build_diagrams.py" version="24.7.17" type="device">
+  <diagram id="moks-crewai-request-path-0" name="Request path">
+    <mxGraphModel dx="800" dy="800" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="660" background="#ffffff" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="z0" value="Browser" style="rounded=1;arcSize=2;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=left;verticalAlign=top;spacingLeft=8;spacingRight=8;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=wrap;html=0;" vertex="1" parent="1">
+          <mxGeometry x="15" y="12" width="870" height="96" as="geometry" />
+        </mxCell>
+        <mxCell id="z1" value="" style="rounded=1;arcSize=2;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=left;verticalAlign=top;spacingLeft=8;spacingRight=8;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=wrap;html=0;" vertex="1" parent="1">
+          <mxGeometry x="15" y="124" width="870" height="134" as="geometry" />
+        </mxCell>
+        <mxCell id="z2" value="PostgreSQL" style="rounded=1;arcSize=2;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=left;verticalAlign=top;spacingLeft=8;spacingRight=8;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=wrap;html=0;" vertex="1" parent="1">
+          <mxGeometry x="15" y="274" width="870" height="134" as="geometry" />
+        </mxCell>
+        <mxCell id="z3" value="Workers" style="rounded=1;arcSize=2;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=left;verticalAlign=top;spacingLeft=8;spacingRight=8;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=wrap;html=0;" vertex="1" parent="1">
+          <mxGeometry x="15" y="436" width="870" height="134" as="geometry" />
+        </mxCell>
+        <mxCell id="ui" value="Investigate page&#10;the CrewAI form renders only when /investigate/config reports crewai.available = true" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f8fafc;strokeColor=#334155;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="38" width="840" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="cfg" value="GET /investigate/config&#10;crewai: enabled, available,&#10;reason, version, limits" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e3a8a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="152" width="250" height="92" as="geometry" />
+        </mxCell>
+        <mxCell id="route" value="POST /investigations/crewai&#10;flag off: 404&#10;no worker or no model: 503" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e3a8a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="325" y="152" width="250" height="92" as="geometry" />
+        </mxCell>
+        <mxCell id="start" value="start_investigation()&#10;permission + scope, rate limit&#10;queues the row" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#ecfdf5;strokeColor=#047857;fontColor=#064e3b;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="620" y="152" width="250" height="92" as="geometry" />
+        </mxCell>
+        <mxCell id="ver" value="component_versions&#10;component crewai + its version&#10;fresh for 5 minutes" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#fffbeb;strokeColor=#b45309;fontColor=#451a03;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="302" width="250" height="92" as="geometry" />
+        </mxCell>
+        <mxCell id="evid" value="evidence + audit&#10;one row per tool call&#10;refs E1, E2, …" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#fffbeb;strokeColor=#b45309;fontColor=#451a03;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="325" y="302" width="250" height="92" as="geometry" />
+        </mxCell>
+        <mxCell id="queue" value="investigations + events&#10;status queued&#10;seq-0 event carries crewai" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#fffbeb;strokeColor=#b45309;fontColor=#451a03;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="620" y="302" width="250" height="92" as="geometry" />
+        </mxCell>
+        <mxCell id="crew" value="moks-crewai: the CrewAI worker&#10;moks-crewai image, MOKS_WORKER_CLASSES=crewai&#10;runs crew_runner.run(): three agents in sequence" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f5f3ff;strokeColor=#6d28d9;fontColor=#2e1065;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="464" width="545" height="92" as="geometry" />
+        </mxCell>
+        <mxCell id="dflt" value="moks-worker: the default&#10;default image, class interactive&#10;runs graph.run() (LangGraph)" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f1f5f9;strokeColor=#64748b;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="620" y="464" width="250" height="92" as="geometry" />
+        </mxCell>
+        <mxCell id="tail" value="The same tail for both paths&#10;validate_claims → verify_causes → relevance check → stored report → reply in the conversation (SSE)" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#ecfdf5;strokeColor=#047857;fontColor=#064e3b;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="588" width="840" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="t0" value="moks-api: default image, never imports crewai" style="text=1;html=0;align=left;verticalAlign=top;resizable=1;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=nowrap;" vertex="1" parent="1">
+          <mxGeometry x="575" y="128" width="302.40000000000003" height="17" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.1488095238095238;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="ui" target="cfg">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="ui" target="route">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="route" target="start">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#64748b;strokeWidth=1.4;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;dashed=1;dashPattern=6 4;" edge="1" parent="1" source="cfg" target="ver">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#b45309;strokeWidth=2.2;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="start" target="queue">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="heartbeat" style="edgeStyle=none;rounded=0;html=0;strokeColor=#b45309;strokeWidth=2.2;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.22935779816513763;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="crew" target="ver">
+          <mxGeometry x="0.19999999999999996" y="0" relative="1" as="geometry">
+            <mxPoint x="44" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e6" value="evidence" style="edgeStyle=none;rounded=0;html=0;strokeColor=#b45309;strokeWidth=2.2;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.6788990825688074;exitY=0;exitDx=0;exitDy=0;entryX=0.3;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="crew" target="evid">
+          <mxGeometry x="0.19999999999999996" y="0" relative="1" as="geometry">
+            <mxPoint x="40" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e7" value="crewai block" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.3;exitY=1;exitDx=0;exitDy=0;entryX=0.8990825688073395;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="queue" target="crew">
+          <mxGeometry x="-0.05714285714285716" y="0" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="695" y="422" />
+              <mxPoint x="520" y="422" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e8" value="no block" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.7;exitY=1;exitDx=0;exitDy=0;entryX=0.7;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="queue" target="dflt">
+          <mxGeometry x="-0.19999999999999996" y="0" relative="1" as="geometry">
+            <mxPoint x="38" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e9" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.3244047619047619;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="crew" target="tail">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.8511904761904762;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="dflt" target="tail">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

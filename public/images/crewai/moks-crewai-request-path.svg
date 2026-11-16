@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 660" width="900" height="660" role="img" aria-labelledby="moks-crewai-request-path-title moks-crewai-request-path-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="moks-crewai-request-path-title">How a CrewAI investigation travels through MOKS, next to the default LangGraph path</title>
+<desc id="moks-crewai-request-path-desc">Top to bottom. The Investigate page asks GET /investigate/config whether CrewAI is available and posts to POST /investigations/crewai, which answers 404 with the flag off and 503 with no CrewAI worker or no model. start_investigation checks permission and scope and queues a row whose first event carries a crewai block. In PostgreSQL sit the component_versions row the CrewAI worker keeps fresh, the evidence and audit rows, and the queue. Two kinds of worker claim from the queue with FOR UPDATE SKIP LOCKED: the CrewAI worker on the moks-crewai image takes only rows with a crewai block and runs the crew; the default worker takes the rest and runs the LangGraph graph. Both end in the same checks: validate_claims, verify_causes, the relevance check, the stored report and the reply in the conversation.</desc>
+<rect width="900" height="660" fill="#ffffff"/>
+<defs>
+<marker id="moks-crewai-request-path-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+<marker id="moks-crewai-request-path-write" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b45309"/></marker>
+<marker id="moks-crewai-request-path-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#be123c"/></marker>
+<marker id="moks-crewai-request-path-reject" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b91c1c"/></marker>
+<marker id="moks-crewai-request-path-dashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+<marker id="moks-crewai-request-path-life" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#cbd5e1"/></marker>
+</defs>
+<rect x="15" y="12" width="870" height="96" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="28" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Browser</text>
+<rect x="15" y="124" width="870" height="134" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="140" text-anchor="start" font-size="12" font-weight="600" fill="#475569"></text>
+<rect x="15" y="274" width="870" height="134" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="290" text-anchor="start" font-size="12" font-weight="600" fill="#475569">PostgreSQL</text>
+<rect x="15" y="436" width="870" height="134" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="452" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Workers</text>
+<polyline points="155.0,96 155.0,152" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#moks-crewai-request-path-sync)"/>
+<polyline points="450.0,96 450.0,152" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#moks-crewai-request-path-sync)"/>
+<polyline points="575,198.0 620,198.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#moks-crewai-request-path-sync)"/>
+<polyline points="155.0,244 155.0,302" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#moks-crewai-request-path-dashed)"/>
+<polyline points="745.0,244 745.0,302" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#moks-crewai-request-path-write)"/>
+<polyline points="155.0,464 155.0,394" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#moks-crewai-request-path-write)"/>
+<polyline points="400.0,464 400.0,394" fill="none" stroke="#b45309" stroke-width="2.2" marker-end="url(#moks-crewai-request-path-write)"/>
+<polyline points="695.0,394 695,422 520,422 520.0,464" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#moks-crewai-request-path-sync)"/>
+<polyline points="795.0,394 795.0,464" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#moks-crewai-request-path-sync)"/>
+<polyline points="302.5,556 302.5,588" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#moks-crewai-request-path-sync)"/>
+<polyline points="745.0,556 745.0,588" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#moks-crewai-request-path-sync)"/>
+<rect x="30" y="38" width="840" height="58" rx="7" fill="#f8fafc" stroke="#334155" stroke-width="1.4"/>
+<text x="450.0" y="66.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Investigate page</text>
+<text x="450.0" y="82.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">the CrewAI form renders only when /investigate/config reports crewai.available = true</text>
+<rect x="30" y="152" width="250" height="92" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="155.0" y="189.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">GET /investigate/config</text>
+<text x="155.0" y="205.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">crewai: enabled, available,</text>
+<text x="155.0" y="221.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">reason, version, limits</text>
+<rect x="325" y="152" width="250" height="92" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="450.0" y="189.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">POST /investigations/crewai</text>
+<text x="450.0" y="205.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">flag off: 404</text>
+<text x="450.0" y="221.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">no worker or no model: 503</text>
+<rect x="620" y="152" width="250" height="92" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="745.0" y="189.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">start_investigation()</text>
+<text x="745.0" y="205.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">permission + scope, rate limit</text>
+<text x="745.0" y="221.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">queues the row</text>
+<rect x="30" y="302" width="250" height="92" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="155.0" y="339.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">component_versions</text>
+<text x="155.0" y="355.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">component crewai + its version</text>
+<text x="155.0" y="371.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">fresh for 5 minutes</text>
+<rect x="325" y="302" width="250" height="92" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="450.0" y="339.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">evidence + audit</text>
+<text x="450.0" y="355.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">one row per tool call</text>
+<text x="450.0" y="371.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">refs E1, E2, …</text>
+<rect x="620" y="302" width="250" height="92" rx="7" fill="#fffbeb" stroke="#b45309" stroke-width="1.4"/>
+<text x="745.0" y="339.0" text-anchor="middle" font-size="14" font-weight="600" fill="#451a03">investigations + events</text>
+<text x="745.0" y="355.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">status queued</text>
+<text x="745.0" y="371.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">seq-0 event carries crewai</text>
+<rect x="30" y="464" width="545" height="92" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="302.5" y="501.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">moks-crewai: the CrewAI worker</text>
+<text x="302.5" y="517.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">moks-crewai image, MOKS_WORKER_CLASSES=crewai</text>
+<text x="302.5" y="533.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">runs crew_runner.run(): three agents in sequence</text>
+<rect x="620" y="464" width="250" height="92" rx="7" fill="#f1f5f9" stroke="#64748b" stroke-width="1.4"/>
+<text x="745.0" y="501.0" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">moks-worker: the default</text>
+<text x="745.0" y="517.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">default image, class interactive</text>
+<text x="745.0" y="533.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">runs graph.run() (LangGraph)</text>
+<rect x="30" y="588" width="840" height="58" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="450.0" y="616.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">The same tail for both paths</text>
+<text x="450.0" y="632.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">validate_claims → verify_causes → relevance check → stored report → reply in the conversation (SSE)</text>
+<rect x="166.9" y="413.5" width="64.2" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="199.0" y="425.5" text-anchor="middle" font-size="12" fill="#0f172a">heartbeat</text>
+<rect x="411.0" y="413.5" width="57.9" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="440.0" y="425.5" text-anchor="middle" font-size="12" fill="#0f172a">evidence</text>
+<rect x="566.1" y="413.5" width="82.9" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="607.5" y="425.5" text-anchor="middle" font-size="12" fill="#0f172a">crewai block</text>
+<rect x="804.0" y="413.5" width="57.9" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="833.0" y="425.5" text-anchor="middle" font-size="12" fill="#0f172a">no block</text>
+<text x="575" y="140" font-size="12" font-weight="600" fill="#475569">moks-api: default image, never imports crewai</text>
+</svg>

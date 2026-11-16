@@ -1,0 +1,92 @@
+<mxfile host="app.diagrams.net" agent="build_diagrams.py" version="24.7.17" type="device">
+  <diagram id="moks-crewai-build-deploy-0" name="Build and deploy">
+    <mxGraphModel dx="800" dy="800" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="560" background="#ffffff" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="z0" value="GitHub Actions: push to master" style="rounded=1;arcSize=2;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=left;verticalAlign=top;spacingLeft=8;spacingRight=8;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=wrap;html=0;" vertex="1" parent="1">
+          <mxGeometry x="15" y="12" width="870" height="236" as="geometry" />
+        </mxCell>
+        <mxCell id="z1" value="" style="rounded=1;arcSize=2;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=left;verticalAlign=top;spacingLeft=8;spacingRight=8;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=wrap;html=0;" vertex="1" parent="1">
+          <mxGeometry x="15" y="276" width="870" height="98" as="geometry" />
+        </mxCell>
+        <mxCell id="z2" value="" style="rounded=1;arcSize=2;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=left;verticalAlign=top;spacingLeft=8;spacingRight=8;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=wrap;html=0;" vertex="1" parent="1">
+          <mxGeometry x="15" y="402" width="870" height="146" as="geometry" />
+        </mxCell>
+        <mxCell id="check" value="check&#10;backend suite on the default pins&#10;(pydantic 2.14.3)" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#ecfdf5;strokeColor=#047857;fontColor=#064e3b;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="40" width="250" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="crewai" value="crewai&#10;the same suite on the CrewAI set&#10;crewai 1.15.36, pydantic &lt; 2.13" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f5f3ff;strokeColor=#6d28d9;fontColor=#2e1065;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="325" y="40" width="250" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="rel" value="release&#10;docker build&#10;pushes moks:latest" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#ecfdf5;strokeColor=#047857;fontColor=#064e3b;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="150" width="250" height="84" as="geometry" />
+        </mxCell>
+        <mxCell id="relc" value="release-crewai&#10;--build-arg MOKS_CREWAI=true&#10;import check: read-only, no network" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f5f3ff;strokeColor=#6d28d9;fontColor=#2e1065;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="325" y="150" width="250" height="84" as="geometry" />
+        </mxCell>
+        <mxCell id="dep" value="deploy&#10;only when MK4_DEPLOY is true&#10;Argo CD: sync, then restart" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e3a8a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="620" y="150" width="250" height="84" as="geometry" />
+        </mxCell>
+        <mxCell id="img1" value="moks:latest&#10;the default image" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#fffbeb;strokeColor=#b45309;fontColor=#451a03;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="304" width="250" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="img2" value="moks-crewai:latest&#10;the same commit + 76 packages" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#fffbeb;strokeColor=#b45309;fontColor=#451a03;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="325" y="304" width="250" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="d1" value="Every other Deployment&#10;api, worker, executor, terminal&#10;image moks:latest" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f1f5f9;strokeColor=#64748b;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="430" width="250" height="92" as="geometry" />
+        </mxCell>
+        <mxCell id="d2" value="Deployment moks-crewai&#10;image moks-crewai:latest&#10;MOKS_WORKER_CLASSES=crewai" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#f5f3ff;strokeColor=#6d28d9;fontColor=#2e1065;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="325" y="430" width="250" height="92" as="geometry" />
+        </mxCell>
+        <mxCell id="argo" value="Argo CD app moks-crewai&#10;Helm resourceGroup crewai&#10;renders only if crewai.enabled" style="rounded=1;arcSize=8;whiteSpace=wrap;html=0;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#1e3a8a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="620" y="430" width="250" height="92" as="geometry" />
+        </mxCell>
+        <mxCell id="t0" value="Harbor: registry.jithendar.com/jithendar" style="text=1;html=0;align=left;verticalAlign=top;resizable=1;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=nowrap;" vertex="1" parent="1">
+          <mxGeometry x="168" y="280" width="268.8" height="17" as="geometry" />
+        </mxCell>
+        <mxCell id="t1" value="mk4 cluster: namespace moks" style="text=1;html=0;align=left;verticalAlign=top;resizable=1;fontFamily=Helvetica;fontSize=12;fontColor=#475569;fontStyle=1;whiteSpace=nowrap;" vertex="1" parent="1">
+          <mxGeometry x="168" y="406" width="181.44000000000003" height="17" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.3;exitY=1;exitDx=0;exitDy=0;entryX=0.3;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="check" target="rel">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="check" target="relc">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="217.5" y="135" />
+              <mxPoint x="387.5" y="135" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e2" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.7;exitY=1;exitDx=0;exitDy=0;entryX=0.7;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="crewai" target="relc">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="relc" target="dep">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#b45309;strokeWidth=2.2;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="rel" target="img1">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#b45309;strokeWidth=2.2;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="relc" target="img2">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#64748b;strokeWidth=1.4;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;dashed=1;dashPattern=6 4;" edge="1" parent="1" source="img1" target="d1">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#64748b;strokeWidth=1.4;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;dashed=1;dashPattern=6 4;" edge="1" parent="1" source="img2" target="d2">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" value="sync + restart" style="edgeStyle=none;rounded=0;html=0;strokeColor=#475569;strokeWidth=1.6;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="dep" target="argo">
+          <mxGeometry x="-0.714" y="0" relative="1" as="geometry">
+            <mxPoint x="56" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e9" value="" style="edgeStyle=none;rounded=0;html=0;strokeColor=#b45309;strokeWidth=2.2;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;labelBackgroundColor=#ffffff;endArrow=block;endFill=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="argo" target="d2">
+          <mxGeometry x="0.0" y="0" relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

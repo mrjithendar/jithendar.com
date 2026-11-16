@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 500" width="900" height="500" role="img" aria-labelledby="moks-crewai-thread-bridge-title moks-crewai-thread-bridge-desc" font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+<title id="moks-crewai-thread-bridge-title">CrewAI runs its calls in a worker thread; the Bridge hands each one back to the event loop</title>
+<desc id="moks-crewai-thread-bridge-desc">Left: the worker thread. An agent step builds the prompt and parses the Thought, Action and Observation text. MoksCrewLLM.call is CrewAI&#x27;s BaseLLM with function calling off and cuts the reply at the Observation marker. MoksTool._run is a BaseTool with a pydantic argument schema. Right: the event loop, which owns the database session, the providers and the executor. crew.akickoff runs inside asyncio.timeout. Each model call crosses to budget.complete and each tool call crosses to ToolExecutor.run through Bridge.run, which schedules the coroutine on the loop and waits. Bottom: stopping. Bridge.close is called on cancel, timeout or a limit; the call in flight is cancelled on the loop and every later call raises CrewStopped, so the crew ends at its next step.</desc>
+<rect width="900" height="500" fill="#ffffff"/>
+<defs>
+<marker id="moks-crewai-thread-bridge-sync" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+<marker id="moks-crewai-thread-bridge-write" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b45309"/></marker>
+<marker id="moks-crewai-thread-bridge-async" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#be123c"/></marker>
+<marker id="moks-crewai-thread-bridge-reject" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#b91c1c"/></marker>
+<marker id="moks-crewai-thread-bridge-dashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+<marker id="moks-crewai-thread-bridge-life" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#cbd5e1"/></marker>
+</defs>
+<rect x="15" y="12" width="380" height="330" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="28" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Worker thread: CrewAI&#x27;s synchronous calls</text>
+<rect x="505" y="12" width="380" height="330" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="513" y="28" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Event loop: database session, providers, executor</text>
+<rect x="15" y="358" width="870" height="130" rx="8" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/>
+<text x="23" y="374" text-anchor="start" font-size="12" font-weight="600" fill="#475569">Stopping: cancel, timeout or a limit</text>
+<polyline points="520,80.0 380,80.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#moks-crewai-thread-bridge-sync)"/>
+<polyline points="380,184.0 520,184.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#moks-crewai-thread-bridge-sync)"/>
+<polyline points="380,288.0 520,288.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#moks-crewai-thread-bridge-sync)"/>
+<polyline points="205.0,120 205.0,144" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#moks-crewai-thread-bridge-dashed)"/>
+<polyline points="205.0,224 205.0,248" fill="none" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#moks-crewai-thread-bridge-dashed)"/>
+<polyline points="300,430.0 315,430.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#moks-crewai-thread-bridge-sync)"/>
+<polyline points="585,430.0 600,430.0" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#moks-crewai-thread-bridge-sync)"/>
+<rect x="30" y="40" width="350" height="80" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="205.0" y="71.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">Agent step</text>
+<text x="205.0" y="87.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">CrewAI builds the prompt and parses</text>
+<text x="205.0" y="103.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Thought / Action / Observation</text>
+<rect x="30" y="144" width="350" height="80" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="205.0" y="175.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">MoksCrewLLM.call()</text>
+<text x="205.0" y="191.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">BaseLLM, function calling off</text>
+<text x="205.0" y="207.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">cuts the reply at \nObservation:</text>
+<rect x="30" y="248" width="350" height="80" rx="7" fill="#f5f3ff" stroke="#6d28d9" stroke-width="1.4"/>
+<text x="205.0" y="279.0" text-anchor="middle" font-size="14" font-weight="600" fill="#2e1065">MoksTool._run()</text>
+<text x="205.0" y="295.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">BaseTool with a pydantic args_schema</text>
+<text x="205.0" y="311.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">returns: Evidence E7 … Cite it as E7.</text>
+<rect x="520" y="40" width="350" height="80" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="695.0" y="71.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">crew.akickoff()</text>
+<text x="695.0" y="87.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">inside asyncio.timeout</text>
+<text x="695.0" y="103.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">120 s by default</text>
+<rect x="520" y="144" width="350" height="80" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="695.0" y="175.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">budget.complete()</text>
+<text x="695.0" y="191.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">the active chat LLM only</text>
+<text x="695.0" y="207.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">reservations, daily limits, metering</text>
+<rect x="520" y="248" width="350" height="80" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="695.0" y="279.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">ToolExecutor.run()</text>
+<text x="695.0" y="295.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">RBAC, scope, timeout, redaction</text>
+<text x="695.0" y="311.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">Evidence row + audit record</text>
+<rect x="30" y="386" width="270" height="88" rx="7" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.4"/>
+<text x="165.0" y="421.0" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">Bridge.close(reason)</text>
+<text x="165.0" y="437.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">called from the loop side</text>
+<text x="165.0" y="453.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">the first reason wins</text>
+<rect x="315" y="386" width="270" height="88" rx="7" fill="#ecfdf5" stroke="#047857" stroke-width="1.4"/>
+<text x="450.0" y="421.0" text-anchor="middle" font-size="14" font-weight="600" fill="#064e3b">The call in flight</text>
+<text x="450.0" y="437.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">its future is cancelled</text>
+<text x="450.0" y="453.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">on the event loop</text>
+<rect x="600" y="386" width="270" height="88" rx="7" fill="#fef2f2" stroke="#b91c1c" stroke-width="1.4"/>
+<text x="735.0" y="421.0" text-anchor="middle" font-size="14" font-weight="600" fill="#7f1d1d">Every later call</text>
+<text x="735.0" y="437.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">raises CrewStopped at once:</text>
+<text x="735.0" y="453.0" text-anchor="middle" font-size="12" font-weight="400" fill="#334155">the crew ends at its next step</text>
+<rect x="405.4" y="71.5" width="89.1" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="450.0" y="83.5" text-anchor="middle" font-size="12" fill="#0f172a">runs the crew</text>
+<rect x="408.6" y="175.5" width="82.9" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="450.0" y="187.5" text-anchor="middle" font-size="12" fill="#0f172a">Bridge.run()</text>
+<rect x="408.6" y="279.5" width="82.9" height="17" fill="#ffffff" opacity="0.92"/>
+<text x="450.0" y="291.5" text-anchor="middle" font-size="12" fill="#0f172a">Bridge.run()</text>
+</svg>
