@@ -204,7 +204,7 @@ class KeepLiveImages(unittest.TestCase):
         # Nothing live: the output is the input, for every Deployment and StatefulSet the repository ships.
         docs = [d for f in sorted((SCRIPTS.parent / "kubernetes").glob("*.yaml")) if f.name != "kustomization.yaml" for d in yaml.safe_load_all(f.read_text()) if d]
         workloads = [d for d in docs if d.get("kind") in ("Deployment", "StatefulSet")]
-        self.assertGreaterEqual(len(workloads), 4)
+        self.assertGreaterEqual(len(workloads), 2)
         out, notes = self.run_script([], workloads)
         self.assertEqual(out, workloads)
         self.assertIn("No image differs", notes)

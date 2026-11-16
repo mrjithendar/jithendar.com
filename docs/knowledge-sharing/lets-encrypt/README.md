@@ -5,7 +5,7 @@ Drafts (status `draft`, written 2026-11-14):
 - `content/blog/lets-encrypt-ssl-explained-acme-challenges-renewal.mdx` (Part 1, concepts)
 - `content/blog/lets-encrypt-k3s-cert-manager-automatic-renewal.mdx` (Part 2, the mk4 k3s setup)
 
-Part 2 was written from Git only: `mrjithendar/minikube` at `13be756`. **The cluster was not inspected.** Every row
+Part 2 was written from Git only: `moks-tech/kubernetes` at `13be756`. **The cluster was not inspected.** Every row
 below marked "not checked" needs a look at mk4 before the article is published.
 
 ## Figures

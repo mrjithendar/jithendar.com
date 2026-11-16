@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sourced by CI steps that roll out (release.yml): writes a kubeconfig for ServiceAccount jithendar/github-ci-deployer
+# Sourced by CI steps that roll out (content.yml): writes a kubeconfig for ServiceAccount jithendar/github-ci-deployer
 # from .github/jithendar-ci-deployer.yaml and the values scripts/setup-ci-deployer.sh stored (variables MK4_API_SERVER,
 # MK4_CA_DATA, secret MK4_CI_TOKEN, passed in as environment variables), exports KUBECONFIG and removes the file when
 # the step's shell exits.

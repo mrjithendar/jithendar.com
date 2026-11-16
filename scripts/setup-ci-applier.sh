@@ -19,7 +19,7 @@ set -euo pipefail
 # shellcheck source=/dev/null
 source "$(dirname -- "${BASH_SOURCE[0]}")/lib/kube-context.sh"
 
-REPO="${GITHUB_REPO:-mrjithendar/jithendar.com}"
+REPO="${GITHUB_REPO:-moks-tech/jithendar.com}"
 NS="jithendar"
 SA="github-ci-applier"
 TEMPLATE=".github/jithendar-ci-applier.yaml"
@@ -67,7 +67,7 @@ for denied in "get secrets" "delete deployments" "create pods" "create namespace
   [[ "$(can $denied 2>/dev/null || true)" == no ]] || { echo "The ServiceAccount may '$denied'; it must not." >&2; exit 1; }
 done
 echo "→ Dry run of every object the workflow applies, as $SA"
-for group in site practice-executor seo-agent; do
+for group in site seo-agent; do
   flags=(); [[ "$group" == site ]] && flags=(--all)
   scripts/manifests.sh "$group" | python3 scripts/ci-app-manifests.py "${flags[@]}" 2>/dev/null \
     | command kubectl --kubeconfig "$KCFG" apply --dry-run=server -f - >/dev/null

@@ -34,7 +34,7 @@ sources:
 
 Anyone can send an HTTP request to a form endpoint; a browser is one way, a ten-line script is another. This tutorial shows how jithendar.com protects its email sign-in, sign-up and contact form with Cloudflare Turnstile, using the site's real Next.js code: the widget in React, verification on the server, failure handling, local testing, and the gaps I found.
 
-It is written for developers integrating bot protection for the first time. You need a Cloudflare account to create a widget, and a Next.js App Router project; the code is from the `www/` folder of [github.com/mrjithendar/moks-cms](https://github.com/mrjithendar/moks-cms) at commit `dc249e8` (Next.js 16.4, React 19.3, TypeScript 6.0, Better Auth 1.7.14). The Turnstile code was unchanged on 6 November 2026.
+It is written for developers integrating bot protection for the first time. You need a Cloudflare account to create a widget, and a Next.js App Router project; the code is from the `www/` folder of [github.com/moks-tech/moks-cms](https://github.com/moks-tech/moks-cms) at commit `dc249e8` (Next.js 16.4, React 19.3, TypeScript 6.0, Better Auth 1.7.14). The Turnstile code was unchanged on 6 November 2026.
 
 Code samples are labelled **Actual project code** (unchanged except for elisions marked `// …`), **Simplified from project code** (what was removed is listed), or **Standalone teaching example** (not in the repository).
 
@@ -123,7 +123,7 @@ TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
 
 Both values are Cloudflare's public [test keys](https://developers.cloudflare.com/turnstile/troubleshooting/testing/), which always pass. Neither variable starts with `NEXT_PUBLIC_`: in Next.js that prefix copies a variable into the JavaScript sent to every browser, so the secret must never have it.
 
-*Actual project code from [`src/lib/turnstile.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/turnstile.ts).*
+*Actual project code from [`src/lib/turnstile.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/turnstile.ts).*
 
 ```ts
 import { isProductionEnv } from "@/config/site";
@@ -157,7 +157,7 @@ export async function turnstileKeys(): Promise<{ siteKey: string | undefined; se
 
 The site key reaches the browser as a prop from a **server component** (a React component that runs only on the server):
 
-*Actual project code from [`src/app/[page]/page.tsx`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/%5Bpage%5D/page.tsx).*
+*Actual project code from [`src/app/[page]/page.tsx`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/%5Bpage%5D/page.tsx).*
 
 ```tsx
 export default async function StaticPage({ params }: Props) {
@@ -178,7 +178,7 @@ Cloudflare ships Turnstile as a plain script, while React renders and removes el
 
 ### Types for a global script
 
-*Actual project code from [`src/components/Turnstile.tsx`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/Turnstile.tsx).*
+*Actual project code from [`src/components/Turnstile.tsx`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/Turnstile.tsx).*
 
 ```tsx
 "use client";
@@ -270,7 +270,7 @@ The component does not set `action`, `cData`, `refresh-expired`, `retry` or `tim
 
 ### Using the component in a form
 
-*Simplified from project code: [`src/components/ContactForm.tsx`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/ContactForm.tsx). Removed: the success/error alert markup and Tailwind classes.*
+*Simplified from project code: [`src/components/ContactForm.tsx`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/ContactForm.tsx). Removed: the success/error alert markup and Tailwind classes.*
 
 ```tsx
 export function ContactForm({ siteKey, signedIn = false }: { siteKey: string | undefined; signedIn?: boolean }) {
@@ -315,7 +315,7 @@ A token is an ordinary string: only Cloudflare can say whether it issued it, whe
 
 ### Path 1: the contact form
 
-*Actual project code from [`src/lib/turnstile.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/turnstile.ts).*
+*Actual project code from [`src/lib/turnstile.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/turnstile.ts).*
 
 ```ts
 /** Server-side Turnstile check for our own forms (contact). Fails closed. */
@@ -344,7 +344,7 @@ export async function verifyTurnstile(token: string | null | undefined, ip?: str
 
 It does not check `hostname`, `action` or `error-codes` (the widget sets no `action`); section 10 covers the hostname gap. The form calls a server action that adds the visitor's IP and session state:
 
-*Actual project code from [`src/app/_actions/public.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/_actions/public.ts).*
+*Actual project code from [`src/app/_actions/public.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/_actions/public.ts).*
 
 ```ts
 async function clientIp() {
@@ -361,7 +361,7 @@ export async function submitContactAction(data: { name: string; email: string; s
 
 `signedIn` comes from the server's own session lookup, so a browser cannot claim to be signed in to skip the check.
 
-*Actual project code from [`src/lib/contact.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/contact.ts), lines 23–33.*
+*Actual project code from [`src/lib/contact.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/contact.ts), lines 23–33.*
 
 ```ts
 export async function submitContact(raw: unknown, turnstileToken: string | null, ip?: string | null, { signedIn = false } = {}) {
@@ -385,7 +385,7 @@ The order is the point: the admin feature switch, then Zod validation with no si
 
 Better Auth's `captcha` plugin makes the Siteverify call, so the site only configures it:
 
-*Actual project code from [`src/lib/auth.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/auth.ts), line 186 (inside `betterAuth({ plugins: [ … ] })`).*
+*Actual project code from [`src/lib/auth.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/auth.ts), line 186 (inside `betterAuth({ plugins: [ … ] })`).*
 
 ```ts
 captcha({ provider: "cloudflare-turnstile", secretKey: (await turnstileKeys()).secret ?? "missing-turnstile-secret" }),
@@ -393,7 +393,7 @@ captcha({ provider: "cloudflare-turnstile", secretKey: (await turnstileKeys()).s
 
 The fallback `"missing-turnstile-secret"` is deliberately not a secret. Without it a missing key would make the plugin throw on every request; with it, Cloudflare rejects every token as `invalid-input-secret`, so sign-in fails closed (and the sign-in page hides the email form when no site key exists). Saving the keys in Admin → Advanced settings broadcasts `"integrations"`, and `src/lib/auth.ts` rebuilds its cached auth instance, so a key change needs no restart. On the client, the token travels in a header:
 
-*Actual project code from [`src/app/login/LoginForm.tsx`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/login/LoginForm.tsx), lines 45–57.*
+*Actual project code from [`src/app/login/LoginForm.tsx`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/login/LoginForm.tsx), lines 45–57.*
 
 ```tsx
     const fetchOptions = { headers: { "x-captcha-response": token } };

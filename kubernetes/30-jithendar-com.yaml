@@ -29,16 +29,17 @@ spec:
         app.kubernetes.io/part-of: jithendar-com
     spec:
       automountServiceAccountToken: false
-      # Content (MDX and /images) ships in its own image, jithendar-com-content (Dockerfile.content, job `content` of
-      # .github/workflows/release.yml), so writing a post never rebuilds jithendar-com. This init container copies
-      # it into the emptyDirs that the web container mounts over /app/content and /app/public/images; a rollout
-      # restart pulls the newest :latest of the content image.
+      # Everything that is this site and not the CMS ships in its own image, jithendar-com-content (Dockerfile.content,
+      # .github/workflows/content.yml): the articles, the images, site.json and config/. The web container runs the
+      # moks-cms image, which reads all of them at run time. This init container copies them into the emptyDirs that
+      # the web container mounts over /app/content, /app/public/images and /app/site; a rollout restart pulls the
+      # newest :latest of the content image.
       initContainers:
       - name: content
         image: registry.jithendar.com/jithendar/jithendar-com-content:latest
         imagePullPolicy: Always
         # cp -R: -a would try to set owner/mode/times on the emptyDir mount point itself and log "can't preserve" (Dockerfile.content)
-        command: ["sh", "-c", "cp -R /content/. /mnt/content/ && cp -R /images/. /mnt/images/"]
+        command: ["sh", "-c", "cp -R /content/. /mnt/content/ && cp -R /images/. /mnt/images/ && cp -R /site/. /mnt/site/"]
         resources:
           limits:
             cpu: 200m
@@ -57,8 +58,35 @@ spec:
           name: content
         - mountPath: "/mnt/images"
           name: images
+        - mountPath: "/mnt/site"
+          name: site
+      # The Python practice problems: the catalog that moks-tech/practice-programming builds and pushes as
+      # practice-catalog:latest (its CI restarts this Deployment when the catalog changes). moks-cms seeds new and
+      # changed problems from PRACTICE_CATALOG_PATH when it starts.
+      - name: practice-catalog
+        image: registry.jithendar.com/jithendar/practice-catalog:latest
+        imagePullPolicy: Always
+        command: ["sh", "-c", "cp -R /catalog/. /mnt/practice/"]
+        resources:
+          limits:
+            cpu: 200m
+            memory: 64Mi
+          requests:
+            cpu: 10m
+            memory: 16Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        volumeMounts:
+        - mountPath: "/mnt/practice"
+          name: practice
       containers:
       - env:
+        - name: PRACTICE_CATALOG_PATH
+          value: /app/practice/python/catalog.generated.json
         - name: APP_ENV
           value: production
         - name: SITE_URL
@@ -123,7 +151,7 @@ spec:
         - configMapRef:
             name: jithendar-com-public
             optional: true
-        image: registry.jithendar.com/jithendar/jithendar-com:latest
+        image: registry.jithendar.com/jithendar/moks-cms:pr-111
         imagePullPolicy: Always
         lifecycle:
           preStop:
@@ -190,12 +218,20 @@ spec:
           name: tmp
         - mountPath: "/app/.next/cache"
           name: next-cache
-        # Filled by init container "content"; they shadow the copies baked into jithendar-com.
+        # Filled by init container "content"; they shadow the test fixture site's copies baked into the moks-cms image.
         - mountPath: "/app/content"
           name: content
           readOnly: true
         - mountPath: "/app/public/images"
           name: images
+          readOnly: true
+        # site.json and config/ (moks-cms src/config/site-files.ts reads them from /app/site at server start).
+        - mountPath: "/app/site"
+          name: site
+          readOnly: true
+        # The practice catalog (init container "practice-catalog").
+        - mountPath: "/app/practice"
+          name: practice
           readOnly: true
       dnsPolicy: ClusterFirst
       enableServiceLinks: false
@@ -235,6 +271,12 @@ spec:
       - emptyDir:
           sizeLimit: 256Mi
         name: images
+      - emptyDir:
+          sizeLimit: 1Mi
+        name: site
+      - emptyDir:
+          sizeLimit: 16Mi
+        name: practice
 ---
 apiVersion: v1
 kind: Service

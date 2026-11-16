@@ -1,35 +1,33 @@
 # jithendar.com
 
 The website [jithendar.com](https://jithendar.com): its identity, articles and images, and everything that deploys it
-to the mk4 cluster. The software it runs is [moks-cms](https://github.com/mrjithendar/moks-cms), which only tests its
-code and pushes images. This repository builds the site on those images and deploys it. Until 2026-11-16 the site
-lived in moks-cms as `sites/jithendar.com/`. Its history up to then came along with it.
+to the mk4 cluster. The software it runs is [moks-cms](https://github.com/moks-tech/moks-cms), which only tests its
+code and pushes the CMS image `registry.jithendar.com/jithendar/moks-cms:pr-<number>`. That image serves any site and
+reads the site's files at run time. Until 2026-11-16 the site lived in moks-cms as `sites/jithendar.com/`. Its history
+up to then came along with it.
 
 | Path | Contents |
 |---|---|
 | `site.json` | Identity: host, name, tagline, author, social links, AdSense ID, AI crawler policy |
-| `config/` | `redirects.ts`, `gone.ts` (URLs answered with 410), `hire-me-profile.ts` (`/hire-me`) |
-| `content/` | `blog/`, `news/`, `projects/`, `pages/`, `authors/` (MDX), `python-practice/` |
+| `config/` | `redirects.json` (308s: `[{"source", "destination"}]`), `gone.json` (paths answered with 410), `hire-me-profile.json` (`/hire-me`) |
+| `content/` | `blog/`, `news/`, `projects/`, `pages/`, `authors/` (MDX). The Python practice problems are in [`moks-tech/practice-programming`](https://github.com/moks-tech/practice-programming) |
 | `public/images/` | Images the articles use, served as `/images/…` |
 | `docs/` | Sources of the articles' figures, and scripts that check the articles (never shipped) |
 | `grafana/` | The site's Grafana dashboards (one ConfigMap; Argo CD's `grafana` Application reads this folder) |
-| `moks-cms.json` | The moks-cms images this site runs: `builder` (the app is built on it), `seoAgent`, `practiceExecutor` |
-| `Dockerfile`, `Dockerfile.content` | The app image (moks-cms built for this site) and the content image (MDX and images only) |
-| [`kubernetes/`](kubernetes/README.md) | Every manifest the site runs on mk4: the site, the Python practice executor, the SEO agent |
-| `scripts/` | Release and rollout (`ci-rollout.py`, `keep-live-images.py`), first-time Secrets (`create-*.sh`), site settings (`set-*-config.sh`), CI access (`setup-ci-*.sh`), checks |
-| `.github/workflows/` | `check.yml` (pull requests), `release.yml` (deploys), `deploy-kubernetes.yml` (applies `kubernetes/`) |
+| `Dockerfile.content` | The content image: `content/`, `public/images/`, `site.json` and `config/` |
+| [`kubernetes/`](kubernetes/README.md) | Every manifest the site runs on mk4: the site (CMS image tag, content image, practice catalog) and the SEO agent. The practice executor deploys from practice-programming |
+| `scripts/` | Rollout (`ci-rollout.py`, `keep-live-images.py`), content check (`check-content.sh`), first-time Secrets (`create-*.sh`), site settings (`set-*-config.sh`), CI access (`setup-ci-*.sh`) |
+| `.github/workflows/` | `content.yml` (content image), `deploy-kubernetes.yml` (the whole app from `kubernetes/`), `check.yml` (pull requests) |
 
-## How a change ships
+## Two workflows
 
-| Change | What happens when it reaches `master` |
-|---|---|
-| An article or image (`content/`, `public/images/`) | `release.yml` checks the MDX with moks-cms's own tests, pushes `jithendar-com-content:latest` and rolls the site. If the push only adds or edits drafts plus new images, it sends new drafts to Admin → Posts instead (secret `JITHENDAR_API_KEY`) and leaves the pods alone |
-| `site.json`, `config/` | `release.yml` builds the app image on the pinned builder, smoke-tests it, pushes `jithendar-com:<builder pin>-<commit>` and rolls the site onto it |
-| A new moks-cms release | moks-cms sends a `moks-cms-released` dispatch. `release.yml` moves the pin in `moks-cms.json`, commits it, and rebuilds the app (builder) or rolls the service onto the new tag (seo-agent, practice-executor; only when `SEO_AGENT_DEPLOY` / `PRACTICE_EXECUTOR_DEPLOY` is `true`) |
-| A manifest (`kubernetes/`) | `deploy-kubernetes.yml` applies it when its pull request is merged (server dry run, diff, apply, wait, smoke test) |
+| Workflow | When | What it does |
+|---|---|---|
+| `content.yml` | A push to `master` that changes `content/`, `public/images/`, `site.json` or `config/`, or a manual run | Checks the files with the CMS image the site runs (`scripts/check-content.sh`), builds and pushes `jithendar-com-content:latest`, and restarts `deploy/jithendar-com` so its init container copies them in. It skips the restart only when existing unpublished articles were edited and images added: readers would see nothing new. New articles, even drafts, need the restart, since the CMS imports new files into Admin → Posts when it starts |
+| `deploy-kubernetes.yml` | A merged pull request that changes `kubernetes/`, a manual run, or a `moks-cms-released` dispatch | Applies the whole app from the manifests (server dry run, diff, apply, wait, smoke test). The manifests name the image tags of the CMS, the SEO agent and the practice executor. When moks-cms pushes a release, it sends `{component, tag}`; this workflow puts the tag in the manifests, commits it to `master` and applies it |
 
-To take a moks-cms release by hand, or to go back to an earlier one, edit the tag in `moks-cms.json` and push. To re-run
-a release: Actions → release → Run workflow.
+To move to a moks-cms release by hand, or back to an earlier one, change its tag in `kubernetes/30-jithendar-com.yaml`
+(or the seo-agent manifests) in a pull request. Merging it applies the change.
 
 ## Working on the site locally
 
@@ -37,29 +35,37 @@ The app comes from a moks-cms checkout next to this one:
 
 ```bash
 cd ../moks-cms/services/www
-SITE_DIR=../../../jithendar.com npm run dev          # content/ and public/images/ are links to this repository
+SITE_DIR=../../../jithendar.com npm run dev          # links content/ and public/images/, copies site.json and config/
 ```
 
-Or check the content the way CI does, in the pinned builder (needs `docker login registry.jithendar.com`):
+Or check the content the way CI does (needs Docker and `docker login registry.jithendar.com`):
 
 ```bash
-scripts/check-content.sh registry.jithendar.com/jithendar/moks-cms-builder:"$(jq -r .builder moks-cms.json)"
+scripts/check-content.sh                             # the CMS image named in kubernetes/30-jithendar-com.yaml
 ```
 
 ## Setting up this repository (once)
 
 The workflows need these, which moved here from moks-cms:
 
-- **Harbor** (pull moks-cms images, push `jithendar-com` and `jithendar-com-content`): secrets `HARBOR_USERNAME` and `HARBOR_PASSWORD`.
-- **Rollouts**: `scripts/setup-ci-deployer.sh` (variables `MK4_API_SERVER` and `MK4_CA_DATA`, secret `MK4_CI_TOKEN`).
-- **Manifests**: `scripts/setup-ci-applier.sh` (secret `MK4_CI_APPLY_TOKEN`, variable `MINIKUBE_DEPLOY=true`).
-- **Drafts**: secret `JITHENDAR_API_KEY` (Admin → API keys, scopes posts:read + posts:write).
-- **Services**: variables `SEO_AGENT_DEPLOY` and `PRACTICE_EXECUTOR_DEPLOY` set to `true`, to let pin moves roll them out.
-- **moks-cms → this repository**: in moks-cms, variable `RELEASE_NOTIFY_REPOS=mrjithendar/jithendar.com` and secret
+- **Harbor** (pull the CMS image for the content check, push `jithendar-com-content`): secrets `HARBOR_USERNAME` and `HARBOR_PASSWORD`.
+- **Restarts** (content.yml): `scripts/setup-ci-deployer.sh` (variables `MK4_API_SERVER` and `MK4_CA_DATA`, secret `MK4_CI_TOKEN`).
+- **Manifests** (deploy-kubernetes.yml): `scripts/setup-ci-applier.sh` (secret `MK4_CI_APPLY_TOKEN`, variable `MINIKUBE_DEPLOY=true`).
+- **moks-cms → this repository**: in moks-cms, variable `RELEASE_NOTIFY_REPOS=moks-tech/jithendar.com` and secret
   `RELEASE_NOTIFY_TOKEN` (a fine-grained token with Contents: read and write on this repository).
 
-Both setup scripts default to `GITHUB_REPO=mrjithendar/jithendar.com` and need `KUBE_CONTEXT=<name>` or a
+Both setup scripts default to `GITHUB_REPO=moks-tech/jithendar.com` and need `KUBE_CONTEXT=<name>` or a
 confirmation (`scripts/lib/kube-context.sh`).
+
+## First deploy from this repository
+
+1. Run `content.yml` by hand: it pushes `jithendar-com-content:latest` (now with `site.json` and `config/`) and moves
+   the init container onto it.
+2. Then run `deploy-kubernetes.yml` by hand: it applies the `site` volume that brings `site.json` and `config/` into
+   the pod. The manifests pin today's CMS image (`moks-cms:pr-111`), so nothing else changes. practice-programming must
+   have pushed `practice-catalog:latest` first: the new init container needs it.
+3. After the moks-cms change that reads site files at run time is merged and released, its dispatch (or a pull
+   request) moves `moks-cms:pr-111` to that release.
 
 ## License
 

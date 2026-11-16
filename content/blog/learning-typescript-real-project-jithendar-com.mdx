@@ -15,7 +15,7 @@ related:
 
 This site, jithendar.com, is a Next.js application written in TypeScript: the pages, the comment box under this article, the admin editor and the API routes are all `.ts` and `.tsx` files. This tutorial uses that code to teach TypeScript from the beginning, ending with one feature, posting a comment, traced from the browser to the database.
 
-You need everyday JavaScript (variables, functions, objects, arrays, `async`/`await`) and a rough idea of what React does. Each section starts with a small example, shows the same idea in the project, and names the mistake TypeScript catches. Everything was checked against the `www/` folder of the [Moks CMS repository](https://github.com/mrjithendar/moks-cms/tree/dc249e807f83ef5a0e2aaa34638c42399e91e905/www) at commit `dc249e8`, when it was still named jithendar.com (TypeScript 6.0.3, Next.js 16.4.3, React 19.3.1, Zod 4.6.7). Blocks are labelled **Actual project code** (unchanged), **Simplified from project code** (what was left out is named) or **Standalone teaching example** (compiled with the project's TypeScript version and strictness). Examples meant to fail show the compiler's real error in a comment.
+You need everyday JavaScript (variables, functions, objects, arrays, `async`/`await`) and a rough idea of what React does. Each section starts with a small example, shows the same idea in the project, and names the mistake TypeScript catches. Everything was checked against the `www/` folder of the [Moks CMS repository](https://github.com/moks-tech/moks-cms/tree/dc249e807f83ef5a0e2aaa34638c42399e91e905/www) at commit `dc249e8`, when it was still named jithendar.com (TypeScript 6.0.3, Next.js 16.4.3, React 19.3.1, Zod 4.6.7). Blocks are labelled **Actual project code** (unchanged), **Simplified from project code** (what was left out is named) or **Standalone teaching example** (compiled with the project's TypeScript version and strictness). Examples meant to fail show the compiler's real error in a comment.
 
 ## What TypeScript is, and what it is not
 
@@ -92,7 +92,7 @@ Without JSX enabled, `/p>` looks like the start of a regular expression. Renamin
 
 `www/src` has 179 `.ts` and 168 `.tsx` files. The shared comment types have no JSX:
 
-*Actual project code from [`www/src/lib/comment-types.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/comment-types.ts).*
+*Actual project code from [`www/src/lib/comment-types.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/comment-types.ts).*
 
 ```ts
 export type CommentSort = "oldest" | "newest";
@@ -103,7 +103,7 @@ export type DiscussionState = { enabled: boolean; locked: boolean; requireApprov
 
 The component that renders comments returns JSX:
 
-*Actual project code from [`www/src/components/Comments.tsx`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/Comments.tsx).*
+*Actual project code from [`www/src/components/Comments.tsx`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/Comments.tsx).*
 
 ```tsx
 export async function Comments({ postId, path }: { postId: string; path: string }) {
@@ -188,7 +188,7 @@ console.log(tags[0]?.toUpperCase() ?? "no tags");
 
 The project uses that pattern when there may be no comment thread:
 
-*Actual project code from [`www/src/app/_actions/comments.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/_actions/comments.ts).*
+*Actual project code from [`www/src/app/_actions/comments.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/_actions/comments.ts).*
 
 ```ts
 /** The thread containing `id`, as this user sees it (after posting, editing or deleting). */
@@ -218,7 +218,7 @@ tagSlug(42); // TypeError at runtime: tag.toLowerCase is not a function
 
 The project's version says what it accepts and returns:
 
-*Actual project code from [`www/src/config/taxonomy.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/config/taxonomy.ts).*
+*Actual project code from [`www/src/config/taxonomy.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/config/taxonomy.ts).*
 
 ```ts
 /** URL-safe slug for a tag ("Argo CD" → "argo-cd"). */
@@ -257,7 +257,7 @@ double(4);
 
 `wordsPerMinute: number = 200` is a **default value** (the type could be inferred from it), and `name?: string` an **optional parameter** whose type inside is `string | undefined`. Arrow functions take annotations the same way. The sign-in redirect helper combines a union parameter and a default:
 
-*Actual project code from [`www/src/lib/safe-next.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/safe-next.ts).*
+*Actual project code from [`www/src/lib/safe-next.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/safe-next.ts).*
 
 ```ts
 export function safeNext(next: string | null | undefined, fallback = "/account"): string {
@@ -265,7 +265,7 @@ export function safeNext(next: string | null | undefined, fallback = "/account")
 
 That is only the first line. The value comes from a URL query parameter, which may be missing, hence `string | null | undefined`. The body (not shown) rejects anything that is not a same-site path at runtime, because a string type says nothing about whether a string is a safe address. A second helper calls it:
 
-*Actual project code from [`www/src/lib/safe-next.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/safe-next.ts).*
+*Actual project code from [`www/src/lib/safe-next.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/safe-next.ts).*
 
 ```ts
 /** The sign-in URL that returns to `path` afterwards. */
@@ -315,7 +315,7 @@ A **type alias** names any type; an **interface** names an object shape only. `w
 
 For object shapes the two behave almost the same. Only `type` can name a union; interfaces extend with `extends` where types use `&`; and declaring an interface twice merges the two, while a duplicate `type` is an error. Pick one style per project. jithendar.com uses `type`, and at `dc249e8` has exactly two `interface` declarations, both using merging to add a field to the browser's built-in `Window`:
 
-*Actual project code from [`www/src/components/Turnstile.tsx`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/Turnstile.tsx).*
+*Actual project code from [`www/src/components/Turnstile.tsx`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/Turnstile.tsx).*
 
 ```tsx
 declare global {
@@ -333,7 +333,7 @@ This adds an optional `turnstile` field describing what Cloudflare's Turnstile s
 
 The stored data shapes are plain `type` aliases, such as a post's cover image in a JSON column, where missing `focalX?` and `focalY?` mean "centred":
 
-*Actual project code from [`www/src/db/schema.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/db/schema.ts).*
+*Actual project code from [`www/src/db/schema.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/db/schema.ts).*
 
 ```ts
 /** Cover image. `focalX`/`focalY` (0–100, default 50) keep the subject in view when cards crop it. */
@@ -342,7 +342,7 @@ export type FeaturedImage = { src: string; alt: string; width: number; height: n
 
 The post editor's form value uses `string | null` for optional fields and a literal union for the status:
 
-*Simplified from project code in [`www/src/lib/post-form.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/post-form.ts). Omitted: 20 of the 25 fields.*
+*Simplified from project code in [`www/src/lib/post-form.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/post-form.ts). Omitted: 20 of the 25 fields.*
 
 ```ts
 /** What the post editor edits. Also the payload of autosaves and what revisions are restored into. */
@@ -358,7 +358,7 @@ export type PostFormValue = {
 
 The error class declares and stores read-only constructor parameters in one step:
 
-*Actual project code from [`www/src/lib/posts.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/posts.ts).*
+*Actual project code from [`www/src/lib/posts.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/posts.ts).*
 
 ```ts
 export class PostError extends Error {
@@ -421,7 +421,7 @@ const s: Status = "pubished";
 
 You have seen this already: `CommentSort` is `"oldest" | "newest"`. The project also builds a union from a runtime list, so the list and the type cannot drift apart:
 
-*Actual project code from [`www/src/lib/comment-types.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/comment-types.ts).*
+*Actual project code from [`www/src/lib/comment-types.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/comment-types.ts).*
 
 ```ts
 export const REPORT_REASONS = ["spam", "abuse", "off-topic", "other"] as const;
@@ -477,7 +477,7 @@ function describe(result: SaveResult): string {
 
 The comment composer uses exactly this shape for what runs when you press **Post**:
 
-*Actual project code from [`www/src/components/discussion/Composer.tsx`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Composer.tsx).*
+*Actual project code from [`www/src/components/discussion/Composer.tsx`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Composer.tsx).*
 
 ```ts
 export type ComposerSubmit = (body: string, clientKey: string) => Promise<{ ok: true } | { ok: false; error: string }>;
@@ -485,7 +485,7 @@ export type ComposerSubmit = (body: string, clientKey: string) => Promise<{ ok: 
 
 That is a **function type**: two strings in, a promise of a result out (the arrow separates parameters from the return type here). The composer checks `ok` before it reads `error`:
 
-*Actual project code from [`www/src/components/discussion/Composer.tsx`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Composer.tsx).*
+*Actual project code from [`www/src/components/discussion/Composer.tsx`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Composer.tsx).*
 
 ```tsx
       const r = await onSubmit(body, clientKey.current);
@@ -522,7 +522,7 @@ export function Usage() {
 
 The braces **destructure** `name` and `excited` from the props, and `excited = false` makes that prop optional. The real composer types its props inline:
 
-*Actual project code from [`www/src/components/discussion/Composer.tsx`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Composer.tsx).*
+*Actual project code from [`www/src/components/discussion/Composer.tsx`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Composer.tsx).*
 
 ```tsx
 export function Composer({
@@ -558,7 +558,7 @@ export const x = <Greeting />;
 
 The composer's state:
 
-*Actual project code from [`www/src/components/discussion/Composer.tsx`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Composer.tsx).*
+*Actual project code from [`www/src/components/discussion/Composer.tsx`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Composer.tsx).*
 
 ```tsx
   const id = useId();
@@ -589,7 +589,7 @@ export function F() {
 
 An inline handler gets its event type inferred, so `e.target.value` is a string:
 
-*Actual project code from [`www/src/components/discussion/Composer.tsx`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Composer.tsx).*
+*Actual project code from [`www/src/components/discussion/Composer.tsx`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Composer.tsx).*
 
 ```tsx
           onChange={(e) => setBody(e.target.value)}
@@ -597,7 +597,7 @@ An inline handler gets its event type inferred, so `e.target.value` is a string:
 
 A separate handler needs the type written out:
 
-*Actual project code from [`www/src/components/discussion/Composer.tsx`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Composer.tsx).*
+*Actual project code from [`www/src/components/discussion/Composer.tsx`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Composer.tsx).*
 
 ```tsx
   function submit(e?: React.FormEvent) {
@@ -671,7 +671,7 @@ async function loadTitle(): Promise<string> {
 
 When a signed-in reader opens a post, the discussion component fetches their view of the comments:
 
-*Actual project code from [`www/src/components/discussion/Discussion.tsx`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Discussion.tsx).*
+*Actual project code from [`www/src/components/discussion/Discussion.tsx`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Discussion.tsx).*
 
 ```tsx
   const fetchPage = useCallback(
@@ -687,7 +687,7 @@ When a signed-in reader opens a post, the discussion component fetches their vie
 
 `Record<string, string>` is an object of string keys and values, `Promise<CommentPage>` the promised page, and `res.ok` turns HTTP errors into a thrown `Error`. `as CommentPage` is the important part. The server side is an API route:
 
-*Simplified from project code in [`www/src/app/api/comments/[postId]/route.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/api/comments/%5BpostId%5D/route.ts). Omitted: the imports, the cache header constant, and the `try`/`catch` that turns errors into 400, 404 or 500 responses.*
+*Simplified from project code in [`www/src/app/api/comments/[postId]/route.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/api/comments/%5BpostId%5D/route.ts). Omitted: the imports, the cache header constant, and the `try`/`catch` that turns errors into 400, 404 or 500 responses.*
 
 ```ts
 export async function GET(request: Request, { params }: { params: Promise<{ postId: string }> }) {
@@ -726,7 +726,7 @@ Run with Node.js 26, the first `console.log` prints `undefined` and the second t
 
 For data you do not control, the project validates at runtime with **Zod**: you describe the shape as a **schema**, and Zod checks the value and gives you correctly typed data. The Python practice route that saves a learner's draft, note or bookmark:
 
-*Actual project code from [`www/src/app/api/practice/problems/[slug]/state/route.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/api/practice/problems/%5Bslug%5D/state/route.ts).*
+*Actual project code from [`www/src/app/api/practice/problems/[slug]/state/route.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/api/practice/problems/%5Bslug%5D/state/route.ts).*
 
 ```ts
 const input = z.union([z.object({ draft: z.string() }), z.object({ note: z.string() }), z.object({ bookmarked: z.boolean() })]);
@@ -752,7 +752,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ slug: st
 
 `z.union([...])` accepts one of three shapes. `safeParse` never throws; it returns `{ success: true, data }` or `{ success: false, error }`, a discriminated union on `success`. After that check `parsed.data` has the schema's type, and `"draft" in body` narrows to one of the three shapes. The contact form's schema adds rules a type cannot express, like lengths and email format:
 
-*Actual project code from [`www/src/lib/contact.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/contact.ts).*
+*Actual project code from [`www/src/lib/contact.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/contact.ts).*
 
 ```ts
 export const contactInput = z.object({
@@ -765,7 +765,7 @@ export const contactInput = z.object({
 
 `submitContact(raw: unknown, ...)` runs `contactInput.safeParse(raw)` before storing anything. Zod can also produce the TypeScript type from a schema, so the shape is written once:
 
-*Actual project code from [`www/src/lib/content/schema.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/content/schema.ts).*
+*Actual project code from [`www/src/lib/content/schema.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/content/schema.ts).*
 
 ```ts
 export type ArticleFrontmatter = z.output<typeof articleFrontmatter>;
@@ -828,7 +828,7 @@ lengthOf("hi");
 
 That is the right type for outside values. The comment system takes a new comment's text as `unknown`, although browsers normally send a string, and checks it:
 
-*Actual project code from [`www/src/lib/comments.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/comments.ts).*
+*Actual project code from [`www/src/lib/comments.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/comments.ts).*
 
 ```ts
 function cleanBody(body: unknown): string {
@@ -841,7 +841,7 @@ function cleanBody(body: unknown): string {
 
 After the `typeof` check `body` is a `string`, and the `string` return type is backed by real checks. The post editor has a tiny helper of the same kind for database values:
 
-*Actual project code from [`www/src/lib/post-form.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/post-form.ts).*
+*Actual project code from [`www/src/lib/post-form.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/post-form.ts).*
 
 ```ts
 const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
@@ -876,7 +876,7 @@ function errorMessage(error: unknown): string {
 
 The discussion component does this in one line when loading fails:
 
-*Simplified from project code in [`www/src/components/discussion/Discussion.tsx`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Discussion.tsx). Omitted: the body of the `try`, which loads the page and scrolls to a linked comment.*
+*Simplified from project code in [`www/src/components/discussion/Discussion.tsx`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Discussion.tsx). Omitted: the body of the `try`, which loads the page and scrolls to a linked comment.*
 
 ```tsx
       try {
@@ -890,7 +890,7 @@ The discussion component does this in one line when loading fails:
 
 Server actions also separate errors safe to show from the rest:
 
-*Actual project code from [`www/src/app/_actions/comments.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/_actions/comments.ts).*
+*Actual project code from [`www/src/app/_actions/comments.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/_actions/comments.ts).*
 
 ```ts
   try {
@@ -907,7 +907,7 @@ A `PostError` was thrown on purpose ("You are commenting too quickly"), so its m
 
 Assertions are right only when something, ideally a runtime check, makes them true. A careful use:
 
-*Actual project code from [`www/src/lib/comments.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/comments.ts).*
+*Actual project code from [`www/src/lib/comments.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/comments.ts).*
 
 ```ts
   if (!REPORT_REASONS.includes(reason as ReportReason)) throw new PostError("Choose a reason.");
@@ -932,7 +932,7 @@ console.log(n.toFixed(1), s.toUpperCase());
 
 Read it as "for some type T, take an array of T and a fallback T, and return a T". TypeScript infers `T` from the arguments; without generics you would need one function per type, or `any`. You have already used generics: `Promise<CommentPage>`, `useState<string | null>(null)`, and `Record<K, V>`, an object with keys `K` and values `V`:
 
-*Actual project code from [`www/src/config/taxonomy.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/config/taxonomy.ts).*
+*Actual project code from [`www/src/config/taxonomy.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/config/taxonomy.ts).*
 
 ```ts
 export const collectionLabels: Record<Collection, string> = {
@@ -944,7 +944,7 @@ export const collectionLabels: Record<Collection, string> = {
 
 The Python practice pages call their API through one generic helper:
 
-*Actual project code from [`www/src/components/practice/api.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/practice/api.ts).*
+*Actual project code from [`www/src/components/practice/api.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/practice/api.ts).*
 
 ```ts
 export async function api<T>(path: string, init: { method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {
@@ -964,7 +964,7 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
 
 A caller writes `api<{ ok: true }>("/api/...")` and gets that type. Note `return data as T`: as with `fetchPage`, nothing checks that the server sent a `T`. The comment actions share a generic result type:
 
-*Actual project code from [`www/src/app/_actions/comments.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/_actions/comments.ts).*
+*Actual project code from [`www/src/app/_actions/comments.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/_actions/comments.ts).*
 
 ```ts
 export type CommentResult<T = object> = ({ ok: true; message?: string } & T) | { ok: false; error: string; signedOut?: true };
@@ -976,7 +976,7 @@ export type CommentResult<T = object> = ({ ok: true; message?: string } & T) | {
 
 `tsconfig.json` tells the compiler which files to check and how strictly. The whole file in `www/`:
 
-*Actual project code from [`www/tsconfig.json`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/tsconfig.json).*
+*Actual project code from [`www/tsconfig.json`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/tsconfig.json).*
 
 ```json
 {
@@ -1027,7 +1027,7 @@ Every option is set explicitly. I checked each default with `tsc --help --all`, 
 
 `"paths": { "@/*": ["./src/*"] }` resolves imports starting `@/` in `src/`, so code anywhere can write:
 
-*Actual project code from [`www/src/app/_actions/comments.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/_actions/comments.ts).*
+*Actual project code from [`www/src/app/_actions/comments.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/_actions/comments.ts).*
 
 ```ts
 import { PostError } from "@/lib/posts";
@@ -1061,7 +1061,7 @@ Server
 
 **Step 2: the discussion component calls the server.** `Discussion.tsx` provides `onSubmit`, which calls a **server action**: a `"use server"` function that runs on the server but is imported and called like a normal function.
 
-*Actual project code from [`www/src/components/discussion/Discussion.tsx`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Discussion.tsx).*
+*Actual project code from [`www/src/components/discussion/Discussion.tsx`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/components/discussion/Discussion.tsx).*
 
 ```tsx
   async function post(body: string, clientKey: string, parent: CommentView | null) {
@@ -1080,7 +1080,7 @@ Because the client imports `postCommentAction` directly, the compiler knows its 
 
 **Step 3: the server action.**
 
-*Actual project code from [`www/src/app/_actions/comments.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/_actions/comments.ts).*
+*Actual project code from [`www/src/app/_actions/comments.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/app/_actions/comments.ts).*
 
 ```ts
 export async function postCommentAction(input: { postId: string; parentId?: string | null; body: string; clientKey: string }) {
@@ -1100,7 +1100,7 @@ There is no return annotation: TypeScript infers it from `signedIn`, and step 2 
 
 **Step 4: the business logic checks everything again at runtime.** A server action is still an HTTP endpoint that anyone can call with a hand-made request, so `submitComment` treats its input as untrusted:
 
-*Simplified from project code in [`www/src/lib/comments.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/comments.ts). Omitted: the duplicate-submission lookup, the parent-comment checks, the rate limit and duplicate-text queries, and the race-condition retry.*
+*Simplified from project code in [`www/src/lib/comments.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/lib/comments.ts). Omitted: the duplicate-submission lookup, the parent-comment checks, the rate limit and duplicate-text queries, and the race-condition retry.*
 
 ```ts
 export type SubmitInput = { postId: string; parentId?: string | null; body: unknown; clientKey?: string | null };
@@ -1121,7 +1121,7 @@ export async function submitComment(user: { id: string; role: string }, input: S
 
 **Step 5: the database.** The insert goes through Drizzle, which describes tables in TypeScript:
 
-*Simplified from project code in [`www/src/db/schema.ts`](https://github.com/mrjithendar/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/db/schema.ts). Omitted: the moderation, depth and timestamp columns, and the indexes and foreign keys.*
+*Simplified from project code in [`www/src/db/schema.ts`](https://github.com/moks-tech/moks-cms/blob/dc249e807f83ef5a0e2aaa34638c42399e91e905/www/src/db/schema.ts). Omitted: the moderation, depth and timestamp columns, and the indexes and foreign keys.*
 
 ```ts
 export const comment = pgTable(

@@ -7,7 +7,6 @@ belongs to; each group is applied on its own, and `scripts/manifests.sh <group>`
 | Group | Files | Applied by |
 |---|---|---|
 | `site` | `00-…` to `85-…`, listed in `kustomization.yaml` | CI (`deploy-kubernetes.yml`) on merge: all of it except the two token Secrets and the ClusterRole/ClusterRoleBinding in `85-`, which `scripts/setup-ci-applier.sh` and `setup-ci-deployer.sh` apply |
-| `practice-executor` | `practice-executor-*.yaml` | a person, once, after gVisor is verified; then CI (application objects) |
 | `seo-agent` | `seo-agent-*.yaml` (SEO v4 agent service: internal API + MCP edge, flow-trigger CronJobs, including `seo-agent-62-promotion-triggers.yaml` for the two promotion flows). Kong entities for `/mcp/*` are in `kong/seo-agent-mcp.deck.yaml` (decK, not kubectl) | a person the first time (`scripts/manifests.sh seo-agent \| kubectl apply -f -`), after `scripts/create-seo-agent-secrets.sh` and pgvector (moks-cms `services/www/docs/seo/MANUAL_SETUP.md` §13–15 and "v4"); then CI applies the application objects on merge (ConfigMap, Deployment, Services, NetworkPolicies) and restarts the agent when its ConfigMap changed. The CronJobs stay with a person |
 
 ## Site (`kustomization.yaml`)
@@ -24,29 +23,14 @@ belongs to; each group is applied on its own, and `scripts/manifests.sh <group>`
 The Grafana dashboards are not cluster manifests here: they live in [`../grafana/`](../grafana/README.md) and
 reach Grafana through Argo CD.
 
-## Python practice executor (`practice-executor-*.yaml`)
+## Python practice (moved)
 
-Code runner in namespace `jithendar`, next to the site (moks-cms `services/www/docs/PYTHON_PRACTICE_EXECUTOR.md`). Not in
-`kustomization.yaml` on purpose, so its RBAC, quota, RuntimeClass and admission policies are never applied by CI. Apply it by hand, only after gVisor is
-installed (`scripts/install-gvisor-mk4.sh`), then prove isolation with `scripts/verify-practice-sandbox.sh`:
-
-```sh
-scripts/manifests.sh practice-executor | kubectl apply -f -
-```
-
-| File | Resources |
-|---|---|
-| `practice-executor-05-runtimeclass.yaml` | RuntimeClass `gvisor-nonet` (runsc, no network) |
-| `practice-executor-10-rbac.yaml` | ServiceAccounts `practice-dispatcher`, `practice-api`, `practice-sandbox`; Role/RoleBinding for the dispatcher |
-| `practice-executor-15-admission.yaml` | ValidatingAdmissionPolicies that pin down sandbox pods |
-| `practice-executor-20-quota.yaml` | ResourceQuota for all sandboxes together |
-| `practice-executor-40-executor.yaml` | ConfigMap, API and dispatcher Deployments, Service `practice-executor` |
-| `practice-executor-50-networkpolicies.yaml` | Allowed traffic |
-
-The manifests name `:latest`. moks-cms's CI (`ci-practice-executor.yml`) pushes `:pr-<number>` and `:latest`; this
-repository's `release.yml` (job `services`) sets both Deployments to the tag pinned in `moks-cms.json`
-(`practiceExecutor`) whenever the pin moves, once repository variable `PRACTICE_EXECUTOR_DEPLOY` is `true`;
-sandbox pods keep using `practice-sandbox:latest`.
+The practice executor (code runner, namespace `jithendar`), its sandboxes, the problems and their manifests moved to
+[`moks-tech/practice-programming`](https://github.com/moks-tech/practice-programming) on 2026-11-16; its CI deploys
+the executor. Two things stay here: the site's egress rule to `app=practice-executor-api` (`30-jithendar-com.yaml`)
+and the init container `practice-catalog`, which copies that repository's `practice-catalog:latest` into
+`/app/practice` (`PRACTICE_CATALOG_PATH`). The CI deployer (`80-ci-deployer.yaml`) may still roll the two executor
+Deployments: practice-programming's CI uses the same token.
 
 ## Database (shared CloudNativePG cluster)
 
@@ -89,10 +73,13 @@ creates `jithendar-com-env`; Terraform in the miniKube repository writes the dat
 
 ## Deploy
 
-The site runs `registry.jithendar.com/jithendar/jithendar-com:<builder pin>-<commit>` (Harbor), the tag of its last
-release: `release.yml` builds it on the moks-cms-builder image pinned in `moks-cms.json`, pushes it with `:latest` and
-sets the Deployment to it when a commit reaches `master`, so new code needs nothing here. The manifests
-name `:latest` for a first apply only; applying them later keeps the image each workload runs (`scripts/keep-live-images.py`).
+The site runs two images. `registry.jithendar.com/jithendar/moks-cms:<tag>` is the CMS, the tag named in
+`30-jithendar-com.yaml`. moks-cms's CI builds it, and it serves any site. `jithendar-com-content:latest` holds this
+site's articles, images, `site.json` and `config/`: its init container copies them into the pod, and the CMS reads them
+at run time. A content change ships with `.github/workflows/content.yml` (build, push, restart). A new CMS release is a
+new tag in the manifests: moks-cms's `moks-cms-released` dispatch makes `deploy-kubernetes.yml` commit it and apply it,
+or change it by hand in a pull request. A manifest that names `:latest` keeps the image a workload already runs
+(`scripts/keep-live-images.py`); a tag is applied as written.
 
 Manifest changes are applied by `.github/workflows/deploy-kubernetes.yml` when their pull request is merged (server
 dry run, diff, apply, wait, smoke test). To re-apply everything and restart the site without a merge, which is what
@@ -104,8 +91,7 @@ gh workflow run deploy-kubernetes.yml --ref master     # or Actions → deploy t
 
 By hand, with the `mk4` kubeconfig, the same objects are `kubectl apply -k kubernetes`.
 
-**Kube context.** Every script that changes the cluster (`scripts/create-*`, `set-*`, `setup-ci-*`,
-`verify-practice-sandbox.sh`) sources `scripts/lib/kube-context.sh`: it targets `KUBE_CONTEXT` if set, otherwise the
+**Kube context.** Every script that changes the cluster (`scripts/create-*`, `set-*`, `setup-ci-*`) sources `scripts/lib/kube-context.sh`: it targets `KUBE_CONTEXT` if set, otherwise the
 current kubectl context, refuses a context that doesn't exist, prints the context and its API server, and passes
 `--context` to every kubectl call so the whole run stays on one cluster. Without `KUBE_CONTEXT` it asks for confirmation
 when run from a terminal (`YES=1` skips the question; CI and pipes never prompt). `scripts/manifests.sh` only prints,

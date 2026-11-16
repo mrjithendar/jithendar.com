@@ -1,0 +1,140 @@
+name: content
+
+# Ships jithendar.com's own files: content/ (articles), public/images/, site.json and config/. They are one image,
+# registry.jithendar.com/jithendar/jithendar-com-content:latest (Dockerfile.content), which the Deployment's init
+# container copies into the web container; the CMS itself (moks-cms) is a separate image that moks-cms's CI builds and
+# kubernetes/30-jithendar-com.yaml names, applied by deploy-kubernetes.yml. This workflow never builds the CMS and
+# never applies manifests.
+#
+# On a push to master that changes those files (and on manual runs):
+# 1. check: start the moks-cms image the Deployment runs with these files and request the main pages and every
+#    published article (scripts/check-content.sh). An invalid article stops the run here.
+# 2. build the content image, smoke-test it (it copies every file), push it.
+# 3. restart deploy/jithendar-com so its init container pulls the new image (scripts/ci-rollout.py: it also moves a
+#    Deployment still on moks-cms-content, the image's name until 2026-11-16, and waits for the rollout). A new
+#    article, even a draft, needs the restart: moks-cms imports new files as drafts into Admin → Posts when it starts.
+#    Only a push that edits existing unpublished articles and adds images leaves the pods alone (readers would see
+#    nothing new, and an imported draft belongs to the editor); the image is pushed either way.
+#
+# Cluster access: ServiceAccount jithendar/github-ci-deployer only (variables MK4_API_SERVER, MK4_CA_DATA, secret
+# MK4_CI_TOKEN; scripts/setup-ci-deployer.sh). Harbor: secrets HARBOR_USERNAME and HARBOR_PASSWORD.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - 'content/**'
+      - 'public/images/**'
+      - 'site.json'
+      - 'config/**'
+      - 'Dockerfile.content'
+      - 'Dockerfile.content.dockerignore'
+      - '.github/workflows/content.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: content
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # arm64, like the cluster nodes and the moks-cms image the check starts.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    env:
+      IMAGE: registry.jithendar.com/jithendar/jithendar-com-content
+      SITE_URL: https://jithendar.com
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Log in to Harbor
+        env:
+          HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+          HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [[ -n "$HARBOR_USERNAME" && -n "$HARBOR_PASSWORD" ]] || { echo "::error::Secrets HARBOR_USERNAME and HARBOR_PASSWORD must be set"; exit 1; }
+          printf '%s' "$HARBOR_PASSWORD" | docker login registry.jithendar.com --username "$HARBOR_USERNAME" --password-stdin
+      - name: Check the content with the CMS that will serve it
+        run: scripts/check-content.sh
+      - name: Package image
+        run: |
+          docker build --platform linux/arm64 --provenance=false -f Dockerfile.content \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" -t "$IMAGE:latest" .
+      - name: Smoke-test the image
+        run: |
+          set -euo pipefail
+          out="$(mktemp -d)"; mkdir -p "$out/content" "$out/images" "$out/site"; chmod 777 "$out/content" "$out/images" "$out/site"
+          docker run --rm -v "$out/content:/mnt/content" -v "$out/images:/mnt/images" -v "$out/site:/mnt/site" "$IMAGE:latest"
+          test -d "$out/content/blog" && test -d "$out/content/authors" && test -f "$out/site/site.json" && test -d "$out/site/config"
+          [[ "$(find "$out/content" -name '*.mdx' | wc -l)" -eq "$(find content -name '*.mdx' | wc -l)" ]]
+          [[ "$(find "$out/images" -type f | wc -l)" -eq "$(find public/images -type f | wc -l)" ]]
+          echo "Copied $(find "$out/content" -name '*.mdx' | wc -l) MDX files, $(find "$out/images" -type f | wc -l) images and site.json with config/"
+      - name: Push
+        run: docker push --quiet "$IMAGE:latest"
+      # Restart unless the push only edits existing unpublished articles and adds images.
+      - name: Decide whether readers would see a change
+        id: visible
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          published() { # exit 0 if <rev>:<path> exists and its frontmatter says status: published
+            git show "$1:$2" 2>/dev/null | awk 'NR == 1 && $0 != "---" { exit } NR > 1 && $0 == "---" { exit }
+              /^status:[[:space:]]*["'"'"']?published/ { found = 1 } END { exit !found }'
+          }
+          restart=true reason="manual run or unknown range"
+          if [[ "$EVENT" == push && -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            restart=false reason="only existing unpublished articles were edited and images added"
+            while IFS=$'\t' read -r status path; do
+              case "$path" in
+                content/blog/*.mdx|content/news/*.mdx|content/projects/*.mdx)
+                  if [[ "$status" == A ]]; then restart=true reason="new article: $path (imported as a draft at start)"; break; fi
+                  if published "$BEFORE" "$path" || published "$GITHUB_SHA" "$path"; then restart=true reason="published: $path"; break; fi ;;
+                public/images/*)
+                  if [[ "$status" != A ]]; then restart=true reason="image changed: $path"; break; fi ;;
+                *) restart=true reason="other change: $path"; break ;;
+              esac
+            done < <(git diff --name-status --no-renames "$BEFORE" "$GITHUB_SHA" -- content public/images site.json config \
+                       Dockerfile.content Dockerfile.content.dockerignore .github/workflows/content.yml)
+          fi
+          echo "Restart: $restart ($reason)"
+          { echo "restart=$restart"; echo "reason=$reason"; } >> "$GITHUB_OUTPUT"
+      - uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
+        if: steps.visible.outputs.restart == 'true'
+        with:
+          version: v1.35.0
+      - name: Restart jithendar-com
+        if: steps.visible.outputs.restart == 'true'
+        env:
+          MK4_API_SERVER: ${{ vars.MK4_API_SERVER }}
+          MK4_CA_DATA: ${{ vars.MK4_CA_DATA }}
+          MK4_CI_TOKEN: ${{ secrets.MK4_CI_TOKEN }}
+        run: |
+          set -euo pipefail
+          source scripts/lib/ci-kubeconfig.sh
+          python3 scripts/ci-rollout.py "$IMAGE" latest --previous registry.jithendar.com/jithendar/moks-cms-content
+      - name: Record image
+        env:
+          RESTART: ${{ steps.visible.outputs.restart }}
+          REASON: ${{ steps.visible.outputs.reason }}
+        run: |
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:latest")"
+          {
+            echo "### Content image"
+            echo
+            echo "- Tag: \`$IMAGE:latest\` (commit \`$GITHUB_SHA\`)"
+            echo "- Digest: \`$digest\`"
+            echo
+            if [[ "$RESTART" == true ]]; then
+              echo "Deployed: deploy/jithendar-com restarted; its init container copied the new files ($REASON)"
+            else
+              echo "Not deployed: $REASON. The image is pushed; the next restart of jithendar-com picks it up."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

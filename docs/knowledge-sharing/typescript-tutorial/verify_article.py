@@ -24,7 +24,7 @@ COMMIT = "dc249e807f83ef5a0e2aaa34638c42399e91e905"
 WWW = os.getcwd()
 ARTICLE = sys.argv[1] if len(sys.argv) > 1 else os.path.join(WWW, "content/blog/learning-typescript-real-project-jithendar-com.mdx")
 LABEL = re.compile(r"^\*(Actual project code|Simplified from project code|Standalone teaching example)\b")
-PATH_IN_LABEL = re.compile(r"\(https://github\.com/mrjithendar/jithendar\.com/blob/([0-9a-f]+)/(www/[^)]+)\)")
+PATH_IN_LABEL = re.compile(r"\(https://github\.com/moks-tech/jithendar\.com/blob/([0-9a-f]+)/(www/[^)]+)\)")
 TSCONFIG = {
     "compilerOptions": {
         "target": "ES2022", "lib": ["dom", "dom.iterable", "esnext"], "strict": True,
@@ -62,7 +62,7 @@ for key, lo, hi in [("title", 10, 110), ("description", 50, 160), ("seoTitle", 1
         fail(f"frontmatter {key}: length {len(v) if v else 'missing'} outside {lo}-{hi}")
 if "status: review" not in fm:
     fail("frontmatter status must stay review (draft for owner review)")
-for url in re.findall(r"https://github\.com/mrjithendar/jithendar\.com/(?:blob|tree)/([0-9a-f]+)", body):
+for url in re.findall(r"https://github\.com/moks-tech/jithendar\.com/(?:blob|tree)/([0-9a-f]+)", body):
     if url != COMMIT:
         fail(f"GitHub link not pinned to {COMMIT[:7]}: {url}")
 

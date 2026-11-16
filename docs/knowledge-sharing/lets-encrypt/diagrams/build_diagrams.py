@@ -3,7 +3,7 @@
 
 Reuses the layout, palette and draw.io writer of the RoboShop AI series. Run from www/. The SVGs are rendered here,
 not exported by draw.io: if a .drawio file is edited by hand, re-export it from draw.io over the SVG.
-The two mk4 figures follow Git only (mrjithendar/minikube 13be756, read on 2026-11-14); the cluster was not inspected.
+The two mk4 figures follow Git only (moks-tech/kubernetes 13be756, read on 2026-11-14); the cluster was not inspected.
 """
 import importlib.util
 import sys

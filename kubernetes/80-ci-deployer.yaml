@@ -1,5 +1,6 @@
-# GitHub Actions (.github/workflows/release.yml) rolls deployment/jithendar-com onto each new app or content image,
-# and the SEO agent and the two executor Deployments onto the tags pinned in moks-cms.json.
+# GitHub Actions (.github/workflows/content.yml) restarts deployment/jithendar-com on each new content image (by
+# setting its init container's image, scripts/ci-rollout.py). Image tags of the CMS, the SEO agent and the executor
+# change through the manifests (deploy-kubernetes.yml, ServiceAccount github-ci-applier).
 # This ServiceAccount may only do that: watch deployments and pods in jithendar and restart those three Deployments.
 # It cannot read Secrets or create pods.
 # scripts/setup-ci-deployer.sh applies this file and stores its token as the repository secret MK4_CI_TOKEN.

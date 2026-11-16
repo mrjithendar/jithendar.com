@@ -1,6 +1,6 @@
 # Verification note: langchain-vs-langgraph-sre-agent-moks
 
-Checked 2026-11-01 against `mrjithendar/moks` commit `9c150e9` (`origin/master`). `backend/moks` had no uncommitted changes at that point.
+Checked 2026-11-01 against `mrjithendar/moks-sre` commit `9c150e9` (`origin/master`). `backend/moks` had no uncommitted changes at that point.
 
 ## Dependency versions (installed from `backend/requirements.txt`, Python 3.11)
 
