@@ -55,9 +55,12 @@ on:
 permissions:
   contents: read
 
-# One release at a time, in order.
+# One run at a time per source: pushes to master, and each moks-cms component's dispatches. GitHub keeps one pending
+# run per group, so separate groups keep a builder release from replacing a waiting seo-agent one. The image jobs
+# have their own groups below, so two runs never roll the same Deployment at once; a waiting job that a newer one
+# replaces loses nothing, since the newer one builds a later commit of master.
 concurrency:
-  group: release
+  group: release-${{ github.event_name == 'repository_dispatch' && github.event.client_payload.component || 'site' }}
   cancel-in-progress: false
 
 env:
@@ -98,17 +101,23 @@ jobs:
             *) echo "::error::Unknown component: $COMPONENT"; exit 1 ;;
           esac
           [[ "$TAG" =~ ^(pr|manual)-[0-9]+$ ]] || { echo "::error::Not a moks-cms release tag: $TAG"; exit 1; }
-          git fetch --quiet origin master && git checkout --quiet -B master origin/master
-          echo "before=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          if [[ "$(jq -r --arg k "$key" '.[$k]' moks-cms.json)" == "$TAG" ]]; then
-            echo "moks-cms.json already pins $key to $TAG"
-          else
+          # Another run (another component) may push its pin at the same moment: on a rejected push, start again from
+          # the new master and set the pin on that, rather than merging.
+          for attempt in 1 2 3 4 5; do
+            git fetch --quiet origin master && git checkout --quiet -B master origin/master
+            before="$(git rev-parse HEAD)"
+            if [[ "$(jq -r --arg k "$key" '.[$k]' moks-cms.json)" == "$TAG" ]]; then
+              echo "moks-cms.json already pins $key to $TAG"
+              break
+            fi
             jq --arg k "$key" --arg t "$TAG" '.[$k] = $t' moks-cms.json > moks-cms.json.new && mv moks-cms.json.new moks-cms.json
             git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
               commit --quiet -m "chore(moks-cms): $COMPONENT $TAG" -m "moks-cms commit ${REVISION:-unknown}" moks-cms.json
-            git push --quiet origin HEAD:master
-          fi
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            git push --quiet origin HEAD:master && break
+            [[ $attempt -lt 5 ]] || { echo "::error::Could not push the pin after 5 attempts"; exit 1; }
+            sleep $((attempt * 3))
+          done
+          { echo "before=$before"; echo "sha=$(git rev-parse HEAD)"; } >> "$GITHUB_OUTPUT"
       - name: What to release
         id: plan
         env:
@@ -157,6 +166,9 @@ jobs:
   content:
     needs: plan
     if: needs.plan.outputs.content == 'true'
+    concurrency:
+      group: release-content
+      cancel-in-progress: false
     # The builder is linux/arm64 only.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -300,6 +312,9 @@ jobs:
       (needs.content.result == 'success' || needs.content.result == 'skipped')
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
+    concurrency:
+      group: release-app
+      cancel-in-progress: false
     env:
       SHA: ${{ needs.plan.outputs.sha }}
       IMAGE: registry.jithendar.com/jithendar/jithendar-com

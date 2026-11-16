@@ -15,7 +15,9 @@ COPY . /site
 # APP_ENV is baked into the meta robots tag at build time; production is the only indexable value.
 ARG APP_ENV=production
 ENV APP_ENV=$APP_ENV SITE_DIR=/site
-RUN npm run site -- --copy && npm run build
+# The builder keeps the test fixture site (tests/fixtures/site) for its own checks. Output tracing would copy its
+# public/images into the standalone output (the image lookups are dynamic), so it goes before the build.
+RUN rm -rf tests/fixtures/site && npm run site -- --copy && npm run build
 
 FROM node:26-bookworm-slim
 WORKDIR /app
