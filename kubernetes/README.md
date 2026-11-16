@@ -43,10 +43,9 @@ scripts/manifests.sh practice-executor | kubectl apply -f -
 | `practice-executor-40-executor.yaml` | ConfigMap, API and dispatcher Deployments, Service `practice-executor` |
 | `practice-executor-50-networkpolicies.yaml` | Allowed traffic |
 
-The manifests name `:latest`. moks-cms's CI (`ci-practice-executor.yml`) pushes `:pr-<number>` and `:latest`; this
-repository's `release.yml` (job `services`) sets both Deployments to the tag pinned in `moks-cms.json`
-(`practiceExecutor`) whenever the pin moves, once repository variable `PRACTICE_EXECUTOR_DEPLOY` is `true`;
-sandbox pods keep using `practice-sandbox:latest`.
+moks-cms's CI (`ci-practice-executor.yml`) pushes `:pr-<number>` and `:latest`; the manifests name the tag both
+Deployments run (`deploy-kubernetes.yml` moves it when moks-cms announces a release, and applies the application
+objects); sandbox pods keep using `practice-sandbox:latest`.
 
 ## Database (shared CloudNativePG cluster)
 
@@ -89,10 +88,13 @@ creates `jithendar-com-env`; Terraform in the miniKube repository writes the dat
 
 ## Deploy
 
-The site runs `registry.jithendar.com/jithendar/jithendar-com:<builder pin>-<commit>` (Harbor), the tag of its last
-release: `release.yml` builds it on the moks-cms-builder image pinned in `moks-cms.json`, pushes it with `:latest` and
-sets the Deployment to it when a commit reaches `master`, so new code needs nothing here. The manifests
-name `:latest` for a first apply only; applying them later keeps the image each workload runs (`scripts/keep-live-images.py`).
+The site runs two images. `registry.jithendar.com/jithendar/moks-cms:<tag>` is the CMS, the tag named in
+`30-jithendar-com.yaml`. moks-cms's CI builds it, and it serves any site. `jithendar-com-content:latest` holds this
+site's articles, images, `site.json` and `config/`: its init container copies them into the pod, and the CMS reads them
+at run time. A content change ships with `.github/workflows/content.yml` (build, push, restart). A new CMS release is a
+new tag in the manifests: moks-cms's `moks-cms-released` dispatch makes `deploy-kubernetes.yml` commit it and apply it,
+or change it by hand in a pull request. A manifest that names `:latest` keeps the image a workload already runs
+(`scripts/keep-live-images.py`); a tag is applied as written.
 
 Manifest changes are applied by `.github/workflows/deploy-kubernetes.yml` when their pull request is merged (server
 dry run, diff, apply, wait, smoke test). To re-apply everything and restart the site without a merge, which is what

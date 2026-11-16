@@ -1,10 +1,15 @@
 name: deploy to kubernetes
 
-# Applies kubernetes/ to the mk4 minikube cluster. Since 2026-11-14 this workflow is the only path that applies
-# manifests (./deploy.sh is gone); it moved here from moks-cms with the site on 2026-11-16. release.yml points the
-# Deployments at each release's own tag (the site's app and content images, and the moks-cms images pinned in
-# moks-cms.json). This workflow never changes which image a workload runs: the manifests name :latest for a first
-# apply only, and a workload that exists keeps the image it has (scripts/keep-live-images.py).
+# Deploys the whole site from kubernetes/ to the mk4 cluster: the CMS (moks-cms), the SEO agent and the practice
+# executor run the image tags the manifests name, so moving to a new moks-cms release is a change of tag here (by hand
+# in a pull request, or automatically, below). The site's own files ship in the content image (content.yml), whose
+# :latest the manifests name. A manifest that names :latest keeps the image a workload already runs
+# (scripts/keep-live-images.py); one that names a tag is applied as written. Moved here from moks-cms on 2026-11-16.
+#
+# bump   → repository_dispatch "moks-cms-released" {component, tag}, sent by moks-cms's CI after it pushes an image
+#          (its scripts/notify-sites.sh): put the tag in the manifests (www → moks-cms in 30-jithendar-com.yaml,
+#          seo-agent → seo-agent-*.yaml, practice-executor → practice-executor-*.yaml), commit it to master as
+#          github-actions[bot], then plan and deploy that commit as below.
 #
 # plan   → pull requests touching the manifests (and manual runs): render the three groups of kubernetes/
 #          (scripts/manifests.sh), keep the objects CI applies (scripts/ci-app-manifests.py), list the rest.
@@ -27,7 +32,8 @@ name: deploy to kubernetes
 #
 # Manual run (Actions → deploy to kubernetes → Run workflow, on the default branch) is the old `./deploy.sh`: apply
 # everything, restart the site on the image it runs (input restart_site, on by default), wait, smoke-test. To put
-# another image on the site, run release.yml, or `kubectl set image` to an earlier tag.
+# another CMS release on the site, change its tag in kubernetes/30-jithendar-com.yaml; `kubectl set image` to an earlier
+# tag is a rollback until the next apply.
 #
 # Cluster access: ServiceAccount jithendar/github-ci-applier (kubernetes/85-ci-applier.yaml), kubeconfig template
 # .github/jithendar-ci-applier.yaml, values MK4_API_SERVER, MK4_CA_DATA (variables, shared with the deployer) and
@@ -35,6 +41,8 @@ name: deploy to kubernetes
 # again whenever the ClusterRole in 85-ci-applier.yaml changes (CI cannot apply it).
 
 on:
+  repository_dispatch:
+    types: [moks-cms-released]
   workflow_dispatch:
     inputs:
       restart_site:
@@ -54,21 +62,65 @@ permissions:
   contents: read
 
 # One deployment at a time, never cancelled half way.
+# Each moks-cms component's dispatches have their own group, so one release never replaces another waiting one.
 concurrency:
-  group: deploy-kubernetes-${{ github.event.pull_request.number || github.ref }}
+  group: deploy-kubernetes-${{ github.event.client_payload.component || github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
+  bump:
+    if: github.event_name == 'repository_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.bump.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Put the new tag in the manifests
+        id: bump
+        env:
+          COMPONENT: ${{ github.event.client_payload.component }}
+          TAG: ${{ github.event.client_payload.tag }}
+          REVISION: ${{ github.event.client_payload.revision }}
+        run: |
+          set -euo pipefail
+          case "$COMPONENT" in
+            www) image=moks-cms files=(kubernetes/30-jithendar-com.yaml) ;;
+            seo-agent) image=seo-agent files=(kubernetes/seo-agent-*.yaml) ;;
+            practice-executor) image=practice-executor files=(kubernetes/practice-executor-*.yaml) ;;
+            *) echo "::error::Unknown component: $COMPONENT"; exit 1 ;;
+          esac
+          [[ "$TAG" =~ ^(pr|manual)-[0-9]+$ ]] || { echo "::error::Not a moks-cms release tag: $TAG"; exit 1; }
+          # Another component's run may push at the same moment: on a rejected push, start again from the new master.
+          for attempt in 1 2 3 4 5; do
+            git fetch --quiet origin master && git checkout --quiet -B master origin/master
+            sed -i -E "s#(registry\.jithendar\.com/jithendar/$image):[A-Za-z0-9._-]+#\1:$TAG#g" "${files[@]}"
+            if git diff --quiet; then echo "The manifests already name $image:$TAG"; break; fi
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit --quiet -am "chore(kubernetes): $image $TAG" -m "moks-cms commit ${REVISION:-unknown}"
+            git push --quiet origin HEAD:master && break
+            [[ $attempt -lt 5 ]] || { echo "::error::Could not push the new tag after 5 attempts"; exit 1; }
+            sleep $((attempt * 3))
+          done
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "- $image → \`$TAG\` (commit \`$(git rev-parse --short HEAD)\`)" >> "$GITHUB_STEP_SUMMARY"
+
   plan:
-    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'closed' || github.event.pull_request.merged == true))
+    needs: bump
+    if: >-
+      !cancelled() && (needs.bump.result == 'success' || needs.bump.result == 'skipped') &&
+      (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'closed' || github.event.pull_request.merged == true)))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # A merged pull request is built from its merge commit on the default branch.
-          ref: ${{ github.event.action == 'closed' && github.event.pull_request.merge_commit_sha || '' }}
+          # A merged pull request is built from its merge commit on the default branch; a dispatch from the commit
+          # `bump` made.
+          ref: ${{ needs.bump.outputs.sha || (github.event.action == 'closed' && github.event.pull_request.merge_commit_sha) || '' }}
       - uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
         with:
           version: v1.35.0
@@ -88,9 +140,10 @@ jobs:
           done
 
   deploy:
-    needs: plan
+    needs: [bump, plan]
     if: >-
-      vars.MINIKUBE_DEPLOY == 'true' && (
+      !cancelled() && needs.plan.result == 'success' && vars.MINIKUBE_DEPLOY == 'true' && (
+        github.event_name == 'repository_dispatch' ||
         (github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
         (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true &&
          github.event.pull_request.base.ref == github.event.repository.default_branch)
@@ -104,8 +157,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # A merged pull request is built from its merge commit on the default branch.
-          ref: ${{ github.event.action == 'closed' && github.event.pull_request.merge_commit_sha || '' }}
+          # A merged pull request is built from its merge commit on the default branch; a dispatch from the commit
+          # `bump` made.
+          ref: ${{ needs.bump.outputs.sha || (github.event.action == 'closed' && github.event.pull_request.merge_commit_sha) || '' }}
       - uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
         with:
           version: v1.35.0

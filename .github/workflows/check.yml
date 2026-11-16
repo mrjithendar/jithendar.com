@@ -2,10 +2,9 @@ name: check
 
 # Pull requests (and manual runs). Nothing here touches the cluster or pushes an image.
 #
-# content    → the MDX schema, internal links and the practice catalog, checked by moks-cms's own tests in the
-#              moks-cms-builder image this site is pinned to (moks-cms.json "builder"; scripts/check-content.sh)
-# app        → only when the pull request changes what is compiled into the app (site.json, config/, Dockerfile*,
-#              the builder pin): build the app image and smoke-test it, as release.yml does, without pushing
+# content    → the articles, images, site.json and config/ served by the moks-cms image the Deployment runs
+#              (kubernetes/30-jithendar-com.yaml): main pages and every published article must answer 200
+#              (scripts/check-content.sh). A pull request that moves that image to a new tag is checked with it.
 # dashboards → the Grafana dashboards in grafana/ (scripts/check-dashboards.py) and the one ConfigMap they render to
 # scripts    → no conflict copies, the kube-context guard and the release/deploy scripts against a stub kubectl,
 #              the manifests' own tests (scripts/tests), shellcheck
@@ -23,37 +22,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  changes:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      app: ${{ steps.files.outputs.app }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - name: Does the pull request change the app image?
-        id: files
-        env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -euo pipefail
-          app=true
-          if [[ -n "$BASE" ]]; then
-            app=false
-            while IFS= read -r f; do
-              case "$f" in
-                site.json|config/*|Dockerfile|Dockerfile.dockerignore|moks-cms.json|scripts/build-site-image.sh|scripts/smoke-site-image.sh) app=true ;;
-              esac
-            done < <(git diff --name-only "$BASE" "$GITHUB_SHA")
-          fi
-          echo "app=$app" | tee -a "$GITHUB_OUTPUT"
-
   content:
-    needs: changes
-    # The builder is linux/arm64 only.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # The moks-cms image is linux/arm64 only.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     steps:
@@ -68,32 +39,8 @@ jobs:
           set -euo pipefail
           [[ -n "$HARBOR_USERNAME" && -n "$HARBOR_PASSWORD" ]] || { echo "::error::Secrets HARBOR_USERNAME and HARBOR_PASSWORD must be set"; exit 1; }
           printf '%s' "$HARBOR_PASSWORD" | docker login registry.jithendar.com --username "$HARBOR_USERNAME" --password-stdin
-      - name: Validate content and the practice catalog
-        run: scripts/check-content.sh "registry.jithendar.com/jithendar/moks-cms-builder:$(jq -er .builder moks-cms.json)"
-
-  app:
-    needs: changes
-    if: needs.changes.outputs.app == 'true'
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Log in to Harbor
-        env:
-          HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
-          HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
-        run: |
-          set -euo pipefail
-          [[ -n "$HARBOR_USERNAME" && -n "$HARBOR_PASSWORD" ]] || { echo "::error::Secrets HARBOR_USERNAME and HARBOR_PASSWORD must be set"; exit 1; }
-          printf '%s' "$HARBOR_PASSWORD" | docker login registry.jithendar.com --username "$HARBOR_USERNAME" --password-stdin
-      - name: Build the app image
-        run: scripts/build-site-image.sh "registry.jithendar.com/jithendar/moks-cms-builder:$(jq -er .builder moks-cms.json)" jithendar-com:check "$GITHUB_SHA"
-      - name: Image size (summary; fails above +15 % of the stored baseline)
-        run: scripts/image-size.sh jithendar-com:check image-size-baseline.json
-      - name: Smoke-test the image
-        run: scripts/smoke-site-image.sh jithendar-com:check "$GITHUB_SHA"
+      - name: Check the content with the CMS that will serve it
+        run: scripts/check-content.sh
 
   dashboards:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -137,6 +84,5 @@ jobs:
       - name: shellcheck
         run: >-
           shellcheck -x scripts/lib/kube-context.sh scripts/lib/ci-kubeconfig.sh scripts/tests/kube-context.test.sh
-          scripts/check-conflict-copies.sh scripts/image-size.sh scripts/create-*.sh scripts/set-*.sh
-          scripts/setup-ci-applier.sh scripts/setup-ci-deployer.sh scripts/check-content.sh scripts/build-site-image.sh
-          scripts/smoke-site-image.sh
+          scripts/check-conflict-copies.sh scripts/create-*.sh scripts/set-*.sh
+          scripts/setup-ci-applier.sh scripts/setup-ci-deployer.sh scripts/check-content.sh

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Roll every Deployment that runs an image repository to one tag, and wait until it is ready.
 
-  scripts/ci-rollout.py registry.jithendar.com/jithendar/jithendar-com pr-123-1a2b3c4
-  scripts/ci-rollout.py registry.jithendar.com/jithendar/jithendar-com pr-123-1a2b3c4 --previous registry.jithendar.com/jithendar/moks-cms
+  scripts/ci-rollout.py registry.jithendar.com/jithendar/jithendar-com-content latest
+  scripts/ci-rollout.py registry.jithendar.com/jithendar/jithendar-com-content latest --previous registry.jithendar.com/jithendar/moks-cms-content
 
-The release workflow calls this (.github/workflows/release.yml): after pushing the site's app or content image, and
-with the tag pinned in moks-cms.json for the SEO agent and the practice executor:
+.github/workflows/content.yml calls this after pushing the content image; it also works for any other image, e.g. a
+rollback by hand:
 
 - every Deployment in the namespace that has a container or an init container from <repository>, whatever its tag or
   digest, gets those containers set to <repository>:<tag> (`kubectl set image`). Nothing is matched by name, so a

@@ -17,6 +17,5 @@ gh workflow run deploy-kubernetes.yml --ref master
 sleep 10 # give GitHub time to create the run before looking it up
 gh run watch "$(gh run list --workflow deploy-kubernetes.yml --limit 1 --json databaseId --jq '.[0].databaseId')" --exit-status
 
-# 4. Put the executor on the tag pinned in moks-cms.json ("practiceExecutor"; repository variable
-#    PRACTICE_EXECUTOR_DEPLOY must be "true"). moks-cms builds the images; this repository rolls them out.
-gh workflow run release.yml --ref master -f app=false -f content=false -f services=true
+# 4. The executor runs the tag named in kubernetes/practice-executor-40-executor.yaml; step 3 applied it. moks-cms
+#    builds the images; a new release moves that tag (deploy-kubernetes.yml, repository_dispatch from moks-cms).
