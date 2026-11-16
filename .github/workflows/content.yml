@@ -9,8 +9,17 @@ name: content
 # On a push to master that changes those files (and on manual runs):
 # 1. check: start the moks-cms image the Deployment runs with these files and request the main pages and every
 #    published article (scripts/check-content.sh). An invalid article stops the run here.
-# 2. build the content image, smoke-test it (it copies every file), push it.
-# 3. restart deploy/jithendar-com so its init container pulls the new image (scripts/ci-rollout.py: it also moves a
+# 2. push (scripts/push-content.py, through the site's API; nothing is built or restarted for it):
+#    - every image under public/images/ that the site does not have yet, or has with other bytes, goes to the site's
+#      storage (Cloudflare R2). The site serves /images/… from there once the file is no longer in the pod;
+#    - each article this push added or changed is sent as its file: a new one becomes a DRAFT in Admin → Posts within
+#      a minute, a post that is still a draft is updated, a published post is left alone (edit those in the admin).
+#      A manual run sends every article that is not a post yet, and changes none.
+#    It needs the repository secret JITHENDAR_API_KEY (Admin → API keys, scopes images:write and posts:draft; such a
+#    key cannot publish or delete). Without the secret the step is skipped with a warning. A file the site refuses
+#    fails the run at the end, after steps 3 and 4, so the content image is still delivered.
+# 3. build the content image, smoke-test it (it copies every file), push it.
+# 4. restart deploy/jithendar-com so its init container pulls the new image (scripts/ci-rollout.py: it also moves a
 #    Deployment still on moks-cms-content, the image's name until 2026-11-16, and waits for the rollout). A new
 #    article, even a draft, needs the restart: moks-cms imports new files as drafts into Admin → Posts when it starts.
 #    Only a push that edits existing unpublished articles and adds images leaves the pods alone (readers would see
@@ -62,6 +71,30 @@ jobs:
           printf '%s' "$HARBOR_PASSWORD" | docker login registry.jithendar.com --username "$HARBOR_USERNAME" --password-stdin
       - name: Check the content with the CMS that will serve it
         run: scripts/check-content.sh
+      # Images to the site's storage and new or changed articles as drafts, through the site's API. A failure here
+      # does not stop the content image below; the last step of the job reports it.
+      - name: Push images and articles to the site
+        id: push
+        continue-on-error: true
+        env:
+          JITHENDAR_API_KEY: ${{ secrets.JITHENDAR_API_KEY }}
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$JITHENDAR_API_KEY" ]]; then
+            echo "::warning::Secret JITHENDAR_API_KEY is not set: images and articles were not pushed (Admin → API keys, scopes images:write and posts:draft)"
+            echo "Not pushed: secret \`JITHENDAR_API_KEY\` is not set." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [[ "$EVENT" == push && -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            # Added or modified article files of this push. Deleted files are not sent: the post stays until an editor removes it.
+            mapfile -t posts < <(git diff --name-only --no-renames --diff-filter=AM "$BEFORE" "$GITHUB_SHA" -- 'content/blog/*.mdx' 'content/news/*.mdx' 'content/projects/*.mdx')
+            python3 scripts/push-content.py --site "$SITE_URL" "${posts[@]}"
+          else
+            # Manual run, or a push whose range is unknown: every article that is not a post yet, and no existing post is changed.
+            python3 scripts/push-content.py --site "$SITE_URL" --all-posts --create-only
+          fi
       - name: Package image
         run: |
           docker build --platform linux/arm64 --provenance=false -f Dockerfile.content \
@@ -138,3 +171,8 @@ jobs:
               echo "Not deployed: $REASON. The image is pushed; the next restart of jithendar-com picks it up."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Fail when the site refused a file
+        if: steps.push.outcome == 'failure'
+        run: |
+          echo "::error::scripts/push-content.py failed: see the step \"Push images and articles to the site\" and the run summary"
+          exit 1
