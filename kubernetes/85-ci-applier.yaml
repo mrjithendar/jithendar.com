@@ -1,0 +1,129 @@
+# GitHub Actions (.github/workflows/deploy-kubernetes.yml) applies kubernetes/ when a pull request is merged into master:
+# the whole site group (kustomization.yaml, except Secrets and the cluster-wide objects below) and the application
+# objects of kubernetes/practice-executor-*.yaml and kubernetes/seo-agent-*.yaml. It replaced ./deploy.sh on 2026-11-14.
+#
+# This ServiceAccount may create and update, in namespace jithendar, the kinds scripts/ci-app-manifests.py lets
+# through: Deployments, StatefulSets, Services, ConfigMaps, Ingresses, NetworkPolicies, PodDisruptionBudgets,
+# cert-manager Certificates, Istio VirtualServices and, since 2026-11-14 (owner decision, docs/DEPLOYMENT.md),
+# ServiceAccounts, Roles, RoleBindings, ResourceQuotas, PeerAuthentications and AuthorizationPolicies. It may also
+# patch the Namespace jithendar itself (ClusterRole below, that one name only).
+#
+# WHAT THAT MEANS: with `escalate` and `bind` on Roles, a merged pull request that edits a Role in kubernetes/ can give
+# this ServiceAccount (or any other in the namespace) any permission in namespace jithendar, including reading its
+# Secrets. Review changes to kubernetes/*rbac*, 70-, 80- and 85- files as changes to cluster access.
+#
+# It still cannot delete anything, create pods directly (it may port-forward to them, for the smoke test), read or
+# write Secrets (as committed here), or touch any other namespace or anything else cluster-wide. Separate from
+# github-ci-deployer (80-ci-deployer.yaml), which only restarts Deployments.
+#
+# CI cannot apply the ClusterRole and ClusterRoleBinding in this file (cluster-wide RBAC stays with a person):
+# scripts/setup-ci-applier.sh applies the whole file and stores the token as the repository secret MK4_CI_APPLY_TOKEN.
+# Run it again after changing them.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: github-ci-applier
+  namespace: jithendar
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: github-ci-applier
+  namespace: jithendar
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets"]
+  verbs: ["get", "list", "watch", "create", "patch", "update"]
+- apiGroups: [""]
+  resources: ["services", "configmaps"]
+  verbs: ["get", "list", "watch", "create", "patch", "update"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses", "networkpolicies"]
+  verbs: ["get", "list", "watch", "create", "patch", "update"]
+- apiGroups: ["policy"]
+  resources: ["poddisruptionbudgets"]
+  verbs: ["get", "list", "watch", "create", "patch", "update"]
+- apiGroups: ["cert-manager.io"]
+  resources: ["certificates"]
+  verbs: ["get", "list", "watch", "create", "patch", "update"]
+- apiGroups: ["networking.istio.io"]
+  resources: ["virtualservices"]
+  verbs: ["get", "list", "watch", "create", "patch", "update"]
+# The rest of the site group, applied by CI since 2026-11-14 (it was ./deploy.sh before).
+- apiGroups: [""]
+  resources: ["serviceaccounts", "resourcequotas"]
+  verbs: ["get", "list", "watch", "create", "patch", "update"]
+- apiGroups: ["security.istio.io"]
+  resources: ["peerauthentications", "authorizationpolicies"]
+  verbs: ["get", "list", "watch", "create", "patch", "update"]
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["rolebindings"]
+  verbs: ["get", "list", "watch", "create", "patch", "update"]
+# `escalate`: write a Role holding permissions this ServiceAccount does not have itself. `bind`: bind such a Role.
+# Without them the API server refuses any Role change that grants more than the rules in this file.
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["roles"]
+  verbs: ["get", "list", "watch", "create", "patch", "update", "escalate", "bind"]
+# kubectl rollout status and diagnostics
+- apiGroups: ["apps"]
+  resources: ["replicasets", "controllerrevisions"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods", "events"]
+  verbs: ["get", "list", "watch"]
+# Smoke test: Cloudflare answers 403 to GitHub-hosted runners, so the workflow reaches the site through
+# `kubectl port-forward deployment/jithendar-com`. This allows a port-forward to any pod in the namespace (RBAC cannot
+# narrow it to generated pod names); it gives network access only, not the pods' Secrets or a shell.
+- apiGroups: [""]
+  resources: ["pods/portforward"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: github-ci-applier
+  namespace: jithendar
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: github-ci-applier
+subjects:
+- kind: ServiceAccount
+  name: github-ci-applier
+  namespace: jithendar
+---
+# The Namespace object is cluster-scoped: this lets CI apply kubernetes/00-namespace.yaml (labels such as
+# istio-injection) and nothing else at cluster scope. It cannot create or delete namespaces, or read any other one.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: github-ci-applier-namespace-jithendar
+rules:
+- apiGroups: [""]
+  resources: ["namespaces"]
+  resourceNames: ["jithendar"]
+  verbs: ["get", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: github-ci-applier-namespace-jithendar
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: github-ci-applier-namespace-jithendar
+subjects:
+- kind: ServiceAccount
+  name: github-ci-applier
+  namespace: jithendar
+---
+# Long-lived token for the kubeconfig; the token controller fills in data.token. Delete this Secret to revoke it
+# (ROTATE=1 scripts/setup-ci-applier.sh does that and issues a new one).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-ci-applier-token
+  namespace: jithendar
+  annotations:
+    kubernetes.io/service-account.name: github-ci-applier
+type: kubernetes.io/service-account-token

@@ -1,0 +1,28 @@
+# The site on the Istio ingress gateway: the default route of the jithendar.com routing table in the miniKube repo
+# (deploy/minikube/istio/edge, root VirtualService istio-ingress/jithendar-com). That table owns the Gateway, the
+# wildcard certificate, www → apex and HTTP → HTTPS, compression (zstd/br/gzip) and the other applications' prefixes
+# (/argocd, /grafana, /moks, /roboshop, /postgres, ...). This is a delegate: no hosts or
+# gateways of its own.
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: jithendar-com-site
+  namespace: jithendar
+spec:
+  http:
+  - name: site
+    # Tracing headers from the internet are dropped: Next.js continues any incoming W3C trace context, so a visitor
+    # could pick the trace id that becomes their error reference, or send "-00" to switch off the trace, request
+    # metrics and request log line for their own requests. (Istio's own tracing uses B3 headers, not these.)
+    headers:
+      request:
+        remove:
+        - traceparent
+        - tracestate
+        - baggage
+    route:
+    - destination:
+        host: jithendar-com.jithendar.svc.cluster.local
+        port:
+          number: 80

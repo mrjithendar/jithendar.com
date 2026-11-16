@@ -1,0 +1,197 @@
+# SEO platform v4 agent service (services/seo-agent, docs/seo/FLOWS.md, CREWS.md, MCP.md): every AI workflow and
+# scheduled SEO job as a CrewAI Flow, the Optimization/Editorial/Report crews, pgvector retrieval, Ask the Blog, and
+# the MCP servers. Two ports: 8080 the internal API (web pods, trigger CronJobs, Prometheus only) and 8090 the MCP
+# edge (/mcp/public, /mcp/admin; Kong only, via Service seo-agent-mcp and kubernetes/kong/seo-agent-mcp.deck.yaml).
+# Applied by a person (scripts/manifests.sh seo-agent | kubectl apply -f -) after the one-time steps in
+# docs/seo/MANUAL_SETUP.md "v3" and "v4": Secret seo-agent-env (scripts/create-seo-agent-secrets.sh), pgvector enabled.
+# Secret seo-agent-env (never committed): ANTHROPIC_API_KEY, SEO_AGENT_TOKEN, SEO_AGENT_CALLBACK_TOKEN. The admin MCP
+# needs no signing keys: its OAuth tokens are opaque and verified by hash in the shared Postgres (DECISIONS D-60).
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seo-agent-config
+  namespace: jithendar
+  labels: { app: seo-agent, app.kubernetes.io/part-of: jithendar-com }
+data:
+  APP_ENV: production
+  SEO_AGENT_CALLBACK_URL: http://jithendar-com-internal.jithendar:9465
+  SEO_DRAFT_MODEL: claude-sonnet-5-5
+  SEO_CLASSIFY_MODEL: claude-haiku-5-5
+  # Shared with the web app (same seo_llm_usage table): keep equal to the site's SEO_LLM_MONTHLY_BUDGET_USD.
+  SEO_LLM_MONTHLY_BUDGET_USD: "15"
+  ASK_BLOG_DAILY_BUDGET_USD: "1"
+  # Deployment switch for the public assistant ("false" = off whatever the admin saved). Whether it is on, and for whom,
+  # is Admin → Automation & AI → Ask the Blog (off until an admin turns it on; docs/seo/RAG.md "Admin settings").
+  # ASK_BLOG_DAILY_BUDGET_USD above is the ceiling for the budget set there.
+  ASK_BLOG_ENABLED: "true"
+  SEO_AGENT_FANOUT_CONCURRENCY: "2"
+  SEO_AGENT_WEEKLY_MAX_ARTICLES: "10"
+  # Ceilings per crew run. Raised for the editorial crew's deeper research (was 150000 / 600): a normal optimisation
+  # run stays far below them.
+  CREW_MAX_TOKENS_PER_RUN: "300000"
+  CREW_TIMEOUT_SECONDS: "1200"
+  CREW_MAX_ITER: "4"
+  # Per-agent turns ("<crew>.<agent>"); the rest use CREW_MAX_ITER. The researcher needs several documentation pages.
+  SEO_CREW_MAX_ITERS: '{"editorial.researcher":10,"editorial.writer":6,"editorial.reviewer":8}'
+  CREW_MAX_RPM: "20"
+  # Anthropic client timeout per request: a full article body on Opus takes longer than the 120 s default. Keep below
+  # the crew adapter's 300 s wait.
+  SEO_LLM_TIMEOUT_SECONDS: "240"
+  # Per-agent models ("<crew>.<agent>"): the analyst only summarises query numbers, so it runs on Haiku; the editor and
+  # the technical reviewer stay on SEO_DRAFT_MODEL. New articles: the writer and the technical reviewer (the two agents
+  # that produce the published body) run on Opus; researcher and SEO editor stay on SEO_DRAFT_MODEL (docs/seo/COSTS.md).
+  SEO_CREW_MODELS: '{"optimization.analyst":"claude-haiku-5-5","editorial.writer":"claude-opus-5-5","editorial.reviewer":"claude-opus-5-5"}'
+  # Covers one editorial crew run plus its validation retry (2 × CREW_TIMEOUT_SECONDS).
+  SEO_FLOW_TIMEOUT_SECONDS: "2700"
+  EMBEDDINGS_PROVIDER: onnx
+  # v5 retrieval (docs/seo/RAG.md "Defaults"): decided by the eval set. Rollback for hybrid: RAG_MODE=vector.
+  RAG_MODE: vector
+  RAG_MAX_PER_ARTICLE: "3"
+  # Cosine pre-filter for bge-small, calibrated on the eval set (RAG.md "Score calibration"); was 0.15.
+  ASK_BLOG_MIN_SCORE: "0.66"
+  RAG_RERANKER_ENABLED: "false"
+  # CrewAI's local storage directory (nothing should write there: flows persist to Postgres; tests assert no SQLite).
+  CREWAI_STORAGE_DIR: /tmp/crewai
+  # MCP (docs/seo/MCP.md). Both off until switched on; the admin server only after the OAuth flow is verified.
+  SITE_URL: https://jithendar.com
+  SEO_AGENT_EDGE_PORT: "8090"
+  PUBLIC_MCP_ENABLED: "false"
+  ADMIN_MCP_ENABLED: "false"
+  MCP_ALLOWED_HOSTS: jithendar.com,www.jithendar.com
+  PUBLIC_MCP_RPM_PER_IP: "30"
+  PUBLIC_MCP_DAILY_CALLS: "5000"
+  ADMIN_MCP_RPM_PER_TOKEN: "120"
+  ADMIN_MCP_KICKOFFS_PER_HOUR: "10"
+  # News desk (services/www/docs/news). Off until a person switches it on (MANUAL_SETUP §3); the web app reads its own
+  # NEWS_DESK_ENABLED too. Image provider: template (free) unless configured (IMAGES.md); OpenAI also needs
+  # OPENAI_API_KEY in Secret seo-agent-env.
+  NEWS_DESK_ENABLED: "false"
+  NEWS_IMAGE_PROVIDER: template
+  NEWS_OPENAI_IMAGE_MODEL: gpt-image-1
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector.observability:4318
+  OTEL_SERVICE_NAME: seo-agent
+  LOG_LEVEL: INFO
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seo-agent
+  namespace: jithendar
+  labels: { app: seo-agent, app.kubernetes.io/part-of: jithendar-com }
+spec:
+  replicas: 1
+  # One replica, and never two at once: flow runs execute in-process; on start the new pod marks runs the old one left
+  # running as failed (runs.py recover; reruns start from the beginning). Advisory locks also guard each run.
+  strategy: { type: Recreate }
+  revisionHistoryLimit: 5
+  selector: { matchLabels: { app: seo-agent } }
+  template:
+    metadata:
+      labels: { app: seo-agent, app.kubernetes.io/part-of: jithendar-com }
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      imagePullSecrets: [{ name: harbor-pull }]
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: seo-agent
+          image: registry.jithendar.com/jithendar/seo-agent:latest
+          imagePullPolicy: Always
+          ports: [{ name: http, containerPort: 8080, protocol: TCP }, { name: mcp, containerPort: 8090, protocol: TCP }]
+          envFrom:
+            - configMapRef: { name: seo-agent-config }
+            - secretRef: { name: seo-agent-env }
+          env:
+            # Shared CloudNativePG cluster through PgBouncer (session mode), the same Secret the site uses.
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: postgres-db-credentials, key: uri } }
+            # Optional, and preferred when present: the agent's own database role with only the privileges its SQL
+            # needs (services/seo-agent/scripts/db-role.sql; runbook in docs/seo/SECURITY.md). Until someone creates
+            # Secret seo-agent-db-credentials this variable is simply not set and DATABASE_URL above is used.
+            - name: SEO_AGENT_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: seo-agent-db-credentials, key: uri, optional: true } }
+          # Measured (docs/seo/FLOWS.md "Resources"): ~310 MiB idle with the model loaded, ~700 MiB peak during a
+          # full reindex of 37 articles (1,243 chunks). Requests per the brief; the limit leaves room for a crew run.
+          resources:
+            requests: { cpu: 250m, memory: 768Mi }
+            limits: { cpu: "1", memory: 1280Mi }
+          startupProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 2, failureThreshold: 45, timeoutSeconds: 2 }
+          readinessProbe: { httpGet: { path: /readyz, port: http }, periodSeconds: 10, failureThreshold: 3, timeoutSeconds: 3 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 20, failureThreshold: 3, timeoutSeconds: 3 }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: seo-agent
+  namespace: jithendar
+  labels: { app: seo-agent, app.kubernetes.io/part-of: jithendar-com }
+spec:
+  type: ClusterIP
+  selector: { app: seo-agent }
+  ports: [{ name: http, port: 8080, targetPort: http, protocol: TCP }]
+---
+# The MCP edge only (port 8090). Kong's upstream for jithendar.com/mcp/public and /mcp/admin. Nothing else uses it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: seo-agent-mcp
+  namespace: jithendar
+  labels: { app: seo-agent, app.kubernetes.io/part-of: jithendar-com }
+spec:
+  type: ClusterIP
+  selector: { app: seo-agent }
+  ports: [{ name: http-mcp, port: 8090, targetPort: mcp, protocol: TCP }]
+---
+# Allowed traffic (kindnet enforces NetworkPolicy on mk4). In on 8080: the site (admin API, review decisions, /api/ask
+# proxy), the flow-trigger CronJobs, Prometheus (/metrics). In on 8090 (MCP edge) only: the Kong gateway. Out: Postgres, the site's callback port, the OTel collector, DNS and HTTPS to public
+# addresses (Anthropic API). The crew's documentation fetches go through the site's SSRF-safe fetcher, not from here.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: seo-agent
+  namespace: jithendar
+  labels: { app.kubernetes.io/part-of: jithendar-com }
+spec:
+  podSelector: { matchLabels: { app: seo-agent } }
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: jithendar-com } }
+        - podSelector: { matchLabels: { app: seo-agent-trigger } }
+      ports: [{ port: 8080, protocol: TCP }]
+    # Kong (namespace kong, tools repo docs/kong) reaches the MCP port and nothing else. Until the Kong cutover this
+    # rule matches no pod; the MCP servers are also switched off by default.
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kong } } }]
+      ports: [{ port: 8090, protocol: TCP }]
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: monitoring } }, podSelector: { matchLabels: { app: roboshop-prometheus } } }]
+      ports: [{ port: 8080, protocol: TCP }]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: postgres-db } }, podSelector: { matchLabels: { cnpg.io/cluster: postgres-cluster } } }]
+      ports: [{ port: 5432, protocol: TCP }]
+    - to: [{ podSelector: { matchLabels: { app: jithendar-com } } }]
+      ports: [{ port: 9465, protocol: TCP }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: observability } }, podSelector: { matchLabels: { app: otel-collector } } }]
+      ports: [{ port: 4318, protocol: TCP }]
+    - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16] } }]
+      ports: [{ port: 443, protocol: TCP }]
+---
+# Headless Service so Prometheus can find the pod (like jithendar-com-metrics); scrape job in the miniKube repo.
+apiVersion: v1
+kind: Service
+metadata:
+  name: seo-agent-metrics
+  namespace: jithendar
+  labels: { app: seo-agent, app.kubernetes.io/part-of: jithendar-com }
+spec:
+  clusterIP: None
+  selector: { app: seo-agent }
+  ports: [{ name: metrics, port: 8080, targetPort: http, protocol: TCP }]

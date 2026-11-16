@@ -1,0 +1,92 @@
+# Promotion triggers (services/www/docs/seo/PROMOTION.md): one CronJob per scheduled promotion flow, same shape as
+# seo-agent-60-flow-triggers.yaml. Each runs only `python -m app.trigger <flow>`, which POSTs /flows/{flow}/kickoff with
+# the service token and triggered_by=cron, then lets the Istio sidecar exit. The flows end with drafts and ideas waiting
+# for a person in Admin → Promotion; nothing is posted to any channel. Pods carry app: seo-agent-trigger, so the
+# NetworkPolicy seo-agent-trigger in seo-agent-60-flow-triggers.yaml already covers them. Schedules are configuration:
+# edit them here (or patch the CronJob). To stop them: Admin → Promotion → Settings → off (the flows then do nothing),
+# or kubectl patch cronjob seo-flow-promotion -p '{"spec":{"suspend":true}}'. Applied by a person with the rest of the
+# seo-agent group; CI never applies CronJobs.
+---
+# Daily: score channels and draft posts for newly published articles, 07:40 UTC (after the Search Console sync)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: seo-flow-promotion
+  namespace: jithendar
+  labels: { app: seo-agent-trigger, app.kubernetes.io/part-of: jithendar-com }
+spec:
+  schedule: "40 7 * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels: { app: seo-agent-trigger, app.kubernetes.io/part-of: jithendar-com }
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          imagePullSecrets: [{ name: harbor-pull }]
+          securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
+          containers:
+            - name: trigger
+              image: registry.jithendar.com/jithendar/seo-agent:latest
+              imagePullPolicy: Always
+              command: ["python", "-m", "app.trigger", "promotion_flow"]
+              env:
+                - { name: SEO_AGENT_URL, value: "http://seo-agent.jithendar:8080" }
+                - name: SEO_AGENT_TOKEN
+                  valueFrom: { secretKeyRef: { name: seo-agent-env, key: SEO_AGENT_TOKEN } }
+              resources:
+                requests: { cpu: 10m, memory: 48Mi }
+                limits: { cpu: 200m, memory: 128Mi }
+              securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+---
+# Weekly: content ideas from Search Console demand and Reddit threads, Tuesdays 05:20 UTC
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: seo-flow-content-ideas
+  namespace: jithendar
+  labels: { app: seo-agent-trigger, app.kubernetes.io/part-of: jithendar-com }
+spec:
+  schedule: "20 5 * * 2"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels: { app: seo-agent-trigger, app.kubernetes.io/part-of: jithendar-com }
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          imagePullSecrets: [{ name: harbor-pull }]
+          securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
+          containers:
+            - name: trigger
+              image: registry.jithendar.com/jithendar/seo-agent:latest
+              imagePullPolicy: Always
+              command: ["python", "-m", "app.trigger", "content_ideas_flow"]
+              env:
+                - { name: SEO_AGENT_URL, value: "http://seo-agent.jithendar:8080" }
+                - name: SEO_AGENT_TOKEN
+                  valueFrom: { secretKeyRef: { name: seo-agent-env, key: SEO_AGENT_TOKEN } }
+              resources:
+                requests: { cpu: 10m, memory: 48Mi }
+                limits: { cpu: 200m, memory: 128Mi }
+              securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }

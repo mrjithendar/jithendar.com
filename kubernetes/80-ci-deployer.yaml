@@ -1,0 +1,55 @@
+# GitHub Actions (.github/workflows/release.yml) rolls deployment/jithendar-com onto each new app or content image,
+# and the SEO agent and the two executor Deployments onto the tags pinned in moks-cms.json.
+# This ServiceAccount may only do that: watch deployments and pods in jithendar and restart those three Deployments.
+# It cannot read Secrets or create pods.
+# scripts/setup-ci-deployer.sh applies this file and stores its token as the repository secret MK4_CI_TOKEN.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: github-ci-deployer
+  namespace: jithendar
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: github-ci-deployer
+  namespace: jithendar
+rules:
+# kubectl rollout status
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+# kubectl rollout restart (patches the pod template's restartedAt annotation)
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  resourceNames: ["jithendar-com", "practice-executor-api", "practice-dispatcher", "seo-agent"]
+  verbs: ["patch"]
+# rollout diagnostics
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: github-ci-deployer
+  namespace: jithendar
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: github-ci-deployer
+subjects:
+- kind: ServiceAccount
+  name: github-ci-deployer
+  namespace: jithendar
+---
+# Long-lived token for the kubeconfig; the token controller fills in data.token. Delete this Secret to revoke it
+# (ROTATE=1 scripts/setup-ci-deployer.sh does that and issues a new one).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-ci-deployer-token
+  namespace: jithendar
+  annotations:
+    kubernetes.io/service-account.name: github-ci-deployer
+type: kubernetes.io/service-account-token

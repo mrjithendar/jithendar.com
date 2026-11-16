@@ -1,0 +1,189 @@
+# What the deployer's token is good for, checked by the API server. RBAC cannot say it: `patch` on a Deployment allows
+# any change to it, so a leaked MK4_CI_TOKEN could start any image, or the real image with another command, next to
+# the site's database credentials. This policy describes what a release changes and nothing else: container images,
+# from this project's registry only, and the restartedAt annotation that `kubectl rollout restart` sets.
+#
+# Not enforced yet: a request that breaks a rule still goes through, kubectl prints a warning (it shows in the CI
+# log of the release job) and the API server's audit log records it. After one release whose log has no
+# "Warning: Validation failed for ValidatingAdmissionPolicy 'ci-deployer-rollouts'", change validationActions in the
+# binding below to ["Deny"] and apply this file again.
+#
+# The second policy in this file, ci-deployer-rollouts-extra, compares the rest of the pod template (probes, init
+# container hooks, ports, RuntimeClass, DNS, ...). It has its own binding and is switched to ["Deny"] separately.
+#
+# CI does not apply admission policies (scripts/ci-app-manifests.py). A cluster admin applies this file:
+#   kubectl apply -f kubernetes/81-ci-deployer-admission.yaml
+# and removes it again with `kubectl delete -f` if it ever gets in the way.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: ci-deployer-rollouts
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: jithendar
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["deployments"]
+  matchConditions:
+    - name: ci-deployer
+      expression: "request.userInfo.username == 'system:serviceaccount:jithendar:github-ci-deployer'"
+  variables:
+    - name: pod
+      expression: "object.spec.template.spec"
+    - name: oldPod
+      expression: "oldObject.spec.template.spec"
+  validations:
+    - expression: >-
+        variables.pod.containers.all(c, c.image.startsWith('registry.jithendar.com/jithendar/')) &&
+        (!has(variables.pod.initContainers) || variables.pod.initContainers.all(c, c.image.startsWith('registry.jithendar.com/jithendar/')))
+      message: "CI may only roll out images from registry.jithendar.com/jithendar/"
+    - expression: >-
+        size(variables.pod.containers) == size(variables.oldPod.containers) &&
+        variables.pod.containers.all(c, variables.oldPod.containers.exists(o, o.name == c.name &&
+        has(c.command) == has(o.command) && (!has(c.command) || c.command == o.command) &&
+        has(c.args) == has(o.args) && (!has(c.args) || c.args == o.args) &&
+        has(c.env) == has(o.env) && (!has(c.env) || c.env == o.env) &&
+        has(c.envFrom) == has(o.envFrom) && (!has(c.envFrom) || c.envFrom == o.envFrom) &&
+        has(c.volumeMounts) == has(o.volumeMounts) && (!has(c.volumeMounts) || c.volumeMounts == o.volumeMounts) &&
+        has(c.securityContext) == has(o.securityContext) && (!has(c.securityContext) || c.securityContext == o.securityContext) &&
+        has(c.lifecycle) == has(o.lifecycle) && (!has(c.lifecycle) || c.lifecycle == o.lifecycle)))
+      message: "CI may change a container's image only, not its command, arguments, environment, mounts, security context or hooks"
+    - expression: >-
+        has(variables.pod.initContainers) == has(variables.oldPod.initContainers) &&
+        (!has(variables.pod.initContainers) || (
+        size(variables.pod.initContainers) == size(variables.oldPod.initContainers) &&
+        variables.pod.initContainers.all(c, variables.oldPod.initContainers.exists(o, o.name == c.name &&
+        has(c.command) == has(o.command) && (!has(c.command) || c.command == o.command) &&
+        has(c.args) == has(o.args) && (!has(c.args) || c.args == o.args) &&
+        has(c.env) == has(o.env) && (!has(c.env) || c.env == o.env) &&
+        has(c.envFrom) == has(o.envFrom) && (!has(c.envFrom) || c.envFrom == o.envFrom) &&
+        has(c.volumeMounts) == has(o.volumeMounts) && (!has(c.volumeMounts) || c.volumeMounts == o.volumeMounts) &&
+        has(c.securityContext) == has(o.securityContext) && (!has(c.securityContext) || c.securityContext == o.securityContext)))))
+      message: "CI may change an init container's image only"
+    - expression: >-
+        has(variables.pod.volumes) == has(variables.oldPod.volumes) && (!has(variables.pod.volumes) || variables.pod.volumes == variables.oldPod.volumes) &&
+        has(variables.pod.serviceAccountName) == has(variables.oldPod.serviceAccountName) &&
+        (!has(variables.pod.serviceAccountName) || variables.pod.serviceAccountName == variables.oldPod.serviceAccountName) &&
+        has(variables.pod.securityContext) == has(variables.oldPod.securityContext) &&
+        (!has(variables.pod.securityContext) || variables.pod.securityContext == variables.oldPod.securityContext) &&
+        !(has(variables.pod.hostNetwork) && variables.pod.hostNetwork) && !(has(variables.pod.hostPID) && variables.pod.hostPID) && !(has(variables.pod.hostIPC) && variables.pod.hostIPC)
+      message: "CI may not change volumes, the service account or the pod security context, or use host namespaces"
+    - expression: >-
+        (!has(object.spec.template.metadata.annotations) ||
+        object.spec.template.metadata.annotations.all(k, k == 'kubectl.kubernetes.io/restartedAt' ||
+        (has(oldObject.spec.template.metadata.annotations) && k in oldObject.spec.template.metadata.annotations &&
+        oldObject.spec.template.metadata.annotations[k] == object.spec.template.metadata.annotations[k]))) &&
+        (!has(oldObject.spec.template.metadata.annotations) ||
+        oldObject.spec.template.metadata.annotations.all(k, k == 'kubectl.kubernetes.io/restartedAt' ||
+        (has(object.spec.template.metadata.annotations) && k in object.spec.template.metadata.annotations)))
+      message: "CI may change no pod annotation except kubectl.kubernetes.io/restartedAt"
+    - expression: "object.spec.template.metadata.labels == oldObject.spec.template.metadata.labels && object.spec.replicas == oldObject.spec.replicas"
+      message: "CI may not change pod labels or the number of replicas"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: ci-deployer-rollouts
+spec:
+  policyName: ci-deployer-rollouts
+  validationActions: ["Warn", "Audit"]
+---
+# The rest of the pod template that a release never changes but ci-deployer-rollouts above does not compare. Each of
+# these gets the same reach as changing the command, with the real image and its Secrets:
+#   - a probe: `exec` runs a command inside the container (the site's database credentials, the dispatcher's
+#     service-account token), and the kubelet keeps running it;
+#   - `lifecycle` and `restartPolicy` of an init container: a restartable (sidecar) init container may have exec hooks
+#     and probes, which the init-container rule above does not look at;
+#   - container ports (`hostPort` publishes one on the node) and the working directory;
+#   - the RuntimeClass, a shared process namespace (one container reads another's memory and files) and whether the
+#     service-account token is mounted;
+#   - DNS policy and configuration and host aliases (where names such as the database's resolve to).
+# Not compared on purpose: `resources` (availability only, and a CEL check on resources.limits did not type-check on
+# this cluster's Kubernetes, see practice-executor-15-admission.yaml), image pull policy and secrets, termination
+# settings, scheduling fields.
+#
+# A separate policy, like practice-sandbox-pods-extra: these rules were written without an API server to try them on,
+# and a rule that does not evaluate on this cluster's Kubernetes version must not hold up enforcing the policy above.
+# It only warns and writes to the audit log. After `kubectl apply -f` of this file and one release:
+#   - no "Warning: Validation failed for ValidatingAdmissionPolicy 'ci-deployer-rollouts-extra'" in the release job's
+#     log, and only enforcement_action="allow" lines from
+#       kubectl get --raw /metrics | grep 'apiserver_validating_admission_policy_check_total.*ci-deployer-rollouts-extra'
+#     → change validationActions in its binding to ["Deny"] and apply again;
+#   - anything else → fix the rule first.
+# scripts/tests/test_admission_policy.py checks that every pod-template field the four Deployments use is either
+# compared by one of the two policies or listed there as deliberately left alone.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: ci-deployer-rollouts-extra
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: jithendar
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["deployments"]
+  matchConditions:
+    - name: ci-deployer
+      expression: "request.userInfo.username == 'system:serviceaccount:jithendar:github-ci-deployer'"
+  variables:
+    - name: pod
+      expression: "object.spec.template.spec"
+    - name: oldPod
+      expression: "oldObject.spec.template.spec"
+  validations:
+    - expression: >-
+        variables.pod.containers.all(c, variables.oldPod.containers.exists(o, o.name == c.name &&
+        has(c.livenessProbe) == has(o.livenessProbe) && (!has(c.livenessProbe) || c.livenessProbe == o.livenessProbe) &&
+        has(c.readinessProbe) == has(o.readinessProbe) && (!has(c.readinessProbe) || c.readinessProbe == o.readinessProbe) &&
+        has(c.startupProbe) == has(o.startupProbe) && (!has(c.startupProbe) || c.startupProbe == o.startupProbe)))
+      message: "CI may not change a container's probes"
+    - expression: >-
+        variables.pod.containers.all(c, variables.oldPod.containers.exists(o, o.name == c.name &&
+        has(c.ports) == has(o.ports) && (!has(c.ports) || c.ports == o.ports) &&
+        has(c.workingDir) == has(o.workingDir) && (!has(c.workingDir) || c.workingDir == o.workingDir)))
+      message: "CI may not change a container's ports or working directory"
+    - expression: >-
+        !has(variables.pod.initContainers) || (has(variables.oldPod.initContainers) &&
+        variables.pod.initContainers.all(c, variables.oldPod.initContainers.exists(o, o.name == c.name &&
+        has(c.restartPolicy) == has(o.restartPolicy) && (!has(c.restartPolicy) || c.restartPolicy == o.restartPolicy) &&
+        has(c.lifecycle) == has(o.lifecycle) && (!has(c.lifecycle) || c.lifecycle == o.lifecycle) &&
+        has(c.livenessProbe) == has(o.livenessProbe) && (!has(c.livenessProbe) || c.livenessProbe == o.livenessProbe) &&
+        has(c.readinessProbe) == has(o.readinessProbe) && (!has(c.readinessProbe) || c.readinessProbe == o.readinessProbe) &&
+        has(c.startupProbe) == has(o.startupProbe) && (!has(c.startupProbe) || c.startupProbe == o.startupProbe) &&
+        has(c.ports) == has(o.ports) && (!has(c.ports) || c.ports == o.ports) &&
+        has(c.workingDir) == has(o.workingDir) && (!has(c.workingDir) || c.workingDir == o.workingDir))))
+      message: "CI may not change an init container's restart policy, hooks, probes, ports or working directory"
+    - expression: >-
+        has(variables.pod.runtimeClassName) == has(variables.oldPod.runtimeClassName) &&
+        (!has(variables.pod.runtimeClassName) || variables.pod.runtimeClassName == variables.oldPod.runtimeClassName) &&
+        has(variables.pod.shareProcessNamespace) == has(variables.oldPod.shareProcessNamespace) &&
+        (!has(variables.pod.shareProcessNamespace) || variables.pod.shareProcessNamespace == variables.oldPod.shareProcessNamespace) &&
+        has(variables.pod.automountServiceAccountToken) == has(variables.oldPod.automountServiceAccountToken) &&
+        (!has(variables.pod.automountServiceAccountToken) || variables.pod.automountServiceAccountToken == variables.oldPod.automountServiceAccountToken)
+      message: "CI may not change the runtime class, process-namespace sharing or whether the service-account token is mounted"
+    - expression: >-
+        has(variables.pod.dnsPolicy) == has(variables.oldPod.dnsPolicy) &&
+        (!has(variables.pod.dnsPolicy) || variables.pod.dnsPolicy == variables.oldPod.dnsPolicy) &&
+        has(variables.pod.dnsConfig) == has(variables.oldPod.dnsConfig) &&
+        (!has(variables.pod.dnsConfig) || variables.pod.dnsConfig == variables.oldPod.dnsConfig) &&
+        has(variables.pod.hostAliases) == has(variables.oldPod.hostAliases) &&
+        (!has(variables.pod.hostAliases) || variables.pod.hostAliases == variables.oldPod.hostAliases)
+      message: "CI may not change DNS settings or host aliases"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: ci-deployer-rollouts-extra
+spec:
+  policyName: ci-deployer-rollouts-extra
+  validationActions: ["Warn", "Audit"]

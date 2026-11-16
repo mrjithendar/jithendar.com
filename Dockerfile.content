@@ -1,0 +1,18 @@
+# syntax=docker/dockerfile:1
+# Content image of jithendar.com: only content/ (MDX) and public/images/ (diagrams, screenshots). No Node, no build.
+# Built and pushed by .github/workflows/release.yml (job `content`) as
+# registry.jithendar.com/jithendar/jithendar-com-content:latest.
+#
+# The site Deployment (kubernetes/30-jithendar-com.yaml) runs this image as init container "content": it copies both
+# folders into emptyDirs mounted at /app/content and /app/public/images in the web container, so a content-only
+# change ships without rebuilding the app image. busybox only provides `cp`.
+#
+#   docker build --platform linux/arm64 -f Dockerfile.content -t jithendar-com-content .     (from the repository root)
+FROM busybox:1.38.0
+COPY --chown=1000:1000 content /content
+COPY --chown=1000:1000 public/images /images
+USER 1000:1000
+# cp -R, not cp -a: -a also tries to copy owner, mode and times onto the target directory itself (the mount point),
+# which user 1000 may not change ("can't preserve … Operation not permitted"). The files are 1000:1000 either way and
+# the site never reads their times (only sizes).
+CMD ["sh", "-c", "cp -R /content/. /mnt/content/ && cp -R /images/. /mnt/images/"]

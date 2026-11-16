@@ -1,0 +1,25 @@
+# jithendar.com site on mk4, applied by .github/workflows/deploy-kubernetes.yml when a pull request is merged
+# (by hand: kubectl apply -k kubernetes). Only the 00-…85- files are
+# listed; practice-executor-*.yaml is a separate group (README.md, scripts/manifests.sh).
+# Secrets (jithendar-com-env, harbor-pull) are created separately and never committed. PostgreSQL is the shared
+# CloudNativePG cluster in namespace postgres-db (miniKube repo), whose Secret postgres-db-credentials Terraform writes
+# here. The site uses no REDIS_URL; its cache bus (pub/sub only, redis-site-cachebus-credentials, optional) and the
+# practice executor (redis-practice-credentials) use the shared Valkey.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# No `namespace:` here: every namespaced manifest sets namespace jithendar itself.
+
+
+resources:
+- 00-namespace.yaml
+- 30-jithendar-com.yaml
+- 60-istio-routing.yaml
+- 70-observability.yaml
+- 75-mesh.yaml
+- 80-ci-deployer.yaml
+- 81-ci-deployer-admission.yaml
+- 85-ci-applier.yaml
+
+# The manifests name jithendar-com:latest (imagePullPolicy Always, set in 30-jithendar-com.yaml) for a first apply only:
+# each release runs its own jithendar-com:<tag> (scripts/ci-rollout.py), and deploy-kubernetes.yml keeps that tag when
+# it applies (scripts/keep-live-images.py). No digest pinning.

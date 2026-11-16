@@ -1,0 +1,65 @@
+# Kong Gateway entities for the SEO MCP servers (docs/seo/MCP.md, DECISIONS.md D-62). ADDITIVE ONLY: one new Service
+# with two new Routes and their plugins; no existing route, plugin or certificate is touched.
+#
+# NOT APPLIED BY ANYTHING. Kong on mk4 runs in DB mode with its entities seeded from the tools repository
+# (kong-config/seed/kong.yaml, docs/kong; branch feat/kong-db-migration here). After review, a person merges these
+# entities there and syncs them:
+#   deck gateway diff  kubernetes/kong/seo-agent-mcp.deck.yaml --select-tag seo-agent-mcp
+#   deck gateway sync  kubernetes/kong/seo-agent-mcp.deck.yaml --select-tag seo-agent-mcp
+# (--select-tag limits decK to these entities, so nothing else in Kong is changed or deleted.)
+# This file is outside the `seo-agent-*.yaml` glob on purpose: scripts/manifests.sh never pipes it to kubectl.
+#
+# Upstream: Service seo-agent-mcp (port 8090, the MCP edge only; the internal API on 8080 is not reachable from Kong,
+# NetworkPolicy seo-agent). Both MCP servers are also off until PUBLIC_MCP_ENABLED / ADMIN_MCP_ENABLED are set.
+# The OAuth endpoints (/.well-known/oauth-*, /api/mcp-oauth/*, /mcp-oauth/authorize) are served by the site through
+# the existing route; nothing to add for them.
+_format_version: "3.0"
+_info:
+  select_tags: [seo-agent-mcp]
+services:
+  - name: jithendar-seo-agent-mcp
+    tags: [seo-agent-mcp]
+    url: http://seo-agent-mcp.jithendar.svc.cluster.local:8090
+    connect_timeout: 5000
+    write_timeout: 60000
+    # Streamable HTTP: a tool call's SSE response stays open while the tool runs (ask_blog, kickoff); 5 minutes.
+    read_timeout: 300000
+    retries: 0
+    routes:
+      - name: jithendar-mcp-public
+        tags: [seo-agent-mcp]
+        protocols: [https]
+        hosts: [jithendar.com, www.jithendar.com]
+        # Exactly /mcp/public and /mcp/public/… (a plain prefix would also match /mcp/publicXYZ).
+        paths: ["~/mcp/public(/.*)?$"]
+        methods: [GET, POST, DELETE, OPTIONS]
+        strip_path: false
+        # The MCP server validates Host (DNS-rebinding protection), so Kong must forward the original one.
+        preserve_host: true
+        # Do not buffer: SSE events must reach the client as they are written.
+        request_buffering: false
+        response_buffering: false
+        plugins:
+          - name: rate-limiting
+            tags: [seo-agent-mcp]
+            config: { minute: 60, hour: 1200, limit_by: ip, policy: local, fault_tolerant: true, hide_client_headers: false }
+          - name: request-size-limiting
+            tags: [seo-agent-mcp]
+            config: { allowed_payload_size: 64, size_unit: kilobytes, require_content_length: false }
+      - name: jithendar-mcp-admin
+        tags: [seo-agent-mcp]
+        protocols: [https]
+        hosts: [jithendar.com, www.jithendar.com]
+        paths: ["~/mcp/admin(/.*)?$"]
+        methods: [GET, POST, DELETE, OPTIONS]
+        strip_path: false
+        preserve_host: true
+        request_buffering: false
+        response_buffering: false
+        plugins:
+          - name: rate-limiting
+            tags: [seo-agent-mcp]
+            config: { minute: 120, hour: 2000, limit_by: ip, policy: local, fault_tolerant: true, hide_client_headers: false }
+          - name: request-size-limiting
+            tags: [seo-agent-mcp]
+            config: { allowed_payload_size: 256, size_unit: kilobytes, require_content_length: false }

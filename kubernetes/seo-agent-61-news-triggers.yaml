@@ -1,0 +1,132 @@
+# News desk triggers (services/www/docs/news/JOBS.md "Scheduling", DECISIONS N-11). Like seo-agent-60-flow-triggers.yaml:
+# each Job runs only `python -m app.trigger <flow>` (POST /flows/{flow}/kickoff, triggered_by=cron), then lets the Istio
+# sidecar exit. One dispatcher for all jobs: it starts every job whose cron (in the job's own time zone, edited in
+# /admin/news) is due, with a slot id, so a double fire is a no-op. Nothing runs while NEWS_DESK_ENABLED is false.
+# Applied by a person with the rest of the seo-agent group; CI never applies CronJobs. Rollback: suspend them
+# (kubectl patch cronjob news-dispatch -p '{"spec":{"suspend":true}}') or set NEWS_DESK_ENABLED=false.
+---
+# Every 15 minutes: start due news jobs (+ daily housekeeping at 03:00 UTC: retention, performance feedback).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: news-dispatch
+  namespace: jithendar
+  labels: { app: seo-agent-trigger, app.kubernetes.io/part-of: jithendar-com }
+spec:
+  schedule: "*/15 * * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels: { app: seo-agent-trigger, app.kubernetes.io/part-of: jithendar-com }
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          imagePullSecrets: [{ name: harbor-pull }]
+          securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
+          containers:
+            - name: trigger
+              image: registry.jithendar.com/jithendar/seo-agent:latest
+              imagePullPolicy: Always
+              command: ["python", "-m", "app.trigger", "news_dispatch_flow"]
+              env:
+                - { name: SEO_AGENT_URL, value: "http://seo-agent.jithendar:8080" }
+                - name: SEO_AGENT_TOKEN
+                  valueFrom: { secretKeyRef: { name: seo-agent-env, key: SEO_AGENT_TOKEN } }
+              resources:
+                requests: { cpu: 10m, memory: 48Mi }
+                limits: { cpu: 200m, memory: 128Mi }
+              securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+---
+# Weekly (Sunday 02:30 UTC): retrain the topic classifier and, with enough feedback, the ranker (promoted only if better).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: news-train
+  namespace: jithendar
+  labels: { app: seo-agent-trigger, app.kubernetes.io/part-of: jithendar-com }
+spec:
+  schedule: "30 2 * * 0"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels: { app: seo-agent-trigger, app.kubernetes.io/part-of: jithendar-com }
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          imagePullSecrets: [{ name: harbor-pull }]
+          securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
+          containers:
+            - name: trigger
+              image: registry.jithendar.com/jithendar/seo-agent:latest
+              imagePullPolicy: Always
+              command: ["python", "-m", "app.trigger", "news_train_flow"]
+              env:
+                - { name: SEO_AGENT_URL, value: "http://seo-agent.jithendar:8080" }
+                - name: SEO_AGENT_TOKEN
+                  valueFrom: { secretKeyRef: { name: seo-agent-env, key: SEO_AGENT_TOKEN } }
+              resources:
+                requests: { cpu: 10m, memory: 48Mi }
+                limits: { cpu: 200m, memory: 128Mi }
+              securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+---
+# Weekly (Monday 03:30 UTC): propose a writing-profile version from last week's edits. Never applied automatically.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: news-style-review
+  namespace: jithendar
+  labels: { app: seo-agent-trigger, app.kubernetes.io/part-of: jithendar-com }
+spec:
+  schedule: "30 3 * * 1"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels: { app: seo-agent-trigger, app.kubernetes.io/part-of: jithendar-com }
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          imagePullSecrets: [{ name: harbor-pull }]
+          securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
+          containers:
+            - name: trigger
+              image: registry.jithendar.com/jithendar/seo-agent:latest
+              imagePullPolicy: Always
+              command: ["python", "-m", "app.trigger", "news_style_review_flow"]
+              env:
+                - { name: SEO_AGENT_URL, value: "http://seo-agent.jithendar:8080" }
+                - name: SEO_AGENT_TOKEN
+                  valueFrom: { secretKeyRef: { name: seo-agent-env, key: SEO_AGENT_TOKEN } }
+              resources:
+                requests: { cpu: 10m, memory: 48Mi }
+                limits: { cpu: 200m, memory: 128Mi }
+              securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }

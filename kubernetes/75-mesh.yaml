@@ -1,0 +1,101 @@
+# Istio service mesh for namespace jithendar (label istio-injection=enabled, 00-namespace.yaml). Istio itself, its CNI
+# plugin, the ingress gateway and the mesh-wide STRICT default are in the miniKube repo (minikube-infrastructure,
+# deploy/minikube/istio/mesh).
+# - PeerAuthentication default: STRICT, no plain-text port (live since 2026-11-09). Every client is meshed: the Istio
+#   gateway (public routes), Prometheus (scrapes :9464 through its own sidecar) and
+#   the pods here. Practice sandboxes have no sidecar and no network.
+# - AuthorizationPolicy allow-known-callers: only the gateway, Prometheus/Grafana (monitoring) and this namespace's own
+#   pods may call anything here. Dry run first (annotation istio.io/dry-run): it only counts what it would refuse;
+#   miniKube scripts/istio/authz-dry-run-report.py reads the counts. Delete the annotation once they stay at 0.
+# - NetworkPolicy istio-sidecars: what the sidecars themselves need, added to the pods the other policies isolate.
+# Practice sandbox pods get no sidecar (label sidecar.istio.io/inject=false, and istiod's neverInjectSelector).
+# Since 2026-11-14 CI applies this file's PeerAuthentication and AuthorizationPolicy with the rest of the site group
+# (scripts/ci-app-manifests.py --all; owner decision, services/www/docs/DEPLOYMENT.md): review changes here as
+# changes to who may call the namespace.
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: jithendar
+spec:
+  mtls:
+    mode: STRICT
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-known-callers
+  namespace: jithendar
+  labels:
+    app.kubernetes.io/part-of: jithendar-com
+  annotations:
+    istio.io/dry-run: "true"
+spec:
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces:
+        - jithendar
+        - istio-ingress
+        - monitoring
+---
+# Only the pods other NetworkPolicies here already isolate, in both directions. Selecting a pod without a policy
+# would cut off everything else it does. Sandbox pods are not listed: they have no sidecar.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: istio-sidecars
+  namespace: jithendar
+  labels:
+    app.kubernetes.io/part-of: jithendar-com
+spec:
+  podSelector:
+    matchExpressions:
+    - key: app
+      operator: In
+      values:
+      - jithendar-com
+      - practice-dispatcher
+      - practice-executor-api
+      - seo-agent
+      - seo-agent-trigger
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # 15020: merged metrics and health; 15090: Envoy's own (Prometheus job envoy-stats).
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+    ports:
+    - port: 15020
+      protocol: TCP
+    - port: 15090
+      protocol: TCP
+  egress:
+  # DNS, to resolve istiod.istio-system.svc. A pod with no DNS rule of its own would otherwise time out on the
+  # lookup and its sidecar never get ready (outage 2026-11-08).
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+  # Configuration and certificates from istiod. Without them the proxy never gets ready and the application
+  # never starts (holdApplicationUntilProxyStarts).
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: istio-system
+    ports:
+    - port: 15012
+      protocol: TCP

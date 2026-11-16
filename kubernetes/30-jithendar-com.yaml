@@ -1,0 +1,429 @@
+# Site: Deployment, Service, PodDisruptionBudget, NetworkPolicy (needs Secrets jithendar-com-env, harbor-pull and
+# postgres-db-credentials; the last is written by Terraform in the miniKube repo)
+# Exported from the live mk4 cluster (namespace jithendar) on 2026-10-29; cluster-generated fields removed.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: jithendar-com
+    app.kubernetes.io/part-of: jithendar-com
+  name: jithendar-com
+  namespace: jithendar
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: jithendar-com
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: jithendar-com
+        app.kubernetes.io/part-of: jithendar-com
+    spec:
+      automountServiceAccountToken: false
+      # Content (MDX and /images) ships in its own image, jithendar-com-content (Dockerfile.content, job `content` of
+      # .github/workflows/release.yml), so writing a post never rebuilds jithendar-com. This init container copies
+      # it into the emptyDirs that the web container mounts over /app/content and /app/public/images; a rollout
+      # restart pulls the newest :latest of the content image.
+      initContainers:
+      - name: content
+        image: registry.jithendar.com/jithendar/jithendar-com-content:latest
+        imagePullPolicy: Always
+        # cp -R: -a would try to set owner/mode/times on the emptyDir mount point itself and log "can't preserve" (Dockerfile.content)
+        command: ["sh", "-c", "cp -R /content/. /mnt/content/ && cp -R /images/. /mnt/images/"]
+        resources:
+          limits:
+            cpu: 200m
+            memory: 64Mi
+          requests:
+            cpu: 10m
+            memory: 16Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        volumeMounts:
+        - mountPath: "/mnt/content"
+          name: content
+        - mountPath: "/mnt/images"
+          name: images
+      containers:
+      - env:
+        - name: APP_ENV
+          value: production
+        - name: SITE_URL
+          value: https://jithendar.com
+        # Visitors arrive through Cloudflare's proxy: their address and country are CF-Connecting-IP / CF-IPCountry,
+        # used only when the gateway saw one of Cloudflare's addresses (src/lib/client-ip.ts, docs/DEPLOYMENT.md
+        # "Client addresses"). "gateway" = DNS only, no Cloudflare proxy.
+        - name: TRUSTED_EDGE
+          value: cloudflare
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://otel-collector.observability:4318
+        - name: OTEL_SERVICE_NAME
+          value: jithendar-com
+        # Deployment switch for Ask the Blog (widget and /api/ask). It only allows the feature: an admin turns it on, and
+        # chooses signed-in readers or everyone, in Admin → Automation & AI → Ask the Blog. Set here (not in
+        # jithendar-com-public) so it is in Git; "false" switches the widget and /api/ask off whatever is saved.
+        - name: ASK_BLOG_ENABLED
+          value: "true"
+        - name: LOG_LEVEL
+          value: info
+        # SEO v3 (docs/seo/AGENTS.md): where the seo-agent service is, and the cluster-internal port its callbacks use.
+        # The callback listener starts only when SEO_ORCHESTRATOR=crewai (or its v3 alias langgraph) (set in jithendar-com-env/-public, off by
+        # default: legacy v2 path) and SEO_AGENT_CALLBACK_TOKEN is set.
+        - name: SEO_AGENT_URL
+          value: http://seo-agent.jithendar:8080
+        - name: SEO_AGENT_CALLBACK_PORT
+          value: '9465'
+        - name: GEMINI_IMAGE_SIZE
+          value: 1K
+        - name: GEMINI_IMAGE_TIMEOUT_MS
+          value: '90000'
+        - name: GEMINI_IMAGE_USER_HOURLY_LIMIT
+          value: '10'
+        - name: GEMINI_IMAGE_USER_CONCURRENCY
+          value: '1'
+        - name: GEMINI_IMAGE_DAILY_LIMIT
+          value: '50'
+        # No REDIS_URL (removed 2026-11-09): sessions, rate limits and API keys live in Postgres (src/lib/redis.ts).
+        # Do not add it back to jithendar-com-env either: envFrom would pick it up. Still true with the cache bus below.
+        # Cache bus: cross-replica cache invalidation over the shared Valkey, PUBLISH/SUBSCRIBE only (ACL user
+        # site-cachebus, channel jithendar:*, no key access; src/lib/cache-bus.ts, docs/redis-site-cachebus.md). Its own
+        # Secret, written by Terraform in the miniKube repo, and an explicit env entry, never envFrom. optional: the site
+        # starts before the Secret exists and then keeps per-process caches with their TTL, as without it.
+        - name: CACHE_BUS_REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: redis-site-cachebus-credentials
+              key: uri
+              optional: true
+        # Shared CloudNativePG cluster (namespace postgres-db, role and database jithendar), through its PgBouncer
+        # pooler (session mode, so the migrations' advisory lock works). Secret written by Terraform in the miniKube
+        # repo (minikube-infrastructure/postgres.tf, postgres_databases.jithendar); env wins over the stale
+        # DATABASE_URL still in jithendar-com-env.
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: postgres-db-credentials
+              key: uri
+        envFrom:
+        - secretRef:
+            name: jithendar-com-env
+        - configMapRef:
+            name: jithendar-com-public
+            optional: true
+        image: registry.jithendar.com/jithendar/jithendar-com:latest
+        imagePullPolicy: Always
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - sleep
+              - '5'
+        livenessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: "/api/health"
+            port: http
+            scheme: HTTP
+          periodSeconds: 20
+          successThreshold: 1
+          timeoutSeconds: 3
+        name: web
+        ports:
+        - containerPort: 3000
+          name: http
+          protocol: TCP
+        - containerPort: 9464
+          name: metrics
+          protocol: TCP
+        - containerPort: 9465
+          name: agent-callback
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: "/api/health"
+            port: http
+            scheme: HTTP
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 3
+        resources:
+          limits:
+            cpu: '2'
+            # 1Gi left ~150Mi headroom (780-874Mi in use, 2026-11-12): an OOM kill takes a replica out mid-request.
+            memory: 1536Mi
+          requests:
+            cpu: 250m
+            memory: 512Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        startupProbe:
+          failureThreshold: 30
+          httpGet:
+            path: "/api/health"
+            port: http
+            scheme: HTTP
+          periodSeconds: 2
+          successThreshold: 1
+          timeoutSeconds: 1
+        terminationMessagePath: "/dev/termination-log"
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: "/tmp"
+          name: tmp
+        - mountPath: "/app/.next/cache"
+          name: next-cache
+        # Filled by init container "content"; they shadow the copies baked into jithendar-com.
+        - mountPath: "/app/content"
+          name: content
+          readOnly: true
+        - mountPath: "/app/public/images"
+          name: images
+          readOnly: true
+      dnsPolicy: ClusterFirst
+      enableServiceLinks: false
+      imagePullSecrets:
+      - name: harbor-pull
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext:
+        runAsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+      - labelSelector:
+          matchLabels:
+            app: jithendar-com
+        # Spread only the current revision, and count only nodes the pods may run on (not the tainted control plane).
+        matchLabelKeys:
+        - pod-template-hash
+        nodeTaintsPolicy: Honor
+        maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        # Required: with ScheduleAnyway both replicas once landed on one node, so one node failure was a full outage.
+        whenUnsatisfiable: DoNotSchedule
+      volumes:
+      - emptyDir:
+          sizeLimit: 64Mi
+        name: tmp
+      - emptyDir:
+          sizeLimit: 256Mi
+        name: next-cache
+      - emptyDir:
+          sizeLimit: 64Mi
+        name: content
+      - emptyDir:
+          sizeLimit: 256Mi
+        name: images
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: jithendar-com
+  name: jithendar-com
+  namespace: jithendar
+spec:
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+  - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+  - name: http
+    port: 80
+    protocol: TCP
+    targetPort: http
+  selector:
+    app: jithendar-com
+  sessionAffinity: None
+  type: ClusterIP
+---
+# SEO v3: the seo-agent's callback API on the site pods (port 9465). Separate from the public Service on purpose: the
+# Istio VirtualService routes only jithendar-com:80, so nothing outside the cluster can reach this port; the
+# NetworkPolicy below admits only seo-agent pods to it, and every request needs SEO_AGENT_CALLBACK_TOKEN.
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: jithendar-com
+  name: jithendar-com-internal
+  namespace: jithendar
+spec:
+  type: ClusterIP
+  ports:
+  - name: agent-callback
+    port: 9465
+    protocol: TCP
+    targetPort: agent-callback
+  selector:
+    app: jithendar-com
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: jithendar-com
+  namespace: jithendar
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: jithendar-com
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jithendar-com
+  namespace: jithendar
+spec:
+  egress:
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+    to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+  # Shared CloudNativePG cluster (namespace postgres-db): the PgBouncer pooler (Secret postgres-db-credentials, uri) and
+  # the instances (direct-uri). Both carry cnpg.io/cluster. Not meshed there, so the sidecar sends plain TCP.
+  - ports:
+    - port: 5432
+      protocol: TCP
+    to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: postgres-db
+      podSelector:
+        matchLabels:
+          cnpg.io/cluster: postgres-cluster
+  # SEO v3 agent service (kubernetes/seo-agent-*.yaml): admin run API and the /api/ask proxy.
+  - ports:
+    - port: 8080
+      protocol: TCP
+    to:
+    - podSelector:
+        matchLabels:
+          app: seo-agent
+  # Python practice executor API (kubernetes/practice-executor-*.yaml; PRACTICE_EXECUTOR_URL=http://practice-executor.jithendar).
+  - ports:
+    - port: 8080
+      protocol: TCP
+    to:
+    - podSelector:
+        matchLabels:
+          app: practice-executor-api
+  - ports:
+    - port: 4318
+      protocol: TCP
+    to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: observability
+      podSelector:
+        matchLabels:
+          app: otel-collector
+  - ports:
+    - port: 443
+      protocol: TCP
+    - port: 465
+      protocol: TCP
+    - port: 587
+      protocol: TCP
+    - port: 22
+      protocol: TCP
+    to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+        - 100.64.0.0/10
+        - 169.254.0.0/16
+  ingress:
+  # Public traffic arrives from the Istio ingress gateway over mTLS (60-istio-routing.yaml).
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: istio-ingress
+      podSelector:
+        matchLabels:
+          istio: ingressgateway
+    ports:
+    - port: 3000
+      protocol: TCP
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+      podSelector:
+        matchLabels:
+          app: roboshop-prometheus
+    ports:
+    - port: 9464
+      protocol: TCP
+  # SEO v3: callbacks from the seo-agent service only (token-protected as well).
+  - from:
+    - podSelector:
+        matchLabels:
+          app: seo-agent
+    ports:
+    - port: 9465
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app: jithendar-com
+  policyTypes:
+  - Ingress
+  - Egress
+---
+# Cache bus egress (additive: NetworkPolicies are a union, so this only adds to jithendar-com above). The shared
+# Valkey in namespace redis, Valkey pods only, pod port 6380: Service valkey-master listens on 6379 but targets the
+# HAProxy master proxy on 6380, and a NetworkPolicy sees the pod port after Service translation. 6379 is not needed.
+# Ingress to those pods is the miniKube repo's (redis access chart: namespace jithendar is already a client).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jithendar-com-cache-bus
+  namespace: jithendar
+spec:
+  podSelector:
+    matchLabels:
+      app: jithendar-com
+  policyTypes:
+  - Egress
+  egress:
+  - ports:
+    - port: 6380
+      protocol: TCP
+    to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: redis
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: valkey
