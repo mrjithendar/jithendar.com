@@ -16,10 +16,10 @@ related:
   - projects/roboshop-ai
 sources:
   - title: "MOKS source at commit ef6908a"
-    url: https://github.com/moks-tech/moks-sre/tree/ef6908ac90730beac312813f539cd0bc57d94810
+    url: https://github.com/mrjithendar/moks-sre/tree/ef6908ac90730beac312813f539cd0bc57d94810
     publisher: GitHub
   - title: "RoboShop AI source at commit c81e85a"
-    url: https://github.com/moks-tech/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b
+    url: https://github.com/mrjithendar/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b
     publisher: GitHub
   - title: "The Python Tutorial (3.12)"
     url: https://docs.python.org/3.12/tutorial/index.html
@@ -46,7 +46,7 @@ sources:
 
 This Python tutorial for beginners goes from the first `print()` to a small FastAPI service with tests. Each topic starts with a small example you run on your own computer, then shows the same idea in [MOKS](/projects/moks), the Python SRE portal I run at `jithendar.com/moks`, which answers questions such as "Why is checkout returning 502 errors?" from Kubernetes, Prometheus and Loki evidence.
 
-You need basic computer knowledge, a terminal and Python 3.11 or newer. No example needs a cloud account, an API key or a network connection once the packages are installed. Project excerpts were checked against [MOKS at commit ef6908a](https://github.com/moks-tech/moks-sre/tree/ef6908ac90730beac312813f539cd0bc57d94810), and each block is labelled **Actual project code** (copied line for line, linked to the exact lines), **Simplified from project code** (the label says what was left out) or **Standalone teaching example** (save it under the file name in its first line and run it).
+You need basic computer knowledge, a terminal and Python 3.11 or newer. No example needs a cloud account, an API key or a network connection once the packages are installed. Project excerpts were checked against [MOKS at commit ef6908a](https://github.com/mrjithendar/moks-sre/tree/ef6908ac90730beac312813f539cd0bc57d94810), and each block is labelled **Actual project code** (copied line for line, linked to the exact lines), **Simplified from project code** (the label says what was left out) or **Standalone teaching example** (save it under the file name in its first line and run it).
 
 ::toc
 
@@ -120,7 +120,7 @@ Python refuses to run the file and points at line 4 (the comment on line 1 count
 
 ### The language, the standard library and packages
 
-**The language** is the syntax and built-in types. **The standard library** ships with Python (`json`, `pathlib`, `re`, `logging`, `asyncio`). **Third-party packages** are installed separately; MOKS's [`backend/pyproject.toml`](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/pyproject.toml) lists FastAPI, Pydantic, SQLAlchemy, HTTPX, LangGraph, boto3 and others. When a framework does something, I name it.
+**The language** is the syntax and built-in types. **The standard library** ships with Python (`json`, `pathlib`, `re`, `logging`, `asyncio`). **Third-party packages** are installed separately; MOKS's [`backend/pyproject.toml`](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/pyproject.toml) lists FastAPI, Pydantic, SQLAlchemy, HTTPX, LangGraph, boto3 and others. When a framework does something, I name it.
 
 ## 2. Setting up Python
 
@@ -233,7 +233,7 @@ That is 2700 seconds.
 
 Environment variables are always strings. MOKS's settings class gives each value a type, and Pydantic converts them (section 10):
 
-*Actual project code* from [`backend/moks/config.py`, lines 55–58](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/config.py#L55-L58):
+*Actual project code* from [`backend/moks/config.py`, lines 55–58](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/config.py#L55-L58):
 
 ```python
 # backend/moks/config.py
@@ -315,7 +315,7 @@ Looping over a dictionary gives its keys; `.items()` gives key and value pairs.
 
 A dictionary maps the kind of question asked to the workflow that answers it (capital letters mark a constant):
 
-*Actual project code* from [`backend/moks/orchestrator/intent.py`, lines 24–26](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/orchestrator/intent.py#L24-L26):
+*Actual project code* from [`backend/moks/orchestrator/intent.py`, lines 24–26](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/orchestrator/intent.py#L24-L26):
 
 ```python
 # backend/moks/orchestrator/intent.py
@@ -326,7 +326,7 @@ WORKFLOW = {"deployment_guidance": "guidance", "repository": "guidance", "execut
 
 Sets answer "is this one of these?", as when the document chunker recognises file types:
 
-*Actual project code* from [`backend/moks/rag/chunking.py`, lines 27–28](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/rag/chunking.py#L27-L28):
+*Actual project code* from [`backend/moks/rag/chunking.py`, lines 27–28](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/rag/chunking.py#L27-L28):
 
 ```python
 # backend/moks/rag/chunking.py
@@ -374,7 +374,7 @@ Comparisons are `==`, `!=`, `<`, `<=`, `>` and `>=`, combined with `and`, `or` a
 
 This function decides what kind of file a path points to:
 
-*Actual project code* from [`backend/moks/rag/chunking.py`, lines 73–89](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/rag/chunking.py#L73-L89):
+*Actual project code* from [`backend/moks/rag/chunking.py`, lines 73–89](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/rag/chunking.py#L73-L89):
 
 ```python
 # backend/moks/rag/chunking.py
@@ -464,7 +464,7 @@ $ python3 comprehensions.py
 
 Read `[name for name, count in pods.items() if count > 0]` like the loop above it; curly braces build a set instead. MOKS uses a set comprehension to clean a comma-separated setting:
 
-*Actual project code* from [`backend/moks/config.py`, lines 191–193](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/config.py#L191-L193):
+*Actual project code* from [`backend/moks/config.py`, lines 191–193](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/config.py#L191-L193):
 
 ```python
 # backend/moks/config.py
@@ -517,7 +517,7 @@ None
 
 This turns "the last 30 minutes" in a question into a number:
 
-*Actual project code* from [`backend/moks/api/investigations.py`, lines 37–42](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/api/investigations.py#L37-L42):
+*Actual project code* from [`backend/moks/api/investigations.py`, lines 37–42](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/api/investigations.py#L37-L42):
 
 ```python
 # backend/moks/api/investigations.py
@@ -533,7 +533,7 @@ def window_from_question(question: str) -> int | None:
 
 A bare `*` makes every later parameter keyword-only, so readers always see what `True` means:
 
-*Actual project code* from [`backend/moks/connectors/base.py`, lines 27–27](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/connectors/base.py#L27-L27):
+*Actual project code* from [`backend/moks/connectors/base.py`, lines 27–27](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/connectors/base.py#L27-L27):
 
 ```python
 # backend/moks/connectors/base.py
@@ -647,7 +647,7 @@ backend/
 
 Inside it, **relative imports** such as `from ..config import get_settings` (in `moks/rag/chunking.py`) mean "up one package, then `config`". The `moks` command is mapped in `pyproject.toml`:
 
-*Actual project code* from [`backend/pyproject.toml`, lines 36–37](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/pyproject.toml#L36-L37):
+*Actual project code* from [`backend/pyproject.toml`, lines 36–37](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/pyproject.toml#L36-L37):
 
 ```toml
 # backend/pyproject.toml
@@ -657,7 +657,7 @@ moks = "moks.cli:main"
 
 and `cli.py` ends with the same guard, so `python -m moks.cli serve` also works:
 
-*Actual project code* from [`backend/moks/cli.py`, lines 597–598](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/cli.py#L597-L598):
+*Actual project code* from [`backend/moks/cli.py`, lines 597–598](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/cli.py#L597-L598):
 
 ```python
 # backend/moks/cli.py
@@ -742,7 +742,7 @@ token configured: True
 
 MOKS stores only a *reference* to a credential, such as "the environment variable `MOKS_CRED_PROM`" or "the file `prom/token`", and looks up the value when a connector needs it:
 
-*Actual project code* from [`backend/moks/connectors/base.py`, lines 38–62](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/connectors/base.py#L38-L62):
+*Actual project code* from [`backend/moks/connectors/base.py`, lines 38–62](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/connectors/base.py#L38-L62):
 
 ```python
 # backend/moks/connectors/base.py
@@ -858,7 +858,7 @@ None
 
 A class that extends `Exception` (section 11) is a new exception type, raised with `raise`. MOKS's connector error carries a `kind` the rest of the code can act on:
 
-*Actual project code* from [`backend/moks/connectors/base.py`, lines 20–35](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/connectors/base.py#L20-L35):
+*Actual project code* from [`backend/moks/connectors/base.py`, lines 20–35](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/connectors/base.py#L20-L35):
 
 ```python
 # backend/moks/connectors/base.py
@@ -882,7 +882,7 @@ class ConnectorError(Exception):
 
 Connector code translates the HTTP library's exceptions into it:
 
-*Actual project code* from [`backend/moks/connectors/base.py`, lines 167–170](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/connectors/base.py#L167-L170):
+*Actual project code* from [`backend/moks/connectors/base.py`, lines 167–170](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/connectors/base.py#L167-L170):
 
 ```python
 # backend/moks/connectors/base.py
@@ -896,7 +896,7 @@ Connector code translates the HTTP library's exceptions into it:
 
 `except Exception:` catches almost everything and usually hides bugs. MOKS uses it deliberately in the readiness probe Kubernetes calls, where any database failure within two seconds means "not ready":
 
-*Actual project code* from [`backend/moks/main.py`, lines 152–159](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/main.py#L152-L159):
+*Actual project code* from [`backend/moks/main.py`, lines 152–159](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/main.py#L152-L159):
 
 ```python
 # backend/moks/main.py
@@ -995,7 +995,7 @@ minutes=30 namespace=None
 
 `Field(ge=5, le=10080)` adds limits. `"30"` became `30`, and `"thirty"` raised `ValidationError` of type `int_parsing`. MOKS's settings class reads every field from a `MOKS_`-prefixed environment variable:
 
-*Actual project code* from [`backend/moks/config.py`, lines 16–19](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/config.py#L16-L19):
+*Actual project code* from [`backend/moks/config.py`, lines 16–19](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/config.py#L16-L19):
 
 ```python
 # backend/moks/config.py
@@ -1096,7 +1096,7 @@ Limits(timeout_seconds=15.0, retries=2, tags=[])
 
 `field(default_factory=list)` is the dataclass fix for the mutable default from section 6. MOKS has almost this class for HTTP limits (`8_000_000` is 8000000 with readability underscores):
 
-*Actual project code* from [`backend/moks/connectors/base.py`, lines 88–92](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/connectors/base.py#L88-L92):
+*Actual project code* from [`backend/moks/connectors/base.py`, lines 88–92](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/connectors/base.py#L88-L92):
 
 ```python
 # backend/moks/connectors/base.py
@@ -1109,7 +1109,7 @@ class HttpLimits:
 
 The chunker's result is a dataclass with two **properties**; `@property` lets you read `piece.tokens` like a value:
 
-*Actual project code* from [`backend/moks/rag/chunking.py`, lines 35–50](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/rag/chunking.py#L35-L50):
+*Actual project code* from [`backend/moks/rag/chunking.py`, lines 35–50](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/rag/chunking.py#L35-L50):
 
 ```python
 # backend/moks/rag/chunking.py
@@ -1133,7 +1133,7 @@ class ChunkPiece:
 
 Pydantic models can also have **validators** that run while the model is built. This one keeps MOKS's URL prefix to one leading slash and no trailing slash:
 
-*Actual project code* from [`backend/moks/config.py`, lines 167–171](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/config.py#L167-L171):
+*Actual project code* from [`backend/moks/config.py`, lines 167–171](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/config.py#L167-L171):
 
 ```python
 # backend/moks/config.py
@@ -1220,7 +1220,7 @@ Could not reach the server: ConnectError
 
 Every connector goes through one wrapper, `BoundedHttp`, which classifies responses that did arrive:
 
-*Actual project code* from [`backend/moks/connectors/base.py`, lines 176–185](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/connectors/base.py#L176-L185):
+*Actual project code* from [`backend/moks/connectors/base.py`, lines 176–185](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/connectors/base.py#L176-L185):
 
 ```python
 # backend/moks/connectors/base.py
@@ -1240,7 +1240,7 @@ Every connector goes through one wrapper, `BoundedHttp`, which classifies respon
 
 Retrying a `GET` is safe. Retrying a `POST` that may already have succeeded could create something twice. Requests safe to repeat are **idempotent**, and MOKS retries only those:
 
-*Actual project code* from [`backend/moks/connectors/base.py`, lines 135–150](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/connectors/base.py#L135-L150):
+*Actual project code* from [`backend/moks/connectors/base.py`, lines 135–150](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/connectors/base.py#L135-L150):
 
 ```python
 # backend/moks/connectors/base.py
@@ -1345,7 +1345,7 @@ Open `http://127.0.0.1:8000/docs` for the interactive documentation FastAPI gene
 
 The model behind `POST /moks/api/investigations`:
 
-*Actual project code* from [`backend/moks/api/investigations.py`, lines 45–52](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/api/investigations.py#L45-L52):
+*Actual project code* from [`backend/moks/api/investigations.py`, lines 45–52](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/api/investigations.py#L45-L52):
 
 ```python
 # backend/moks/api/investigations.py
@@ -1361,7 +1361,7 @@ class CreateIn(BaseModel):
 
 `pattern=` requires a regular expression match, so a namespace like `../etc` is refused before any code uses it, and `uuid.UUID` checks `incident_id`. The route:
 
-*Actual project code* from [`backend/moks/api/investigations.py`, lines 160–162](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/api/investigations.py#L160-L162):
+*Actual project code* from [`backend/moks/api/investigations.py`, lines 160–162](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/api/investigations.py#L160-L162):
 
 ```python
 # backend/moks/api/investigations.py
@@ -1372,7 +1372,7 @@ async def create(body: CreateIn, request: Request, ctx: AuthContext = Depends(ge
 
 `router` is an `APIRouter` mounted under `/moks/api`, and the parameters receive the validated body, the raw `Request`, the signed-in user from `get_auth` and a database session from `get_db`. `get_auth` runs first:
 
-*Actual project code* from [`backend/moks/auth/deps.py`, lines 29–40](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/auth/deps.py#L29-L40):
+*Actual project code* from [`backend/moks/auth/deps.py`, lines 29–40](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/auth/deps.py#L29-L40):
 
 ```python
 # backend/moks/auth/deps.py
@@ -1394,7 +1394,7 @@ async def get_auth(request: Request, db: AsyncSession = Depends(get_db, scope="f
 
 Most MOKS routes return `dict[str, Any]`, but one declares a **response model**, so FastAPI validates and filters the output:
 
-*Actual project code* from [`backend/moks/auth/routes.py`, lines 68–75](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/auth/routes.py#L68-L75):
+*Actual project code* from [`backend/moks/auth/routes.py`, lines 68–75](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/auth/routes.py#L68-L75):
 
 ```python
 # backend/moks/auth/routes.py
@@ -1457,7 +1457,7 @@ Three `time.sleep(1)` calls take three seconds. `asyncio.gather(...)` runs three
 
 `async` helps only with *waiting*. A calculation never reaches an `await`, so nothing else runs, and any blocking call inside `async def` (`time.sleep`, a synchronous HTTP library, a long calculation) stalls *every* request the process serves. That is why MOKS's retry loop uses `await asyncio.sleep(...)`. boto3, which MOKS uses for Amazon Bedrock, has no async version, so those calls run in a thread:
 
-*Simplified from project code* ([`backend/moks/llm/providers.py`, lines 363–375](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/llm/providers.py#L363-L375)). Omitted: the boto3 client options, the message format and the handling of AWS error codes.
+*Simplified from project code* ([`backend/moks/llm/providers.py`, lines 363–375](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/llm/providers.py#L363-L375)). Omitted: the boto3 client options, the message format and the handling of AWS error codes.
 
 ```python
 # Simplified from backend/moks/llm/providers.py
@@ -1479,7 +1479,7 @@ except asyncio.TimeoutError:
 
 AI features in MOKS are ordinary Python: functions that take text, call an HTTP API and return structured data. Each model provider class has a `_post` method:
 
-*Actual project code* from [`backend/moks/llm/providers.py`, lines 72–85](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/llm/providers.py#L72-L85):
+*Actual project code* from [`backend/moks/llm/providers.py`, lines 72–85](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/llm/providers.py#L72-L85):
 
 ```python
 # backend/moks/llm/providers.py
@@ -1533,7 +1533,7 @@ Checkout pods restarted 4 times.
 
 Some servers send message content as a string and others as a list of parts; MOKS handles both:
 
-*Actual project code* from [`backend/moks/llm/providers.py`, lines 115–119](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/llm/providers.py#L115-L119):
+*Actual project code* from [`backend/moks/llm/providers.py`, lines 115–119](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/llm/providers.py#L115-L119):
 
 ```python
 # backend/moks/llm/providers.py
@@ -1550,7 +1550,7 @@ def _content_text(content: Any) -> str:
 
 Before MOKS can answer from runbooks, it splits each document into **chunks** small enough to search and fit in a prompt:
 
-*Actual project code* from [`backend/moks/rag/chunking.py`, lines 109–118](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/rag/chunking.py#L109-L118):
+*Actual project code* from [`backend/moks/rag/chunking.py`, lines 109–118](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/rag/chunking.py#L109-L118):
 
 ```python
 # backend/moks/rag/chunking.py
@@ -1595,7 +1595,7 @@ MOKS's settings default to production, which refuses to start without a 32-chara
 
 MOKS does not use the Model Context Protocol, but RoboShop AI's `mcp-server` does, through FastMCP, building tools from a table of specifications:
 
-*Actual project code* from [`services/mcp-server/server.py`, lines 210–215](https://github.com/moks-tech/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/mcp-server/server.py#L210-L215):
+*Actual project code* from [`services/mcp-server/server.py`, lines 210–215](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/mcp-server/server.py#L210-L215):
 
 ```python
 # services/mcp-server/server.py
@@ -1724,7 +1724,7 @@ $ python3 -m pytest -q test_restarts_client.py
 
 `lambda request: ...` is a one-line unnamed function. Passing the client in as a parameter is what makes the function testable. MOKS tests its connectors the same way:
 
-*Actual project code* from [`backend/tests/test_bounds_connectors.py`, lines 97–106](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/tests/test_bounds_connectors.py#L97-L106):
+*Actual project code* from [`backend/tests/test_bounds_connectors.py`, lines 97–106](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/tests/test_bounds_connectors.py#L97-L106):
 
 ```python
 # backend/tests/test_bounds_connectors.py
@@ -1780,7 +1780,7 @@ WARNING demo.connector: request failed: timeout
 
 Secret settings are declared with `repr=False`, so they stay out of printouts:
 
-*Actual project code* from [`backend/moks/config.py`, lines 29–31](https://github.com/moks-tech/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/config.py#L29-L31):
+*Actual project code* from [`backend/moks/config.py`, lines 29–31](https://github.com/mrjithendar/moks-sre/blob/ef6908ac90730beac312813f539cd0bc57d94810/backend/moks/config.py#L29-L31):
 
 ```python
 # backend/moks/config.py
@@ -2173,4 +2173,4 @@ The three tests cover a valid window, text that passes Pydantic but cannot be pa
 
 ## Where to go next
 
-The Python Practice problems on this site, at `jithendar.com/python-practice`, give you small functions to write and check against tests. To read more real code, start with `backend/moks/rag/chunking.py` and `backend/moks/connectors/base.py` in [the MOKS repository](https://github.com/moks-tech/moks-sre/tree/ef6908ac90730beac312813f539cd0bc57d94810), then the [MOKS knowledge and skills design](/blog/moks-rag-and-skills-design) article.
+The Python Practice problems on this site, at `jithendar.com/python-practice`, give you small functions to write and check against tests. To read more real code, start with `backend/moks/rag/chunking.py` and `backend/moks/connectors/base.py` in [the MOKS repository](https://github.com/mrjithendar/moks-sre/tree/ef6908ac90730beac312813f539cd0bc57d94810), then the [MOKS knowledge and skills design](/blog/moks-rag-and-skills-design) article.

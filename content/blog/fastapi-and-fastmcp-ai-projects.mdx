@@ -17,10 +17,10 @@ related:
   - projects/roboshop-ai
 sources:
   - title: "RoboShop AI source at commit c81e85a"
-    url: https://github.com/moks-tech/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b
+    url: https://github.com/mrjithendar/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b
     publisher: GitHub
   - title: "MOKS source at commit ab99cf7"
-    url: https://github.com/moks-tech/moks-sre/tree/ab99cf7b17acef3f7af4ca4e11b64267563133fb
+    url: https://github.com/mrjithendar/moks-sre/tree/ab99cf7b17acef3f7af4ca4e11b64267563133fb
     publisher: GitHub
   - title: "FastMCP documentation"
     url: https://gofastmcp.com/getting-started/welcome
@@ -47,7 +47,7 @@ sources:
 
 I use FastAPI and FastMCP in two projects, [RoboShop AI](/projects/roboshop-ai) and [MOKS](/projects/moks), across four services. They are easy to describe as a pair, but the code says otherwise: **no service I have uses both.** FastAPI answers people and internal services, FastMCP answers AI clients, and where they meet, they meet over plain HTTP between separate pods.
 
-This article shows what each package does in that code, where the design holds up and where it falls short. It was checked against [RoboShop AI at c81e85a](https://github.com/moks-tech/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b) and [MOKS at ab99cf7](https://github.com/moks-tech/moks-sre/tree/ab99cf7b17acef3f7af4ca4e11b64267563133fb). On 6 November 2026, `moks-api` and `moks-terminal` were running on my mk4 cluster; RoboShop AI's services were not deployed anywhere, because its EKS cluster was deleted on 2 November.
+This article shows what each package does in that code, where the design holds up and where it falls short. It was checked against [RoboShop AI at c81e85a](https://github.com/mrjithendar/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b) and [MOKS at ab99cf7](https://github.com/mrjithendar/moks-sre/tree/ab99cf7b17acef3f7af4ca4e11b64267563133fb). On 6 November 2026, `moks-api` and `moks-terminal` were running on my mk4 cluster; RoboShop AI's services were not deployed anywhere, because its EKS cluster was deleted on 2 November.
 
 ::toc
 
@@ -76,7 +76,7 @@ MOKS uses FastAPI conventionally. The RoboShop gateway uses it as little more th
 
 ### MOKS: routers, models and dependencies
 
-`create_app()` in [`backend/moks/main.py`](https://github.com/moks-tech/moks-sre/blob/ab99cf7b17acef3f7af4ca4e11b64267563133fb/backend/moks/main.py) mounts 20 routers under one prefix, giving 142 paths and 161 operations in the OpenAPI schema. Any unrecognised API path hits a catch-all that returns a JSON 404, so a mistyped call can't fall through to the single-page app.
+`create_app()` in [`backend/moks/main.py`](https://github.com/mrjithendar/moks-sre/blob/ab99cf7b17acef3f7af4ca4e11b64267563133fb/backend/moks/main.py) mounts 20 routers under one prefix, giving 142 paths and 161 operations in the OpenAPI schema. Any unrecognised API path hits a catch-all that returns a JSON 404, so a mistyped call can't fall through to the single-page app.
 
 Request validation happens before the route runs. This is the body for starting an investigation:
 
@@ -131,7 +131,7 @@ The pool defaults to five connections, and a stream holding one would exhaust it
 
 ### RoboShop gateway: FastAPI as a transport shell
 
-[`asgi_app.py`](https://github.com/moks-tech/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/ai-gateway/asgi_app.py) registers four named routes and one catch-all, all pointing at the same function:
+[`asgi_app.py`](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/ai-gateway/asgi_app.py) registers four named routes and one catch-all, all pointing at the same function:
 
 ```python
 # services/ai-gateway/asgi_app.py
