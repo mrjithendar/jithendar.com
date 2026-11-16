@@ -26,7 +26,7 @@ reach Grafana through Argo CD.
 ## Python practice (moved)
 
 The practice executor (code runner, namespace `jithendar`), its sandboxes, the problems and their manifests moved to
-[`mrjithendar/practice-programming`](https://github.com/mrjithendar/practice-programming) on 2026-11-16; its CI deploys
+[`moks-tech/practice-programming`](https://github.com/moks-tech/practice-programming) on 2026-11-16; its CI deploys
 the executor. Two things stay here: the site's egress rule to `app=practice-executor-api` (`30-jithendar-com.yaml`)
 and the init container `practice-catalog`, which copies that repository's `practice-catalog:latest` into
 `/app/practice` (`PRACTICE_CATALOG_PATH`). The CI deployer (`80-ci-deployer.yaml`) may still roll the two executor

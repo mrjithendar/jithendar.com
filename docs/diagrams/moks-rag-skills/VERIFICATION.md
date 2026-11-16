@@ -1,6 +1,6 @@
 # Verification note: moks-rag-and-skills-design (2026-11-01 update)
 
-Checked against `mrjithendar/moks` commit `9c150e9` (`master`). `backend/moks` and the docs read here had no uncommitted changes. This updates the live post in place: URL and slug are unchanged, and `status` stays `review`.
+Checked against `moks-tech/moks-sre` commit `9c150e9` (`master`). `backend/moks` and the docs read here had no uncommitted changes. This updates the live post in place: URL and slug are unchanged, and `status` stays `review`.
 
 ## Files inspected
 

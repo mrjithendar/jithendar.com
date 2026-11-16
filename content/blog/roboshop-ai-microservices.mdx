@@ -28,7 +28,7 @@ The shop runs on a two-node Amazon EKS cluster at [eks.jithendar.com/roboshop](h
 
 RoboShop AI started from Instana's [Robot Shop](https://github.com/instana/robot-shop), a polyglot sample application for learning container orchestration and monitoring. Its catalogue, user, cart, shipping and payment boundaries survive, and the storefront still ships some original images under their Apache 2.0 licence.
 
-Most of the implementations are new. Shipping keeps its Java design on Java 21, Spring Boot and PostgreSQL. The dummy payment service became a [Razorpay integration](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/payment-service/README.md). The AI gateway, the Moks agent, the MCP server, a currency service and a Kafka bridge were added.
+Most of the implementations are new. Shipping keeps its Java design on Java 21, Spring Boot and PostgreSQL. The dummy payment service became a [Razorpay integration](https://github.com/moks-tech/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/payment-service/README.md). The AI gateway, the Moks agent, the MCP server, a currency service and a Kafka bridge were added.
 
 The storefront itself is a catalogue of twenty robots with search, filters, product pages, a cart and checkout. Prices are labelled as demo prices, and product images are labelled as AI-generated concept renders.
 
@@ -74,7 +74,7 @@ A product page is a static file. The Istio gateway ends TLS, strips `/roboshop` 
 
 The page script then calls `/api/products`. NGINX proxies it to the gateway with no retries or buffering, and the gateway calls catalogue-service, which reads MongoDB.
 
-Before responding, [the gateway](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/ai-gateway/server.py) recalculates `instock` from reservations and sales in its own ledger, because stock authority lives with checkout and not the catalogue. A simple product list therefore touches two services and a database.
+Before responding, [the gateway](https://github.com/moks-tech/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/ai-gateway/server.py) recalculates `instock` from reservations and sales in its own ledger, because stock authority lives with checkout and not the catalogue. A simple product list therefore touches two services and a database.
 
 Prices show a useful small boundary. `currency-service` downloads the European Central Bank feed hourly, with a five-second deadline and a 64 KiB limit. Requests only ever read the cache, so a slow upstream cannot slow the storefront. After two hours rates are labelled stale, and after seven days they are withdrawn rather than guessed. If the service is gone entirely, the browser shows original prices.
 
@@ -94,11 +94,11 @@ Because model calls are slow and paid for, this path has explicit budgets:
 
 - a 16-second retrieval and inference budget;
 - two concurrent provider calls per process;
-- a [circuit breaker](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/moks/README.md) that opens for 30 seconds after three failures.
+- a [circuit breaker](https://github.com/moks-tech/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/moks/README.md) that opens for 30 seconds after three failures.
 
 Model output is guidance only. Moks has no database credentials and no tools that change carts or orders.
 
-The [MCP server](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/mcp-server/README.md) is a separate entry point for AI clients. It takes the caller's own RoboShop session and forwards it to the gateway, which re-authorizes every call. Ten read tools and `update_cart` are registered by default, and admin write tools need an environment flag. Moks never calls MCP: the gateway already calls Moks, so that route would create a loop and add a hop without adding any authorization.
+The [MCP server](https://github.com/moks-tech/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/mcp-server/README.md) is a separate entry point for AI clients. It takes the caller's own RoboShop session and forwards it to the gateway, which re-authorizes every call. Ten read tools and `update_cart` are registered by default, and admin write tools need an environment flag. Moks never calls MCP: the gateway already calls Moks, so that route would create a loop and add a hop without adding any authorization.
 
 ## How checkout and order events work
 
@@ -108,11 +108,11 @@ The [MCP server](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d355
 
 Checkout is synchronous and deliberately conservative. The browser creates an order with an `Idempotency-Key`. The gateway snapshots the cart, reserves stock and records the order as `creating` before asking payment-service to create a Razorpay order, so two buyers cannot both pay for the last unit.
 
-The server doesn't trust the browser's word that payment succeeded. It checks Razorpay's HMAC signature, then fetches the payment to confirm capture with the expected amount and currency. A signed webhook recovers callbacks the browser missed. If the provider's answer is unknown, the order moves to `payment_review` and keeps its reservation, rather than risking a second provider order. The [gateway README](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/ai-gateway/README.md#checkout-locking-and-recovery) documents the state machine.
+The server doesn't trust the browser's word that payment succeeded. It checks Razorpay's HMAC signature, then fetches the payment to confirm capture with the expected amount and currency. A signed webhook recovers callbacks the browser missed. If the provider's answer is unknown, the order moves to `payment_review` and keeps its reservation, rather than risking a second provider order. The [gateway README](https://github.com/moks-tech/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/ai-gateway/README.md#checkout-locking-and-recovery) documents the state machine.
 
 The move to `paid` writes an `order.paid` event in the same ledger update, which is the [transactional outbox pattern](https://microservices.io/patterns/data/transactional-outbox.html). A background publisher sends it to RabbitMQ with [publisher confirms](https://www.rabbitmq.com/docs/confirms) and [quorum queues](https://www.rabbitmq.com/docs/quorum-queues).
 
-Shipping inserts a shipment request before acknowledging, and unique event IDs make redelivery harmless. Five processing failures send a message to a dead-letter queue. Test-mode orders go to an audit queue and never create shipments. [kafka-bridge](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/kafka-bridge/README.md) copies both kinds to Kafka for analytics, and acknowledges RabbitMQ only after Kafka confirms.
+Shipping inserts a shipment request before acknowledging, and unique event IDs make redelivery harmless. Five processing failures send a message to a dead-letter queue. Test-mode orders go to an audit queue and never create shipments. [kafka-bridge](https://github.com/moks-tech/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/kafka-bridge/README.md) copies both kinds to Kafka for analytics, and acknowledges RabbitMQ only after Kafka confirms.
 
 Checkout never waits for shipping or Kafka. If RabbitMQ is down, events wait in the outbox.
 
@@ -130,7 +130,7 @@ Checkout never waits for shipping or Kafka. If RabbitMQ is down, events wait in 
 
 **Identity between services.** On EKS, each workload has its own ServiceAccount, and so its own mesh identity. Policies describe the real call graph, with `allow-nothing` as the default. That benefit is prepared but not yet active: until mTLS is `STRICT` and policies leave dry run, nothing is denied.
 
-**Testing through contracts.** The gateway has [user-service contract tests](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/ai-gateway/tests/test_user_service_contract.py), and NGINX tests run against a mock gateway. These are hand-written fixtures, so they protect only what someone remembered to assert.
+**Testing through contracts.** The gateway has [user-service contract tests](https://github.com/moks-tech/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/ai-gateway/tests/test_user_service_contract.py), and NGINX tests run against a mock gateway. These are hand-written fixtures, so they protect only what someone remembered to assert.
 
 **Reusing business APIs through agents.** MCP tools call the same gateway endpoints as the browser, so authorization stays in one place. Exposing MCP over the internet would also need OAuth 2.1, which is not implemented.
 
@@ -168,7 +168,7 @@ Proposed next steps, none of them implemented yet: pin images by digest, move th
 
 ## References
 
-- [roboshop-ai repository](https://github.com/mrjithendar/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b), pinned to the reviewed commit
+- [roboshop-ai repository](https://github.com/moks-tech/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b), pinned to the reviewed commit
 - Martin Fowler and James Lewis, [Microservices](https://martinfowler.com/articles/microservices.html)
 - Chris Richardson, [Transactional outbox pattern](https://microservices.io/patterns/data/transactional-outbox.html)
 - OpenTelemetry, [Context propagation](https://opentelemetry.io/docs/concepts/context-propagation/)

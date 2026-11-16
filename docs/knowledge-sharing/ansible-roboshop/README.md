@@ -1,6 +1,6 @@
 # Ansible explained (RoboShop repository) article
 
-Status: **draft for author review, not published.** Written 2026-11-12 from `github.com/mrjithendar/Ansible` at `29ea7b1`,
+Status: **draft for author review, not published.** Written 2026-11-12 from `github.com/moks-tech/ansible` at `29ea7b1`,
 for readers with no technical background.
 
 | Asset | Location |

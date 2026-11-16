@@ -1,7 +1,7 @@
 # jithendar.com
 
 The website [jithendar.com](https://jithendar.com): its identity, articles and images, and everything that deploys it
-to the mk4 cluster. The software it runs is [moks-cms](https://github.com/mrjithendar/moks-cms), which only tests its
+to the mk4 cluster. The software it runs is [moks-cms](https://github.com/moks-tech/moks-cms), which only tests its
 code and pushes the CMS image `registry.jithendar.com/jithendar/moks-cms:pr-<number>`. That image serves any site and
 reads the site's files at run time. Until 2026-11-16 the site lived in moks-cms as `sites/jithendar.com/`. Its history
 up to then came along with it.
@@ -10,7 +10,7 @@ up to then came along with it.
 |---|---|
 | `site.json` | Identity: host, name, tagline, author, social links, AdSense ID, AI crawler policy |
 | `config/` | `redirects.json` (308s: `[{"source", "destination"}]`), `gone.json` (paths answered with 410), `hire-me-profile.json` (`/hire-me`) |
-| `content/` | `blog/`, `news/`, `projects/`, `pages/`, `authors/` (MDX). The Python practice problems are in [`mrjithendar/practice-programming`](https://github.com/mrjithendar/practice-programming) |
+| `content/` | `blog/`, `news/`, `projects/`, `pages/`, `authors/` (MDX). The Python practice problems are in [`moks-tech/practice-programming`](https://github.com/moks-tech/practice-programming) |
 | `public/images/` | Images the articles use, served as `/images/…` |
 | `docs/` | Sources of the articles' figures, and scripts that check the articles (never shipped) |
 | `grafana/` | The site's Grafana dashboards (one ConfigMap; Argo CD's `grafana` Application reads this folder) |
@@ -51,10 +51,10 @@ The workflows need these, which moved here from moks-cms:
 - **Harbor** (pull the CMS image for the content check, push `jithendar-com-content`): secrets `HARBOR_USERNAME` and `HARBOR_PASSWORD`.
 - **Restarts** (content.yml): `scripts/setup-ci-deployer.sh` (variables `MK4_API_SERVER` and `MK4_CA_DATA`, secret `MK4_CI_TOKEN`).
 - **Manifests** (deploy-kubernetes.yml): `scripts/setup-ci-applier.sh` (secret `MK4_CI_APPLY_TOKEN`, variable `MINIKUBE_DEPLOY=true`).
-- **moks-cms → this repository**: in moks-cms, variable `RELEASE_NOTIFY_REPOS=mrjithendar/jithendar.com` and secret
+- **moks-cms → this repository**: in moks-cms, variable `RELEASE_NOTIFY_REPOS=moks-tech/jithendar.com` and secret
   `RELEASE_NOTIFY_TOKEN` (a fine-grained token with Contents: read and write on this repository).
 
-Both setup scripts default to `GITHUB_REPO=mrjithendar/jithendar.com` and need `KUBE_CONTEXT=<name>` or a
+Both setup scripts default to `GITHUB_REPO=moks-tech/jithendar.com` and need `KUBE_CONTEXT=<name>` or a
 confirmation (`scripts/lib/kube-context.sh`).
 
 ## First deploy from this repository

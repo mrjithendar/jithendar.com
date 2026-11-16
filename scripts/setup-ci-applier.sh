@@ -19,7 +19,7 @@ set -euo pipefail
 # shellcheck source=/dev/null
 source "$(dirname -- "${BASH_SOURCE[0]}")/lib/kube-context.sh"
 
-REPO="${GITHUB_REPO:-mrjithendar/jithendar.com}"
+REPO="${GITHUB_REPO:-moks-tech/jithendar.com}"
 NS="jithendar"
 SA="github-ci-applier"
 TEMPLATE=".github/jithendar-ci-applier.yaml"

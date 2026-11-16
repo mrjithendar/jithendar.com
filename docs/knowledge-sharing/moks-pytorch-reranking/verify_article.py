@@ -37,7 +37,7 @@ for lang, block in re.findall(r"```(python|dockerfile|yaml)\n(.*?)```", text, re
     if "\n".join(lines[1:]) not in source:
         failures.append(f"{path}: excerpt is not a verbatim run of lines:\n" + "\n".join(lines[1:3]))
 
-for kind, path, start, end in re.findall(rf"https://github\.com/mrjithendar/moks/(blob|tree)/{COMMIT}/([^)#\s]*)(?:#L(\d+)(?:-L(\d+))?)?", text):
+for kind, path, start, end in re.findall(rf"https://github\.com/moks-tech/moks-sre/(blob|tree)/{COMMIT}/([^)#\s]*)(?:#L(\d+)(?:-L(\d+))?)?", text):
     links += 1
     if kind == "tree":
         if path and subprocess.run(["git", "-C", str(repo), "cat-file", "-e", f"{COMMIT}:{path.rstrip('/')}"]).returncode:
@@ -49,7 +49,7 @@ for kind, path, start, end in re.findall(rf"https://github\.com/mrjithendar/moks
     elif start and int(end or start) > len(source.splitlines()):
         failures.append(f"{path}#L{start}-L{end}: past the end of the file")
 
-for match in re.findall(r"https://github\.com/mrjithendar/moks/(?:blob|tree)/([0-9a-f]+)", text):
+for match in re.findall(r"https://github\.com/moks-tech/moks-sre/(?:blob|tree)/([0-9a-f]+)", text):
     if match != COMMIT:
         failures.append(f"link pinned to another commit: {match}")
 

@@ -4,7 +4,7 @@
 Reuses the layout, palette and draw.io writer of the RoboShop AI series (sites/jithendar.com/docs/knowledge-sharing/roboshop-ai/diagrams).
 Run from www/. The SVG is rendered here, not exported by draw.io: if a .drawio file is edited in draw.io, re-export it
 over the SVG. PNG copies: render_png.py (Playwright + Chromium).
-Facts follow github.com/mrjithendar/Ansible at 29ea7b1 (roboshop.yml, roles/, inventory/aws_ec2.yml, group_vars/,
+Facts follow github.com/moks-tech/ansible at 29ea7b1 (roboshop.yml, roles/, inventory/aws_ec2.yml, group_vars/,
 ansible.cfg, Jenkinsfile).
 """
 import importlib.util
@@ -281,7 +281,7 @@ def push_pull():
         p.node(f"p{name}", "service", 30 + i * 105, 250, 95, 44, name)
         p.edge("ctl", f"p{name}", a_at=0.2 + i * 0.3, label="SSH" if i == 1 else "")
     p.zone("Pull: ansible-pull (one server helps itself)", 370, 12, 335, 336)
-    p.node("gh", "external", 385, 44, 305, 64, "GitHub", "github.com/mrjithendar/Ansible")
+    p.node("gh", "external", 385, 44, 305, 64, "GitHub", "github.com/moks-tech/ansible")
     p.node("srv", "service", 385, 220, 305, 104, "The cart server", "downloads the repository, then runs", "roboshop.yml on itself with",
            "-e roboshop_component=cart", "(no control machine needed)")
     p.edge("srv", "gh", a_side="t", b_side="b", label="git clone")

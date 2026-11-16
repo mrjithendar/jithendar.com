@@ -1,7 +1,7 @@
 # Grafana dashboards for jithendar.com
 
 Grafana at `https://jithendar.com/grafana/`, folder **Jithendar.com**. The JSON here is the source; Argo CD's
-`grafana` Application (tools repo, `deploy/minikube/applications/grafana.yaml`; repository `mrjithendar/jithendar.com`, path `grafana` since the site left moks-cms on 2026-11-16, before that moks-cms `sites/jithendar.com/grafana`) turns this folder into the ConfigMap
+`grafana` Application (tools repo, `deploy/minikube/applications/grafana.yaml`; repository `moks-tech/jithendar.com`, path `grafana` since the site left moks-cms on 2026-11-16, before that moks-cms `sites/jithendar.com/grafana`) turns this folder into the ConfigMap
 `monitoring/grafana-dashboards-jithendar`, which Grafana loads read-only.
 
 | Dashboard | uid | What it answers |

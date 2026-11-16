@@ -3,7 +3,7 @@ name: deploy to kubernetes
 # Deploys the whole site from kubernetes/ to the mk4 cluster: the CMS (moks-cms) and the SEO agent run the image tags
 # the manifests name, so moving to a new moks-cms release is a change of tag here (by hand in a pull request, or
 # automatically, below). The site's own files ship in the content image (content.yml), and the practice problems in
-# practice-catalog (mrjithendar/practice-programming, which also deploys the practice executor); the manifests name
+# practice-catalog (moks-tech/practice-programming, which also deploys the practice executor); the manifests name
 # :latest of both. A manifest that names :latest keeps the image a workload already runs
 # (scripts/keep-live-images.py); one that names a tag is applied as written. Moved here from moks-cms on 2026-11-16.
 #
@@ -255,7 +255,7 @@ jobs:
             if [[ $changed -eq 1 ]]; then echo '- Changes applied (see the "Changes" group in the log).'; else echo '- No changes: the cluster already matched.'; fi
             if [[ ${#restarted[@]} -gt 0 ]]; then echo "- Restarted: ${restarted[*]}"; fi
             echo "- Ready: $(paste -sd ' ' "$RUNNER_TEMP/rollouts.txt")"
-            echo '- Not applied by CI: Secrets, ClusterRoles and ClusterRoleBindings, ClusterIssuers, RuntimeClass, admission policies, CronJobs; and for seo-agent also RBAC, ServiceAccounts and quotas. The practice executor deploys from mrjithendar/practice-programming.'
+            echo '- Not applied by CI: Secrets, ClusterRoles and ClusterRoleBindings, ClusterIssuers, RuntimeClass, admission policies, CronJobs; and for seo-agent also RBAC, ServiceAccounts and quotas. The practice executor deploys from moks-tech/practice-programming.'
           } >> "$GITHUB_STEP_SUMMARY"
       # The site is checked even when another workload failed to roll out, so that failure cannot hide a broken site.
       # Cloudflare answers 403 to GitHub-hosted runners, so the app is tested through a port-forward to the site

@@ -58,7 +58,7 @@ def main():
         for other in others:
             if f"/blog/{other}" not in body:
                 failures.append(f"{slug}: no link to {other}")
-        for link in re.findall(r"github\.com/mrjithendar/roboshop-ai/(?:blob|tree)/([0-9a-f]+)", text):
+        for link in re.findall(r"github\.com/moks-tech/roboshop-ai/(?:blob|tree)/([0-9a-f]+)", text):
             if link != PIN:
                 failures.append(f"{slug}: unpinned repository link {link}")
         lowered = body.lower()

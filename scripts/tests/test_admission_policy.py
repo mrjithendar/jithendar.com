@@ -59,7 +59,7 @@ def documents(name: str) -> list[dict]:
 
 
 # Deployments the deployer's Role may patch whose manifests live in another repository: the practice executor's, in
-# mrjithendar/practice-programming (kubernetes/practice-executor-40-executor.yaml), whose CI rolls them out with this
+# moks-tech/practice-programming (kubernetes/practice-executor-40-executor.yaml), whose CI rolls them out with this
 # ServiceAccount. Their specs are checked against these policies there, not here.
 ELSEWHERE = {"practice-executor-api", "practice-dispatcher"}
 
