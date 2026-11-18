@@ -12,7 +12,8 @@
    alone: edit those in Admin → Posts. Nothing is ever published from here.
 
 Images go first, because the site refuses an article whose image it does not have. An article that names a related
-post which is sent in the same run is tried again after the others.
+post which is sent in the same run is tried again after the others. Articles that name each other (A relates to B and
+B to A) are each created without those related posts first, then sent whole, so they end up linked both ways.
 
 The key (Admin → API keys, created by an admin) needs the scopes images:write and posts:draft. A posts:draft key cannot
 publish, schedule or delete, so a leaked CI secret cannot change an article readers see; with images:write it can
@@ -195,26 +196,96 @@ def push_posts(api: Api, files: list[Path], create_only: bool, dry_run: bool) ->
         return report
 
     query = "?mode=create" if create_only else ""
-    # A second round for articles whose related post was created later in the first one.
-    for last_round in (False, True):
-        again: list[tuple[Path, str, str]] = []
+
+    def send(collection: str, slug: str, body: bytes, mode: str) -> tuple[int, dict]:
+        status, payload = api.call("PUT", f"/api/v1/posts/by-path/{collection}/{slug}.mdx{mode}", body, "text/markdown; charset=utf-8")
+        if status == 404 and not payload:
+            raise Stop(f"{api.site} has no /api/v1/posts/by-path: it runs a moks-cms release from before articles could be sent as files")
+        return status, payload
+
+    def answered(collection: str, slug: str, payload: dict, note: str = "") -> None:
+        result = payload.get("data") or {}
+        report["results"].append((result.get("url") or f"/{collection}/{slug}", result.get("action", "?"), note or result.get("reason") or result.get("admin") or ""))
+
+    # Round after round while an article's related post is created later in the run.
+    waiting: list[tuple[Path, str, str, int, dict]] = []
+    while pending:
+        progress = False
+        waiting = []
         for file, collection, slug in pending:
-            status, payload = api.call("PUT", f"/api/v1/posts/by-path/{collection}/{slug}.mdx{query}", file.read_bytes(), "text/markdown; charset=utf-8")
+            status, payload = send(collection, slug, file.read_bytes(), query)
             if status == 200:
-                result = payload.get("data") or {}
-                report["results"].append((result.get("url") or f"/{collection}/{slug}", result.get("action", "?"), result.get("reason") or result.get("admin") or ""))
-                continue
-            if status == 404 and not payload:
-                raise Stop(f"{api.site} has no /api/v1/posts/by-path: it runs a moks-cms release from before articles could be sent as files")
-            issues = (payload.get("error") or {}).get("issues") or [] if isinstance(payload.get("error"), dict) else []
-            if status == 400 and not last_round and any(RELATED_MISSING.match(str(i)) for i in issues):
-                again.append((file, collection, slug))
+                answered(collection, slug, payload)
+                progress = True
+            elif status == 400 and related_missing(payload):
+                waiting.append((file, collection, slug, status, payload))
             else:
                 report["failed"].append((str(file), reason_of(status, payload)))
-        pending = again
-        if not pending:
+        pending = [(file, collection, slug) for file, collection, slug, _, _ in waiting]
+        if not progress:
             break
+
+    # The rest name each other (A relates to B, B to A), so none can go first. Create each without the related posts
+    # that are still waiting, then send the whole file again: the post is now a draft this run made, so it is updated.
+    waiting_refs = {f"{collection}/{slug}" for _, collection, slug in pending}
+    linked: list[tuple[Path, str, str]] = []
+    for file, collection, slug, status, payload in waiting:
+        text = file.read_text(encoding="utf-8")
+        without = drop_related(text, waiting_refs - {f"{collection}/{slug}"})
+        if without == text:
+            report["failed"].append((str(file), reason_of(status, payload)))
+            continue
+        status, payload = send(collection, slug, without.encode("utf-8"), query)
+        if status == 200 and (payload.get("data") or {}).get("action") == "created":
+            linked.append((file, collection, slug))
+        elif status == 200:
+            answered(collection, slug, payload)
+        else:
+            report["failed"].append((str(file), reason_of(status, payload)))
+    for file, collection, slug in linked:
+        status, payload = send(collection, slug, file.read_bytes(), "")
+        if status == 200:
+            answered(collection, slug, {"data": {**(payload.get("data") or {}), "action": "created"}}, "created first without the related posts that name it back, then sent whole")
+        else:
+            report["failed"].append((str(file), "created as a draft without its related posts, then refused: " + reason_of(status, payload)))
     return report
+
+
+def related_missing(payload: dict) -> bool:
+    error = payload.get("error")
+    issues = error.get("issues") or [] if isinstance(error, dict) else []
+    return any(RELATED_MISSING.match(str(i)) for i in issues)
+
+
+def drop_related(text: str, refs: set[str]) -> str:
+    """The article with these refs taken out of `related:` in its front matter (a [a, b] list or one "- a" per line)."""
+    match = re.match(r"---\r?\n(.*?\r?\n)---", text, re.S)
+    if not match or not refs:
+        return text
+    lines = match[1].splitlines(keepends=True)
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        head = re.match(r"related:[ \t]*(.*?)\s*$", lines[i])
+        if not head:
+            out.append(lines[i])
+            i += 1
+            continue
+        i += 1
+        flow = head[1].startswith("[")
+        if flow:
+            items = [s.strip().strip("'\"") for s in head[1].strip("[]").split(",") if s.strip()]
+        else:
+            items = []
+            while i < len(lines) and re.match(r"\s+-\s", lines[i]):
+                items.append(lines[i].split("-", 1)[1].strip().strip("'\""))
+                i += 1
+        kept = [item for item in items if item not in refs]
+        if kept and flow:
+            out.append(f"related: [{', '.join(kept)}]\n")
+        elif kept:
+            out.append("related:\n" + "".join(f"  - {item}\n" for item in kept))
+    return text[: match.start(1)] + "".join(out) + text[match.end(1) :]
 
 
 # --- Report ------------------------------------------------------------------------------------
