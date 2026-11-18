@@ -1,25 +1,27 @@
 name: deploy to kubernetes
 
-# Deploys the whole site from kubernetes/ to the mk4 cluster: the CMS (moks-cms) and the SEO agent run the image tags
-# the manifests name, so moving to a new moks-cms release is a change of tag here (by hand in a pull request, or
-# automatically, below). site.json and config/ are ConfigMap jithendar-com-site (kubernetes/kustomization.yaml), so a
-# change to them is deployed here too and rolls the site. Articles and images never pass through here: content.yml
-# pushes them through the site's API. The practice problems ship in practice-catalog (moks-tech/practice-programming,
-# which also deploys the practice executor); the manifests name its :latest. A manifest that names :latest keeps the image a workload already runs
-# (scripts/keep-live-images.py); one that names a tag is applied as written. Moved here from moks-cms on 2026-11-16.
+# Deploys the whole site from kubernetes/ to the mk4 cluster: the CMS (moks-cms) and the SEO agent. Every manifest
+# names :latest with imagePullPolicy Always, so a deploy is "apply, then restart": a restarted Deployment pulls the
+# newest :latest. The CMS rolls one pod at a time (maxSurge 1, maxUnavailable 0: no downtime); the SEO agent is one
+# pod with strategy Recreate (its flow runs are in-process, two pods at once would fail each other's runs), so it is
+# away for the few seconds its new pod takes to start. site.json and config/ are ConfigMap jithendar-com-site
+# (kubernetes/kustomization.yaml), so a change to them is deployed here too and rolls the site. Articles and images
+# never pass through here: content.yml pushes them through the site's API. The practice problems ship in
+# practice-catalog (moks-tech/practice-programming, which also deploys the practice executor).
 #
-# bump   → repository_dispatch "moks-cms-released" {component, tag}, sent by moks-cms's CI after it pushes an image
-#          (its scripts/notify-sites.sh): put the tag in the manifests (www → moks-cms in 30-jithendar-com.yaml,
-#          seo-agent → seo-agent-*.yaml), commit it to master as
-#          github-actions[bot], then plan and deploy that commit as below.
-#
-# plan   → pull requests touching the manifests (and manual runs): render the three groups of kubernetes/
-#          (scripts/manifests.sh), keep the objects CI applies (scripts/ci-app-manifests.py), list the rest.
-#          No cluster access.
-# deploy → when such a pull request is merged into the default branch, or a manual run on it (never a plain
-#          push: there is no `push` trigger), only when repository variable MINIKUBE_DEPLOY is "true":
-#          server-side dry run, diff, apply, restart what needs it, wait for every Deployment and StatefulSet,
-#          smoke-test the site.
+# When it deploys (only when repository variable MINIKUBE_DEPLOY is "true"):
+#   release    → repository_dispatch "moks-cms-released" {component, tag}, sent by moks-cms's CI after it pushes
+#                :latest (its scripts/notify-sites.sh): apply, restart that component (www → deployment/jithendar-com,
+#                seo-agent → deployment/seo-agent). The SEO agent's CronJobs pull :latest at their next run.
+#   manual run → Actions → deploy to kubernetes → Run workflow, on the default branch: apply, restart the CMS and the
+#                SEO agent.
+#   merged PR  → a pull request touching the manifests merged into the default branch: apply; a changed ConfigMap
+#                restarts its group's Deployments.
+# Each deploy: server-side dry run, diff, apply, restart, wait for every Deployment and StatefulSet, smoke-test the site.
+# plan → pull requests touching the manifests (and every deploy): render the groups of kubernetes/
+#        (scripts/manifests.sh), keep the objects CI applies (scripts/ci-app-manifests.py), list the rest. No cluster access.
+# Rollback: moks-cms also pushes pr-<number>; `kubectl -n jithendar set image deployment/jithendar-com
+# jithendar-com=registry.jithendar.com/jithendar/moks-cms:pr-<n>` runs an earlier release until the next deploy.
 #
 # What CI applies, all in namespace jithendar:
 #   site               everything in kubernetes/kustomization.yaml except Secrets and cluster-wide RBAC: the
@@ -31,11 +33,6 @@ name: deploy to kubernetes
 # Never applied by CI: Secrets, ClusterRoles and ClusterRoleBindings, ClusterIssuers, the RuntimeClass, admission
 # policies, CronJobs. Nothing is ever deleted (no --prune).
 #
-# Manual run (Actions → deploy to kubernetes → Run workflow, on the default branch) is the old `./deploy.sh`: apply
-# everything, restart the site on the image it runs (input restart_site, on by default), wait, smoke-test. To put
-# another CMS release on the site, change its tag in kubernetes/30-jithendar-com.yaml; `kubectl set image` to an earlier
-# tag is a rollback until the next apply.
-#
 # Cluster access: ServiceAccount jithendar/github-ci-applier (kubernetes/85-ci-applier.yaml), kubeconfig template
 # .github/jithendar-ci-applier.yaml, values MK4_API_SERVER, MK4_CA_DATA (variables, shared with the deployer) and
 # MK4_CI_APPLY_TOKEN (secret), set by scripts/setup-ci-applier.sh, which also sets MINIKUBE_DEPLOY. Run that script
@@ -45,11 +42,6 @@ on:
   repository_dispatch:
     types: [moks-cms-released]
   workflow_dispatch:
-    inputs:
-      restart_site:
-        description: 'Restart the site after applying (it keeps the image it runs)'
-        type: boolean
-        default: true
   pull_request:
     types: [opened, synchronize, reopened, closed]
     paths:
@@ -71,48 +63,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  bump:
-    if: github.event_name == 'repository_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    outputs:
-      sha: ${{ steps.bump.outputs.sha }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Put the new tag in the manifests
-        id: bump
-        env:
-          COMPONENT: ${{ github.event.client_payload.component }}
-          TAG: ${{ github.event.client_payload.tag }}
-          REVISION: ${{ github.event.client_payload.revision }}
-        run: |
-          set -euo pipefail
-          case "$COMPONENT" in
-            www) image=moks-cms files=(kubernetes/30-jithendar-com.yaml) ;;
-            seo-agent) image=seo-agent files=(kubernetes/seo-agent-*.yaml) ;;
-            *) echo "::error::Unknown component: $COMPONENT"; exit 1 ;;
-          esac
-          [[ "$TAG" =~ ^(pr|manual)-[0-9]+$ ]] || { echo "::error::Not a moks-cms release tag: $TAG"; exit 1; }
-          # Another component's run may push at the same moment: on a rejected push, start again from the new master.
-          for attempt in 1 2 3 4 5; do
-            git fetch --quiet origin master && git checkout --quiet -B master origin/master
-            sed -i -E "s#(registry\.jithendar\.com/jithendar/$image):[A-Za-z0-9._-]+#\1:$TAG#g" "${files[@]}"
-            if git diff --quiet; then echo "The manifests already name $image:$TAG"; break; fi
-            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-              commit --quiet -am "chore(kubernetes): $image $TAG" -m "moks-cms commit ${REVISION:-unknown}"
-            git push --quiet origin HEAD:master && break
-            [[ $attempt -lt 5 ]] || { echo "::error::Could not push the new tag after 5 attempts"; exit 1; }
-            sleep $((attempt * 3))
-          done
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo "- $image → \`$TAG\` (commit \`$(git rev-parse --short HEAD)\`)" >> "$GITHUB_STEP_SUMMARY"
-
   plan:
-    needs: bump
     if: >-
-      !cancelled() && (needs.bump.result == 'success' || needs.bump.result == 'skipped') &&
       (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'closed' || github.event.pull_request.merged == true)))
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -120,9 +72,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # A merged pull request is built from its merge commit on the default branch; a dispatch from the commit
-          # `bump` made.
-          ref: ${{ needs.bump.outputs.sha || (github.event.action == 'closed' && github.event.pull_request.merge_commit_sha) || '' }}
+          # A merged pull request is built from its merge commit on the default branch.
+          ref: ${{ (github.event.action == 'closed' && github.event.pull_request.merge_commit_sha) || '' }}
       - uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
         with:
           version: v1.35.0
@@ -142,7 +93,7 @@ jobs:
           done
 
   deploy:
-    needs: [bump, plan]
+    needs: plan
     if: >-
       !cancelled() && needs.plan.result == 'success' && vars.MINIKUBE_DEPLOY == 'true' && (
         github.event_name == 'repository_dispatch' ||
@@ -159,9 +110,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # A merged pull request is built from its merge commit on the default branch; a dispatch from the commit
-          # `bump` made.
-          ref: ${{ needs.bump.outputs.sha || (github.event.action == 'closed' && github.event.pull_request.merge_commit_sha) || '' }}
+          # A merged pull request is built from its merge commit on the default branch.
+          ref: ${{ (github.event.action == 'closed' && github.event.pull_request.merge_commit_sha) || '' }}
       - uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
         with:
           version: v1.35.0
@@ -182,7 +132,8 @@ jobs:
       - name: Apply to mk4
         id: apply
         env:
-          RESTART_SITE: ${{ github.event_name == 'workflow_dispatch' && inputs.restart_site }}
+          EVENT: ${{ github.event_name }}
+          COMPONENT: ${{ github.event.client_payload.component }}
           MK4_API_SERVER: ${{ vars.MK4_API_SERVER }}
           MK4_CA_DATA: ${{ vars.MK4_CA_DATA }}
           MK4_CI_APPLY_TOKEN: ${{ secrets.MK4_CI_APPLY_TOKEN }}
@@ -195,15 +146,6 @@ jobs:
           trap 'rm -f "$KUBECONFIG"' EXIT
           (umask 077; perl -pe 's/\$\{(MK4_[A-Z_]+)\}/$ENV{$1}/g' .github/jithendar-ci-applier.yaml > "$KUBECONFIG")
           groups=(site seo-agent)
-
-          # The image workflows decide what each workload runs (pr-<number>, or an earlier one after a rollback); the
-          # manifests name :latest only so that a first apply has something to start. Without this step every
-          # manifest change would roll the workloads back onto :latest.
-          kubectl get deployments,statefulsets -o json > "$RUNNER_TEMP/live.json"
-          for g in "${groups[@]}"; do
-            python scripts/keep-live-images.py "$RUNNER_TEMP/live.json" < "$RUNNER_TEMP/$g.yaml" > "$RUNNER_TEMP/$g.live.yaml"
-            mv "$RUNNER_TEMP/$g.live.yaml" "$RUNNER_TEMP/$g.yaml"
-          done
 
           # Every object must pass the API server's validation and admission before anything changes.
           for g in "${groups[@]}"; do
@@ -236,11 +178,20 @@ jobs:
               done < "$RUNNER_TEMP/$g.rollouts"
             fi
           done
-          # A manual run is the old ./deploy.sh: restart the site. It comes back on the image it was running.
-          if [[ "$RESTART_SITE" == "true" && ! " ${restarted[*]} " == *" deployment/jithendar-com "* ]]; then
-            kubectl rollout restart deployment/jithendar-com
-            restarted+=("deployment/jithendar-com")
-          fi
+          # A restart pulls the newest :latest (imagePullPolicy Always). A release restarts what was released, a
+          # manual run both.
+          case "$EVENT:$COMPONENT" in
+            repository_dispatch:www) release=(deployment/jithendar-com) ;;
+            repository_dispatch:seo-agent) release=(deployment/seo-agent) ;;
+            repository_dispatch:*) echo "::error::Unknown component: $COMPONENT"; exit 1 ;;
+            workflow_dispatch:*) release=(deployment/jithendar-com deployment/seo-agent) ;;
+            *) release=() ;;
+          esac
+          for workload in "${release[@]}"; do
+            [[ " ${restarted[*]} " == *" $workload "* ]] && continue
+            kubectl rollout restart "$workload"
+            restarted+=("$workload")
+          done
 
           failed=0
           while read -r workload; do

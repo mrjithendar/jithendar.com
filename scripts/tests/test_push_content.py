@@ -131,6 +131,10 @@ class PushContent(unittest.TestCase):
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_bytes(data)
 
+    def image_files(self) -> list[str]:
+        """Every file under public/images/, as CI names the images a push added or changed."""
+        return [str(f) for f in sorted(self.images.rglob("*")) if f.is_file()]
+
     def write_post(self, collection: str, slug: str, body: str = "Body.", related: str = "") -> str:
         file = self.root / "content" / collection / f"{slug}.mdx"
         file.parent.mkdir(parents=True, exist_ok=True)
@@ -146,7 +150,7 @@ class PushContent(unittest.TestCase):
     # --- images ---
 
     def test_sends_every_image_once_and_only_changed_ones_afterwards(self) -> None:
-        first = self.run_script()
+        first = self.run_script(*self.image_files())
         self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
         self.assertIn("**Images:** 3 new, 0 replaced, 0 unchanged, 0 refused.", first.stdout)
         self.assertIn("Not sent (not an image type): `aws-vpc/notes.txt`", first.stdout)
@@ -154,14 +158,14 @@ class PushContent(unittest.TestCase):
         self.assertEqual(self.site.images["/images/cover.jpg"], hashlib.sha256(b"\xff\xd8\xff cover").hexdigest())
 
         sent = self.site.count("PUT", "/api/v1/images/")
-        second = self.run_script()
+        second = self.run_script(*self.image_files())
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertIn("**Images:** 0 new, 0 replaced, 3 unchanged, 0 refused.", second.stdout)
         self.assertEqual(self.site.count("PUT", "/api/v1/images/"), sent, "unchanged files are not sent again")
 
         self.write_image("cover.jpg", b"\xff\xd8\xff another cover")
         self.write_image("new/diagram.svg", b"<svg>two</svg>")
-        third = self.run_script()
+        third = self.run_script(*self.image_files())
         self.assertIn("**Images:** 1 new, 1 replaced, 2 unchanged, 0 refused.", third.stdout)
         self.assertIn("- New: `/images/new/diagram.svg`", third.stdout)
         self.assertIn("- Replaced: `/images/cover.jpg`", third.stdout)
@@ -169,7 +173,7 @@ class PushContent(unittest.TestCase):
 
     def test_reports_a_refused_image_and_still_sends_the_others(self) -> None:
         self.write_image("bad.svg", b"<svg><script>alert(1)</script></svg>")
-        result = self.run_script()
+        result = self.run_script(*self.image_files())
         self.assertEqual(result.returncode, 1)
         self.assertIn("**Images:** 3 new, 0 replaced, 0 unchanged, 1 refused.", result.stdout)
         self.assertIn("Refused `/images/bad.svg`: /images/bad.svg: SVG files with a <script> element are not accepted.", result.stdout)
@@ -177,19 +181,25 @@ class PushContent(unittest.TestCase):
 
     def test_waits_and_carries_on_when_the_site_says_slow_down(self) -> None:
         self.site.throttle = 2
-        result = self.run_script()
+        result = self.run_script(*self.image_files())
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(self.site.images), 3)
 
-    def test_says_which_images_are_no_longer_in_the_repository(self) -> None:
-        self.site.images["/images/old/removed.png"] = "0" * 64
-        result = self.run_script()
-        self.assertEqual(result.returncode, 0)
-        self.assertIn("1 image(s) are on the site but no longer in this repository; they are left there.", result.stdout)
-        self.assertIn("/images/old/removed.png", self.site.images)
+    def test_sends_only_the_images_the_articles_use(self) -> None:
+        post = self.write_post("blog", "vpc", "![VPC](/images/aws-vpc/01-what-is-a-vpc.svg) and <img src=\"/images/cover.jpg\" />. Not here: /images/missing.png")
+        result = self.run_script(post)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(sorted(self.site.images), ["/images/aws-vpc/01-what-is-a-vpc.svg", "/images/cover.jpg"])
+        self.assertIn("**Images:** 2 new, 0 replaced, 0 unchanged, 0 refused.", result.stdout)
+
+        plain = self.write_post("blog", "no-images")
+        listed = self.site.count("GET", "/api/v1/images")
+        result = self.run_script(plain)
+        self.assertIn("**Images:** 0 new, 0 replaced, 0 unchanged, 0 refused.", result.stdout)
+        self.assertEqual(self.site.count("GET", "/api/v1/images"), listed, "no images to send: the site's list is not asked for")
 
     def test_dry_run_sends_nothing(self) -> None:
-        post = self.write_post("blog", "first-post")
+        post = self.write_post("blog", "first-post", "![a](/images/cover.jpg) ![b](/images/aws-vpc/01-what-is-a-vpc.png) /images/aws-vpc/01-what-is-a-vpc.svg")
         result = self.run_script("--dry-run", post)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("(dry run: nothing was sent)", result.stdout)
@@ -263,7 +273,7 @@ class PushContent(unittest.TestCase):
         self.assertNotIn("blog/loop-a", self.site.posts)
 
     def test_sends_images_before_articles_and_only_article_files(self) -> None:
-        post = self.write_post("news", "a-story")
+        post = self.write_post("news", "a-story", "![a](/images/cover.jpg) ![b](/images/aws-vpc/01-what-is-a-vpc.png) ![c](/images/aws-vpc/01-what-is-a-vpc.svg)")
         page = self.root / "content" / "pages" / "about.mdx"
         page.parent.mkdir(parents=True)
         page.write_text("---\ntitle: About\n---\n", encoding="utf-8")
@@ -290,12 +300,12 @@ class PushContent(unittest.TestCase):
         self.assertEqual(plain.returncode, 2)
         self.assertIn("the key is only ever sent over https", plain.stderr)
 
-        wrong = self.run_script(key="jk_wrong")
+        wrong = self.run_script(*self.image_files(), key="jk_wrong")
         self.assertEqual(wrong.returncode, 2)
         self.assertIn("refused to list its images: Invalid, expired or revoked API key.", wrong.stderr)
 
         self.site.has_api = False
-        old = self.run_script()
+        old = self.run_script(*self.image_files())
         self.assertEqual(old.returncode, 2)
         self.assertIn("has no /api/v1/images", old.stderr)
         self.assertEqual(self.site.count("PUT", "/"), 0)
