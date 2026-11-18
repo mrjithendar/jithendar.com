@@ -240,6 +240,28 @@ class PushContent(unittest.TestCase):
         self.assertIn('related: "blog/never-written" does not exist', refused.stdout)
         self.assertNotIn("blog/c-third", self.site.posts)
 
+    def test_creates_articles_that_name_each_other_and_links_them_both_ways(self) -> None:
+        for mode in ((), ("--create-only",)):
+            with self.subTest(mode=mode):
+                self.site.posts.clear()
+                a = self.write_post("blog", "crew-a", related="blog/crew-b, blog/kept")
+                b = self.write_post("blog", "crew-b", related="blog/crew-a")
+                kept = self.write_post("blog", "kept")
+                result = self.run_script("--no-images", *mode, a, b, kept)
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                self.assertIn("**Articles:** 3 answered, 0 refused.", result.stdout)
+                self.assertIn("related: [blog/crew-b, blog/kept]", self.site.posts["blog/crew-a"]["body"])
+                self.assertIn("related: [blog/crew-a]", self.site.posts["blog/crew-b"]["body"])
+                self.assertIn("created first without the related posts", result.stdout)
+
+    def test_a_cycle_with_a_post_that_is_not_in_the_run_is_still_refused(self) -> None:
+        a = self.write_post("blog", "loop-a", related="blog/loop-b, blog/never-written")
+        b = self.write_post("blog", "loop-b", related="blog/loop-a")
+        result = self.run_script("--no-images", a, b)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('related: "blog/never-written" does not exist', result.stdout)
+        self.assertNotIn("blog/loop-a", self.site.posts)
+
     def test_sends_images_before_articles_and_only_article_files(self) -> None:
         post = self.write_post("news", "a-story")
         page = self.root / "content" / "pages" / "about.mdx"
