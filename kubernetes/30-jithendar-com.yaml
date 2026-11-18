@@ -29,37 +29,7 @@ spec:
         app.kubernetes.io/part-of: jithendar-com
     spec:
       automountServiceAccountToken: false
-      # Everything that is this site and not the CMS ships in its own image, jithendar-com-content (Dockerfile.content,
-      # .github/workflows/content.yml): the articles, the images, site.json and config/. The web container runs the
-      # moks-cms image, which reads all of them at run time. This init container copies them into the emptyDirs that
-      # the web container mounts over /app/content, /app/public/images and /app/site; a rollout restart pulls the
-      # newest :latest of the content image.
       initContainers:
-      - name: content
-        image: registry.jithendar.com/jithendar/jithendar-com-content:latest
-        imagePullPolicy: Always
-        # cp -R: -a would try to set owner/mode/times on the emptyDir mount point itself and log "can't preserve" (Dockerfile.content)
-        command: ["sh", "-c", "cp -R /content/. /mnt/content/ && cp -R /images/. /mnt/images/ && cp -R /site/. /mnt/site/"]
-        resources:
-          limits:
-            cpu: 200m
-            memory: 64Mi
-          requests:
-            cpu: 10m
-            memory: 16Mi
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-            - ALL
-          readOnlyRootFilesystem: true
-        volumeMounts:
-        - mountPath: "/mnt/content"
-          name: content
-        - mountPath: "/mnt/images"
-          name: images
-        - mountPath: "/mnt/site"
-          name: site
       # The Python practice problems: the catalog that moks-tech/practice-programming builds and pushes as
       # practice-catalog:latest (its CI restarts this Deployment when the catalog changes). moks-cms seeds new and
       # changed problems from PRACTICE_CATALOG_PATH when it starts.
@@ -218,14 +188,17 @@ spec:
           name: tmp
         - mountPath: "/app/.next/cache"
           name: next-cache
-        # Filled by init container "content"; they shadow the test fixture site's copies baked into the moks-cms image.
+        # Articles live in Postgres and /images/… in R2, both pushed through the site's API (scripts/push-content.py,
+        # .github/workflows/content.yml). These two stay mounted, empty, only so the test fixture site baked into the
+        # moks-cms image is never served or imported as drafts at start (lib/bundled-posts.ts).
         - mountPath: "/app/content"
           name: content
           readOnly: true
         - mountPath: "/app/public/images"
           name: images
           readOnly: true
-        # site.json and config/ (moks-cms src/config/site-files.ts reads them from /app/site at server start).
+        # site.json and config/ from ConfigMap jithendar-com-site (kustomization.yaml generates it from the files at the
+        # repository root; moks-cms src/config/site-files.ts reads them from /app/site at server start).
         - mountPath: "/app/site"
           name: site
           readOnly: true
@@ -266,13 +239,24 @@ spec:
           sizeLimit: 256Mi
         name: next-cache
       - emptyDir:
-          sizeLimit: 64Mi
+          sizeLimit: 1Mi
         name: content
       - emptyDir:
-          sizeLimit: 256Mi
-        name: images
-      - emptyDir:
           sizeLimit: 1Mi
+        name: images
+      # Keys are flat (a ConfigMap key cannot hold "/"): config.<name>.json is config/<name>.json. A new file in config/
+      # needs an entry here and in kustomization.yaml.
+      - configMap:
+          name: jithendar-com-site
+          items:
+          - key: site.json
+            path: site.json
+          - key: config.gone.json
+            path: config/gone.json
+          - key: config.hire-me-profile.json
+            path: config/hire-me-profile.json
+          - key: config.redirects.json
+            path: config/redirects.json
         name: site
       - emptyDir:
           sizeLimit: 16Mi
