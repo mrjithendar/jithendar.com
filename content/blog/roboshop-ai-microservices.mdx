@@ -2,6 +2,7 @@
 title: "RoboShop AI microservices architecture: service boundaries, request flows and trade-offs"
 slug: roboshop-ai-microservices
 description: "How RoboShop AI splits a demo store into services: three real request flows, what each boundary buys, what it costs, and when a monolith would be simpler."
+seoTitle: "RoboShop AI Microservices: Boundaries, Flows, Trade-offs"
 author: jithendar-dharmapuri
 category: devops-sre
 tags: [Microservices, Kubernetes, Amazon EKS, MCP, RabbitMQ, Istio]
@@ -21,7 +22,7 @@ This article follows three kinds of request through the system: a product page, 
 ## Where it runs
 
 :::callout{type="info" title="Checked on 2026-11-01"}
-The shop runs on a two-node Amazon EKS cluster at [eks.jithendar.com/roboshop](https://eks.jithendar.com/roboshop/). It moved from a Minikube lab, whose RoboShop namespace is gone. Every application Deployment runs one replica. The Moks assistant is **not deployed** on this cluster, so chat fails while shopping works. Sidecars are in place, but mTLS is permissive and mesh policies are in dry run. The [deployment guide](/blog/deploy-roboshop-ai-amazon-eks) has the details.
+When this article was written (29 October 2026), the shop ran on a two-node Amazon EKS cluster at eks.jithendar.com/roboshop, after moving from a Minikube lab. Every application Deployment ran one replica, the Moks assistant was **not deployed** there (chat failed while shopping worked), and mTLS was permissive with mesh policies in dry run. The EKS cluster was deleted on 2 November 2026, and the shop runs on mk4 again (a self-managed k3s cluster on Hetzner Cloud since 10 November), delivered by Argo CD with STRICT mTLS; [Inside RoboShop AI](/blog/roboshop-ai-microservices-architecture) describes that setup. The [deployment guide](/blog/deploy-roboshop-ai-amazon-eks) has the details.
 :::
 
 ## From Robot Shop to RoboShop AI

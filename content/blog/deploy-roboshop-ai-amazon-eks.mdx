@@ -2,6 +2,7 @@
 title: "Deploy a microservices app on Amazon EKS with Terraform, Argo CD and Istio"
 slug: deploy-roboshop-ai-amazon-eks
 description: "A checked EKS walkthrough from RoboShop AI: Terraform, a remote Argo CD hub, an NLB in front of Istio, a safe mesh rollout, failure modes and teardown."
+seoTitle: "Deploy Microservices on EKS with Terraform, Argo CD, Istio"
 author: jithendar-dharmapuri
 category: kubernetes
 tags: [Amazon EKS, Terraform, Argo CD, Istio, AWS Load Balancer Controller, cert-manager, Runbook]
@@ -14,17 +15,17 @@ related: [blog/roboshop-ai-eks-system-design, blog/roboshop-ai-microservices, pr
 
 Moving a multi-service application from a single server to Amazon EKS rarely fails on the big decisions. It fails on ordering. A Certificate synced before its issuer exists, a sidecar that arrives after the pod started, or a security policy enforced before anyone has seen real traffic can each take the shop down, and none of them looks like the cause when you first read the error.
 
-This guide walks through the order that took [RoboShop AI](/projects/roboshop-ai), a personal demo store, onto EKS: the AWS layer in Terraform, a remote Argo CD hub, an NLB in front of Istio, and the workloads. Each step says what to check before moving on. The design reasons are in [RoboShop AI on Amazon EKS: system design](/blog/roboshop-ai-eks-system-design).
+This guide walks through the order that took [RoboShop AI](/projects/roboshop-ai), a personal demo store I built, onto EKS: the AWS layer in Terraform, a remote Argo CD hub, an NLB in front of Istio, and the workloads. Each step says what to check before moving on. The design reasons are in [RoboShop AI on Amazon EKS: system design](/blog/roboshop-ai-eks-system-design).
 
 ::toc
 
 ## What is running, and what is not
 
-This list was checked against the cluster on 2026-11-01. The earlier version of this article described Gatekeeper, KEDA and Karpenter. They were a design for a larger stack, they are not on this cluster, and this version no longer covers them.
+This list was checked against the cluster on 2026-11-01. The cluster was deleted the next day, 2 November 2026, and RoboShop AI runs on the self-managed k3s cluster again, so the table records the state the guide was tested in, not a live service. The earlier version of this article described Gatekeeper, KEDA and Karpenter. They were a design for a larger stack, they are not on this cluster, and this version no longer covers them.
 
 | State | What |
 | --- | --- |
-| **Running** | EKS 1.36.5 with two `t4g.large` nodes, Istio 1.30.7, the NLB, a Let's Encrypt certificate and 14 RoboShop workloads, each with a sidecar. The shop answers at [eks.jithendar.com/roboshop](https://eks.jithendar.com/roboshop/). |
+| **Running** | EKS 1.36.5 with two `t4g.large` nodes, Istio 1.30.7, the NLB, a Let's Encrypt certificate and 14 RoboShop workloads, each with a sidecar. The shop answered at eks.jithendar.com/roboshop. |
 | **Rehearsal only** | mTLS is `PERMISSIVE`, and all 15 AuthorizationPolicies are in dry run. Nothing is being denied yet. |
 | **Not deployed** | The Moks shopping assistant. Its Application is not registered, so chat returns 502 while the rest of the shop works. |
 | **Not done yet** | The switch to `STRICT` and enforcement in step 8, and moving `jithendar.com` itself to this cluster. |

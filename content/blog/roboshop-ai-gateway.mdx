@@ -27,13 +27,15 @@ sources:
     url: https://www.w3.org/TR/trace-context/
     publisher: W3C
 ---
-<Todo>Draft for review, written against roboshop-ai commit c81e85a on 2026-11-01. Excerpt: "The RoboShop AI gateway never calls a model. It decides who may ask, which provider is allowed, what the agent may see, and how long everyone waits. Here is how that works, and how to debug it." Primary keyword: AI gateway architecture. Secondary: AI gateway vs API gateway, LLM gateway, rate limiting AI requests, FastAPI gateway. Before publishing: (1) confirm the chat rate-limit finding below on a running cluster and fix it or keep the warning; (2) re-run the debugging commands so their output is current; (3) read sites/jithendar.com/docs/knowledge-sharing/roboshop-ai/editorial-review.md.</Todo>
+<Todo>Draft for review, written against roboshop-ai commit c81e85a on 2026-11-01. Excerpt: "The RoboShop AI gateway never calls a model. It decides who may ask, which provider is allowed, what the agent may see, and how long everyone waits. Here is how that works, and how to debug it." Primary keyword: AI gateway architecture. Secondary: AI gateway vs API gateway, LLM gateway, rate limiting AI requests, FastAPI gateway. Before publishing: (1) confirm the chat rate-limit finding below on a running cluster and fix it or keep the warning; (2) re-run the debugging commands so their output is current; (3) read docs/knowledge-sharing/roboshop-ai/editorial-review.md.</Todo>
 
 The RoboShop AI gateway is the one service every API request passes through. It authenticates callers, owns the order ledger, stores the active LLM configuration and admits chat requests to the shopping agent. It does not call a language model. There is no model SDK in its dependencies, and that is the first thing to understand about it.
 
 Many products sold as "AI gateways" are proxies that sit in front of model providers, adding keys, caching and token budgets. `services/ai-gateway` is a different thing. It is the store's public API with an AI control plane attached. All inference happens in [Moks](/blog/roboshop-ai-shopping-agent), and the gateway's job is to decide whether Moks gets called, with what, and for how long.
 
 This article assumes you have the shape of the system from the [architecture overview](/blog/roboshop-ai-architecture). It describes [commit c81e85a](https://github.com/mrjithendar/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/ai-gateway).
+
+[RoboShop AI](/projects/roboshop-ai) is a demo store I built, so this article describes my own code.
 
 ::toc
 
