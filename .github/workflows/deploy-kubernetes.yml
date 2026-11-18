@@ -13,10 +13,11 @@ name: deploy to kubernetes
 #   release    → repository_dispatch "moks-cms-released" {component, tag}, sent by moks-cms's CI after it pushes
 #                :latest (its scripts/notify-sites.sh): apply, restart that component (www → deployment/jithendar-com,
 #                seo-agent → deployment/seo-agent). The SEO agent's CronJobs pull :latest at their next run.
-#   manual run → Actions → deploy to kubernetes → Run workflow, on the default branch: apply, restart the CMS and the
-#                SEO agent.
-#   merged PR  → a pull request touching the manifests merged into the default branch: apply; a changed ConfigMap
-#                restarts its group's Deployments.
+#   manual run → Actions → deploy to kubernetes → Run workflow, on the default branch: apply, restart every
+#                Deployment it applies (the CMS and the SEO agent).
+#   merged PR  → a pull request touching the manifests merged into the default branch: the same as a manual run.
+# A changed ConfigMap also restarts its group's Deployments. A Deployment is restarted only if it exists in namespace
+# jithendar; a missing one is skipped with a warning.
 # Each deploy: server-side dry run, diff, apply, restart, wait for every Deployment and StatefulSet, smoke-test the site.
 # plan → pull requests touching the manifests (and every deploy): render the groups of kubernetes/
 #        (scripts/manifests.sh), keep the objects CI applies (scripts/ci-app-manifests.py), list the rest. No cluster access.
@@ -166,31 +167,35 @@ jobs:
 
           for g in "${groups[@]}"; do kubectl apply -f "$RUNNER_TEMP/$g.yaml"; done
 
-          # Pods read a ConfigMap only when they start (envFrom), so a changed ConfigMap restarts its group's
+          # A restart pulls the newest :latest (imagePullPolicy Always). A manual run or a merged pull request
+          # restarts every Deployment it applies; a release only the component that was released.
+          ns=jithendar
+          case "$EVENT:$COMPONENT" in
+            repository_dispatch:www) wanted=(deployment/jithendar-com) ;;
+            repository_dispatch:seo-agent) wanted=(deployment/seo-agent) ;;
+            repository_dispatch:*) echo "::error::Unknown component: $COMPONENT"; exit 1 ;;
+            *) mapfile -t wanted < <(grep '^deployment/' "$RUNNER_TEMP/rollouts.txt" || true) ;;
+          esac
+          # Pods read a ConfigMap only when they start (envFrom), so a changed ConfigMap also restarts its group's
           # Deployments; otherwise the new values would wait for the next image release.
-          restarted=()
           for g in "${groups[@]}"; do
             if grep -qE '^(diff|---|\+\+\+) .*\.ConfigMap\.' "$RUNNER_TEMP/$g.diff"; then
-              while read -r workload; do
-                [[ "$workload" == deployment/* ]] || continue
-                kubectl rollout restart "$workload"
-                restarted+=("$workload")
-              done < "$RUNNER_TEMP/$g.rollouts"
+              mapfile -t -O "${#wanted[@]}" wanted < <(grep '^deployment/' "$RUNNER_TEMP/$g.rollouts" || true)
             fi
           done
-          # A restart pulls the newest :latest (imagePullPolicy Always). A release restarts what was released, a
-          # manual run both.
-          case "$EVENT:$COMPONENT" in
-            repository_dispatch:www) release=(deployment/jithendar-com) ;;
-            repository_dispatch:seo-agent) release=(deployment/seo-agent) ;;
-            repository_dispatch:*) echo "::error::Unknown component: $COMPONENT"; exit 1 ;;
-            workflow_dispatch:*) release=(deployment/jithendar-com deployment/seo-agent) ;;
-            *) release=() ;;
-          esac
-          for workload in "${release[@]}"; do
-            [[ " ${restarted[*]} " == *" $workload "* ]] && continue
-            kubectl rollout restart "$workload"
-            restarted+=("$workload")
+          # Restart a Deployment only if it exists in the namespace. --ignore-not-found prints nothing for a missing
+          # one (skipped with a warning); any other error (forbidden, unreachable) still fails the run.
+          restarted=(); skipped=()
+          for workload in "${wanted[@]}"; do
+            [[ " ${restarted[*]} ${skipped[*]} " == *" $workload "* ]] && continue
+            found=$(kubectl -n "$ns" get "$workload" --ignore-not-found -o name)
+            if [[ -n "$found" ]]; then
+              kubectl -n "$ns" rollout restart "$workload"
+              restarted+=("$workload")
+            else
+              echo "::warning::$workload does not exist in namespace $ns; not restarted"
+              skipped+=("$workload")
+            fi
           done
 
           failed=0
@@ -207,7 +212,8 @@ jobs:
           {
             echo '### Applied to mk4'
             if [[ $changed -eq 1 ]]; then echo '- Changes applied (see the "Changes" group in the log).'; else echo '- No changes: the cluster already matched.'; fi
-            if [[ ${#restarted[@]} -gt 0 ]]; then echo "- Restarted: ${restarted[*]}"; fi
+            if [[ ${#restarted[@]} -gt 0 ]]; then echo "- Restarted in $ns: ${restarted[*]}"; fi
+            if [[ ${#skipped[@]} -gt 0 ]]; then echo "- Not restarted (not found in $ns): ${skipped[*]}"; fi
             echo "- Ready: $(paste -sd ' ' "$RUNNER_TEMP/rollouts.txt")"
             echo '- Not applied by CI: Secrets, ClusterRoles and ClusterRoleBindings, ClusterIssuers, RuntimeClass, admission policies, CronJobs; and for seo-agent also RBAC, ServiceAccounts and quotas. The practice executor deploys from moks-tech/practice-programming.'
           } >> "$GITHUB_STEP_SUMMARY"
