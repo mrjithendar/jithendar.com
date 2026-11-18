@@ -10,6 +10,7 @@ Grafana at `https://jithendar.com/grafana/`, folder **Jithendar.com**. The JSON 
 | **Jithendar.com · Overview** | `jithendar-com-overview` | Traffic, latency, site counters (posts, comments, jobs), runtime |
 | **Jithendar.com · Logs** | `jithendar-com-logs` | Log volume, top events, errors by type, raw lines |
 | **Jithendar.com · SEO** | `jithendar-com-seo` | SEO intelligence platform: GSC/GA4 sync health, Google API errors, recommendations, LLM usage, SEO log lines |
+| **Jithendar.com · CrewAI** | `jithendar-com-crewai` | The SEO agent's CrewAI flows, crews, tasks and tool calls: results, durations, tokens and cost, failed tool calls, and one run's trace and log lines (click a trace id) |
 
 ## Data sources (provisioned by tools, `deploy/minikube/observability/grafana/values.yaml`)
 
