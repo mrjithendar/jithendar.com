@@ -33,6 +33,8 @@ class Site:
         self.requests: list[tuple[str, str]] = []
         self.throttle = 0  # answer this many requests with 429 first
         self.has_api = True
+        self.staged: dict[str, bytes] = {}
+        self.storage_auth: list[str | None] = []
 
     def count(self, method: str, prefix: str) -> int:
         return sum(1 for m, p in self.requests if m == method and p.startswith(prefix))
@@ -60,6 +62,13 @@ def handler_for(site: Site):
             site.requests.append((self.command, url.path))
             if not site.has_api:
                 return self.answer(404)
+            # The presigned storage URL: no API key, the signature is the permission.
+            if self.command == "PUT" and url.path.startswith("/r2/"):
+                site.storage_auth.append(self.headers.get("Authorization"))
+                if int(self.headers.get("Content-Length") or -1) != len(body):
+                    return self.answer(400, {})
+                site.staged[url.path[len("/r2/") :]] = body
+                return self.answer(200, {})
             if self.headers.get("Authorization") != f"Bearer {KEY}":
                 return self.answer(401, {"error": {"message": "Invalid, expired or revoked API key."}})
             if site.throttle > 0:
@@ -79,6 +88,21 @@ def handler_for(site: Site):
                 created, unchanged = path not in site.images, site.images.get(path) == sha
                 site.images[path] = sha
                 return self.answer(200, {"data": {"path": path, "created": created, "unchanged": unchanged}})
+
+            if self.command == "POST" and url.path.startswith("/api/v1/images/"):
+                path = url.path[len("/api/v1") :]
+                request = json.loads(body)
+                if request["action"] == "start":
+                    upload = f"up-{len(site.staged) + len(site.images)}"
+                    return self.answer(200, {"data": {"upload": upload, "uploadUrl": f"http://{self.headers['Host']}/r2/{upload}", "headers": {"Content-Type": "application/pdf"}, "expiresInSeconds": 600}})
+                staged = site.staged.pop(request["upload"], None)
+                if staged is None:
+                    return self.answer(409, {"error": {"message": "the file did not arrive", "issues": []}})
+                if hashlib.sha256(staged).hexdigest() != request["sha256"] or len(staged) != request["size"]:
+                    return self.answer(400, {"error": {"message": "checksum mismatch", "issues": []}})
+                created = path not in site.images
+                site.images[path] = request["sha256"]
+                return self.answer(200, {"data": {"path": path, "created": created, "unchanged": False}})
 
             match = re.fullmatch(r"/api/v1/posts/by-path/(blog|news|projects)/([a-z0-9-]+)\.mdx", url.path)
             if self.command == "PUT" and match:
@@ -103,7 +127,7 @@ def handler_for(site: Site):
 
             return self.answer(404)
 
-        do_GET = do_PUT = handle_any
+        do_GET = do_PUT = do_POST = handle_any
 
     return Handler
 
@@ -197,6 +221,22 @@ class PushContent(unittest.TestCase):
         result = self.run_script(plain)
         self.assertIn("**Images:** 0 new, 0 replaced, 0 unchanged, 0 refused.", result.stdout)
         self.assertEqual(self.site.count("GET", "/api/v1/images"), listed, "no images to send: the site's list is not asked for")
+
+    def test_sends_a_large_file_straight_to_storage(self) -> None:
+        big = b"%PDF-1.7\n" + b"0" * (21 * 1024 * 1024)
+        self.write_image("docs/handbook.pdf", big)
+        small = b"%PDF-1.7\nsmall"
+        self.write_image("docs/note.pdf", small)
+        post = self.write_post("blog", "docs", "[The handbook](/images/docs/handbook.pdf) and [a note](/images/docs/note.pdf).")
+        result = self.run_script(post)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("**Images:** 2 new, 0 replaced, 0 unchanged, 0 refused.", result.stdout)
+        self.assertEqual(self.site.images["/images/docs/handbook.pdf"], hashlib.sha256(big).hexdigest())
+        self.assertEqual(self.site.count("POST", "/api/v1/images/docs/handbook.pdf"), 2, "start and complete")
+        self.assertEqual(self.site.count("PUT", "/api/v1/images/docs/handbook.pdf"), 0, "the large file never goes through the site")
+        self.assertEqual(self.site.count("PUT", "/api/v1/images/docs/note.pdf"), 1, "a small one is sent in one PUT")
+        self.assertEqual(self.site.storage_auth, [None], "the API key is never sent to storage")
+        self.assertEqual(self.site.staged, {})
 
     def test_dry_run_sends_nothing(self) -> None:
         post = self.write_post("blog", "first-post", "![a](/images/cover.jpg) ![b](/images/aws-vpc/01-what-is-a-vpc.png) /images/aws-vpc/01-what-is-a-vpc.svg")
