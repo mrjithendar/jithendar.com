@@ -87,3 +87,7 @@ printf '%s' "$MK4_CI_APPLY_TOKEN" | gh secret set MK4_CI_APPLY_TOKEN --repo "$RE
 unset MK4_CI_APPLY_TOKEN
 gh variable set MINIKUBE_DEPLOY --repo "$REPO" --body true
 echo "Done: pull requests merged into master that change kubernetes/ are now applied to mk4 by the deploy workflow."
+
+
+kubectl --context mk4 -n jithendar get secret github-ci-applier-token -o jsonpath='{.data.token}' \
+  | base64 -d | gh secret set MK4_CI_APPLY_TOKEN -R moks-tech/jithendar.com
