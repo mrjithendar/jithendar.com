@@ -10,6 +10,9 @@ the articles and images a push added or changed).
    and each image file named, is sent with PUT /api/v1/images/<path> when the site does not have it yet or has it with
    other bytes. The site keeps the SHA-256 of each file it was sent (GET /api/v1/images), so files that have not
    changed are not sent again. The site stores a PNG as lossless WebP; articles keep the .png path.
+   Documents and media (PDF, MP4, WebM, MP3) are sent the same way. A file larger than 20 MB goes straight to the
+   site's storage (R2): POST …?action=start returns a presigned URL, the file is PUT there, POST action=complete has the
+   site check its size, SHA-256 and type before it replaces the file at that path.
 2. Articles: each article file named on the command line (content/{blog,news,projects}/<slug>.mdx) is sent with
    PUT /api/v1/posts/by-path/<collection>/<slug>.mdx. A new slug becomes a DRAFT, whatever the file's status says. A
    post that is still a draft or in review is updated from the file. A published, scheduled or archived post is left
@@ -51,7 +54,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COLLECTIONS = ("blog", "news", "projects")
-IMAGE_TYPES = {".png", ".jpg", ".jpeg", ".webp", ".avif", ".gif", ".svg"}
+IMAGE_TYPES = {".png", ".jpg", ".jpeg", ".webp", ".avif", ".gif", ".svg", ".pdf", ".mp4", ".webm", ".mp3"}
+# Larger files skip the site (Cloudflare's request limit, the pod's memory) and go straight to R2.
+DIRECT_MAX_BYTES = 20 * 1024 * 1024
+UPLOAD_TIMEOUT = 600
 IMAGE_REF = re.compile(r"/images/[^\s\"'`()<>\[\]{},]+")
 RELATED_MISSING = re.compile(r'^related: ".*" does not exist')
 TIMEOUT = 60
@@ -95,6 +101,25 @@ class Api:
                 if attempt < MAX_TRIES:
                     self.sleep(min(2**attempt, 30))
         raise Stop(f"{self.site} did not answer {method} {path}: {last}")
+
+
+    def upload(self, url: str, headers: dict[str, str], file: Path, size: int) -> int:
+        """PUT a file to a presigned URL (no API key: the signature is the permission), streamed from disk."""
+        last = "no answer"
+        for attempt in range(1, 4):
+            with file.open("rb") as body:
+                request = urllib.request.Request(url, data=body, method="PUT", headers={**headers, "Content-Length": str(size)})
+                try:
+                    with urllib.request.urlopen(request, timeout=UPLOAD_TIMEOUT) as response:
+                        return response.status
+                except urllib.error.HTTPError as error:
+                    if error.code < 500 or attempt == 3:
+                        return error.code
+                    last = f"HTTP {error.code}"
+                except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+                    last = str(getattr(error, "reason", error))
+            self.sleep(min(2**attempt, 30))
+        raise Stop(f"the upload to storage did not finish: {last}")
 
 
 def _json(raw: bytes) -> dict:
@@ -159,20 +184,45 @@ def stored_images(api: Api) -> dict[str, str]:
         offset += 1000
 
 
+def file_sha256(file: Path) -> str:
+    digest = hashlib.sha256()
+    with file.open("rb") as f:
+        for block in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def send_direct(api: Api, path: str, file: Path, size: int, digest: str) -> tuple[int, dict]:
+    """start → PUT to the presigned URL → complete. Returns what complete (or the step that failed) answered."""
+    endpoint = "/api/v1" + urllib.parse.quote(path)
+    status, payload = api.call("POST", endpoint, json.dumps({"action": "start", "size": size, "sha256": digest}).encode(), "application/json")
+    if status != 200:
+        return status, payload
+    intent = payload.get("data") or {}
+    put = api.upload(intent["uploadUrl"], intent.get("headers") or {}, file, size)
+    if put not in (200, 201):
+        return put, {"error": {"message": f"the storage refused the upload (HTTP {put})"}}
+    return api.call("POST", endpoint, json.dumps({"action": "complete", "upload": intent["upload"], "size": size, "sha256": digest}).encode(), "application/json")
+
+
 def push_images(api: Api, directory: Path, articles: list[Path], named: list[Path], dry_run: bool) -> dict:
     files, other = wanted_images(directory, articles, named)
     stored = stored_images(api) if files else {}
     report = {"created": [], "replaced": [], "unchanged": 0, "failed": [], "not_images": other}
     for path, file in files.items():
-        data = file.read_bytes()
-        if stored.get(path) == hashlib.sha256(data).hexdigest():
+        size = file.stat().st_size
+        digest = file_sha256(file)
+        if stored.get(path) == digest:
             report["unchanged"] += 1
             continue
         kind = "replaced" if path in stored else "created"
         if dry_run:
             report[kind].append(path)
             continue
-        status, payload = api.call("PUT", "/api/v1" + urllib.parse.quote(path), data, "application/octet-stream")
+        if size > DIRECT_MAX_BYTES:
+            status, payload = send_direct(api, path, file, size, digest)
+        else:
+            status, payload = api.call("PUT", "/api/v1" + urllib.parse.quote(path), file.read_bytes(), "application/octet-stream")
         if status == 200:
             result = payload.get("data") or {}
             if result.get("unchanged"):

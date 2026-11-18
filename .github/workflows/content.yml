@@ -14,6 +14,8 @@ name: content
 #      still a draft is updated, a published post is left alone (edit and publish it in the admin);
 #    - the images those articles use, and each added or changed file under public/images/, go to R2 (a file the site
 #      already has with the same bytes is not sent again).
+#    Documents and media (PDF, MP4, WebM, MP3) go the same way; a file over 20 MB goes straight to R2 (presigned
+#    upload), and a file over 50 MB belongs in Git LFS (.gitattributes), which this checkout fetches.
 #    A manual run sends every article that is not a post yet (and the images they use), and changes no existing post.
 #    Then you review the drafts in Admin → Posts and publish them yourself.
 #    It needs the repository secret JITHENDAR_API_KEY (Admin → API keys, scopes images:write and posts:draft; such a
@@ -50,6 +52,8 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+          # Videos and other large files are kept in Git LFS (.gitattributes): GitHub refuses files over 100 MB.
+          lfs: true
       - name: Log in to Harbor
         env:
           HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
