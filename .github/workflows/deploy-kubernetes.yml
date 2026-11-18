@@ -2,9 +2,10 @@ name: deploy to kubernetes
 
 # Deploys the whole site from kubernetes/ to the mk4 cluster: the CMS (moks-cms) and the SEO agent run the image tags
 # the manifests name, so moving to a new moks-cms release is a change of tag here (by hand in a pull request, or
-# automatically, below). The site's own files ship in the content image (content.yml), and the practice problems in
-# practice-catalog (moks-tech/practice-programming, which also deploys the practice executor); the manifests name
-# :latest of both. A manifest that names :latest keeps the image a workload already runs
+# automatically, below). site.json and config/ are ConfigMap jithendar-com-site (kubernetes/kustomization.yaml), so a
+# change to them is deployed here too and rolls the site. Articles and images never pass through here: content.yml
+# pushes them through the site's API. The practice problems ship in practice-catalog (moks-tech/practice-programming,
+# which also deploys the practice executor); the manifests name its :latest. A manifest that names :latest keeps the image a workload already runs
 # (scripts/keep-live-images.py); one that names a tag is applied as written. Moved here from moks-cms on 2026-11-16.
 #
 # bump   → repository_dispatch "moks-cms-released" {component, tag}, sent by moks-cms's CI after it pushes an image
@@ -53,6 +54,8 @@ on:
     types: [opened, synchronize, reopened, closed]
     paths:
       - 'kubernetes/**'
+      - 'site.json'
+      - 'config/**'
       - 'scripts/manifests.sh'
       - 'scripts/ci-app-manifests.py'
       - '.github/jithendar-ci-applier.yaml'

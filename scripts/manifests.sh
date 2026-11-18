@@ -19,7 +19,8 @@ group="${1:-}"
 
 case "$group" in
   site)
-    kubectl kustomize "$dir"
+    # site.json and config/ live at the repository root, outside kubernetes/ (configMapGenerator in kustomization.yaml).
+    kubectl kustomize --load-restrictor=LoadRestrictionsNone "$dir"
     ;;
   seo-agent)
     shopt -s nullglob

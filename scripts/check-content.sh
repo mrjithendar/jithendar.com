@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Check this site's files with the CMS that will serve them: start the moks-cms image the Deployment runs (the web
 # container's image in kubernetes/30-jithendar-com.yaml) with this repository's content/, public/images/, site.json
-# and config/ mounted where the content image puts them, and an embedded database (PGlite, so no Secrets), then
+# and config/ mounted where the Deployment puts them, and an embedded database (PGlite, so no Secrets), then
 # request the main pages and every published article. moks-cms validates the content when it loads it (schema,
-# related links, images): an invalid article makes these pages answer 500, so it is caught here, before the content
-# image is pushed and the pods would serve it.
+# related links, images): an invalid article makes these pages answer 500, so it is caught here, before anything is
+# pushed to the site.
 #
 #   scripts/check-content.sh [<moks-cms image>]     (default: the image in kubernetes/30-jithendar-com.yaml)
 #

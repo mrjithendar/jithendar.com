@@ -21,5 +21,23 @@ resources:
 - 81-ci-deployer-admission.yaml
 - 85-ci-applier.yaml
 
-# 30-jithendar-com.yaml names the moks-cms release the site runs (moks-cms:pr-<number>, applied as written) and the
-# content image's :latest (imagePullPolicy Always; content.yml restarts the site after pushing it). No digest pinning.
+# 30-jithendar-com.yaml names the moks-cms release the site runs (moks-cms:pr-<number>, applied as written). No digest
+# pinning. Articles and images are not in the cluster's manifests or any image: content.yml pushes them through the
+# site's API.
+
+# site.json and config/*.json, mounted at /app/site. The name gets a hash of the contents, so a change to these files
+# rolls the Deployment when deploy-kubernetes.yml applies it. The files sit outside this folder: scripts/manifests.sh
+# renders with --load-restrictor=LoadRestrictionsNone. Keys are flat (config.<name>.json); the volume in
+# 30-jithendar-com.yaml maps each back to config/<name>.json (scripts/tests/test_site_configmap.py keeps the three in
+# step).
+configMapGenerator:
+- name: jithendar-com-site
+  namespace: jithendar
+  options:
+    labels:
+      app.kubernetes.io/part-of: jithendar-com
+  files:
+  - site.json=../site.json
+  - config.gone.json=../config/gone.json
+  - config.hire-me-profile.json=../config/hire-me-profile.json
+  - config.redirects.json=../config/redirects.json
