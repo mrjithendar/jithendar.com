@@ -83,8 +83,9 @@ change to them is applied, and rolls the site, like any manifest. Every workload
 agent is one pod and is recreated).
 
 Manifest changes are applied by `.github/workflows/deploy-kubernetes.yml` when their pull request is merged (server
-dry run, diff, apply, wait, smoke test). To re-apply everything and restart the site without a merge, which is what
-`./deploy.sh` did until it was removed on 2026-11-14:
+dry run, diff, apply, restart, wait, smoke test). A merged pull request or a manual run restarts every Deployment it
+applies in namespace `jithendar`, each only if it exists there (a missing one is skipped with a warning). To re-apply
+everything and restart without a merge, which is what `./deploy.sh` did until it was removed on 2026-11-14:
 
 ```sh
 gh workflow run deploy-kubernetes.yml --ref master     # or Actions → deploy to kubernetes → Run workflow
