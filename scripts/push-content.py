@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Push this site's images and articles to the CMS that serves it, through its API. Nothing is built or restarted.
 
-  JITHENDAR_API_KEY=jk_… scripts/push-content.py [options] [content/blog/a-post.mdx …]
+  JITHENDAR_API_KEY=jk_… scripts/push-content.py [options] [content/blog/a-post.mdx …] [public/images/a/b.svg …]
 
-1. Images: every file under public/images/ that the site does not have yet, or has with other bytes, is sent with
-   PUT /api/v1/images/<path>. The site keeps the SHA-256 of each file it was sent (GET /api/v1/images), so files that
-   have not changed are not sent again. The site stores a PNG as lossless WebP; articles keep the .png path.
-2. Articles: each file named on the command line (content/{blog,news,projects}/<slug>.mdx) is sent with
+Only what is named is sent: the articles, the images they use, and image files named on the command line (CI names
+the articles and images a push added or changed).
+
+1. Images: each image an article being sent uses (any /images/… path in its file that exists under public/images/),
+   and each image file named, is sent with PUT /api/v1/images/<path> when the site does not have it yet or has it with
+   other bytes. The site keeps the SHA-256 of each file it was sent (GET /api/v1/images), so files that have not
+   changed are not sent again. The site stores a PNG as lossless WebP; articles keep the .png path.
+2. Articles: each article file named on the command line (content/{blog,news,projects}/<slug>.mdx) is sent with
    PUT /api/v1/posts/by-path/<collection>/<slug>.mdx. A new slug becomes a DRAFT, whatever the file's status says. A
    post that is still a draft or in review is updated from the file. A published, scheduled or archived post is left
    alone: edit those in Admin → Posts. Nothing is ever published from here.
@@ -23,7 +27,7 @@ Options:
   --site URL         the site (default: https://<host in site.json>)
   --images-dir DIR   default public/images
   --no-images        send articles only
-  --all-posts        send every article file under content/, not only the ones named
+  --all-posts        send every article file under content/ (and the images they use), not only the ones named
   --create-only      create new drafts but never change an existing post
   --dry-run          say what would be sent; send nothing (the image comparison still asks the site)
   --summary FILE     also write the report there as Markdown (default: $GITHUB_STEP_SUMMARY when set)
@@ -48,6 +52,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 COLLECTIONS = ("blog", "news", "projects")
 IMAGE_TYPES = {".png", ".jpg", ".jpeg", ".webp", ".avif", ".gif", ".svg"}
+IMAGE_REF = re.compile(r"/images/[^\s\"'`()<>\[\]{},]+")
 RELATED_MISSING = re.compile(r'^related: ".*" does not exist')
 TIMEOUT = 60
 MAX_TRIES = 6
@@ -109,21 +114,31 @@ def reason_of(status: int, payload: dict) -> str:
 # --- Images ------------------------------------------------------------------------------------
 
 
-def local_images(directory: Path) -> tuple[dict[str, Path], list[str]]:
-    """{"/images/a/b.png": file} for every image file, and the files that are not images (reported, never sent)."""
+def wanted_images(directory: Path, articles: list[Path], named: list[Path]) -> tuple[dict[str, Path], list[str]]:
+    """{"/images/a/b.png": file} for the images the articles use and the image files named, and the named files that are
+    not images (reported, never sent). A path an article names that is not under `directory` is left to the site."""
     found: dict[str, Path] = {}
     other: list[str] = []
-    if not directory.is_dir():
-        return found, other
-    for file in sorted(directory.rglob("*")):
-        relative = file.relative_to(directory)
-        if not file.is_file() or any(part.startswith(".") for part in relative.parts):
+    root = directory.resolve()
+    for article in articles:
+        if not article.is_file():
+            continue
+        for ref in IMAGE_REF.findall(article.read_text(encoding="utf-8")):
+            file = root / urllib.parse.unquote(ref.rstrip(".:;!?'\"")[len("/images/"):])
+            if file.suffix.lower() in IMAGE_TYPES and file.is_file() and file.resolve().is_relative_to(root):
+                found["/images/" + file.resolve().relative_to(root).as_posix()] = file
+    for file in named:
+        resolved = file.resolve()
+        if not resolved.is_relative_to(root) or not resolved.is_file():
+            continue
+        relative = resolved.relative_to(root).as_posix()
+        if any(part.startswith(".") for part in relative.split("/")):
             continue
         if file.suffix.lower() in IMAGE_TYPES:
-            found["/images/" + relative.as_posix()] = file
+            found["/images/" + relative] = file
         else:
-            other.append(relative.as_posix())
-    return found, other
+            other.append(relative)
+    return dict(sorted(found.items())), other
 
 
 def stored_images(api: Api) -> dict[str, str]:
@@ -144,10 +159,10 @@ def stored_images(api: Api) -> dict[str, str]:
         offset += 1000
 
 
-def push_images(api: Api, directory: Path, dry_run: bool) -> dict:
-    files, other = local_images(directory)
-    stored = stored_images(api)
-    report = {"created": [], "replaced": [], "unchanged": 0, "failed": [], "not_images": other, "only_on_site": sorted(set(stored) - set(files))}
+def push_images(api: Api, directory: Path, articles: list[Path], named: list[Path], dry_run: bool) -> dict:
+    files, other = wanted_images(directory, articles, named)
+    stored = stored_images(api) if files else {}
+    report = {"created": [], "replaced": [], "unchanged": 0, "failed": [], "not_images": other}
     for path, file in files.items():
         data = file.read_bytes()
         if stored.get(path) == hashlib.sha256(data).hexdigest():
@@ -305,8 +320,6 @@ def render(site: str, images: dict | None, posts: dict | None, dry_run: bool) ->
             lines.append(f"- Refused `{path}`: {why}")
         if images["not_images"]:
             lines.append(f"- Not sent (not an image type): {', '.join(f'`{p}`' for p in images['not_images'][:10])}")
-        if images["only_on_site"]:
-            lines.append(f"- {len(images['only_on_site'])} image(s) are on the site but no longer in this repository; they are left there.")
         failed = failed or bool(images["failed"])
         lines.append("")
     if posts is not None:
@@ -340,7 +353,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--create-only", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY"))
-    parser.add_argument("posts", nargs="*", type=Path)
+    parser.add_argument("posts", nargs="*", type=Path, metavar="file", help="article (content/<collection>/<slug>.mdx) or image (public/images/…)")
     args = parser.parse_args(argv)
     try:
         site = (args.site or default_site()).rstrip("/")
@@ -351,10 +364,12 @@ def main(argv: list[str]) -> int:
         if not key:
             raise Stop("JITHENDAR_API_KEY is not set (Admin → API keys: scopes images:write and posts:draft)")
         api = Api(site, key)
-        files = list(args.posts)
+        images_dir = Path(args.images_dir)
+        named_images = [f for f in args.posts if f.resolve().is_relative_to(images_dir.resolve())]
+        files = [f for f in args.posts if f not in named_images]
         if args.all_posts:
             files += [f for c in COLLECTIONS for f in sorted((ROOT / "content" / c).glob("*.mdx"))]
-        images = None if args.no_images else push_images(api, Path(args.images_dir), args.dry_run)
+        images = None if args.no_images else push_images(api, images_dir, files, named_images, args.dry_run)
         posts = push_posts(api, files, args.create_only, args.dry_run) if files else None
     except Stop as stop:
         print(f"push-content: {stop}", file=sys.stderr)

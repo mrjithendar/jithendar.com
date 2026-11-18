@@ -9,10 +9,13 @@ name: content
 # 1. check: start the moks-cms image the Deployment runs with these files and request the main pages and every
 #    published article (scripts/check-content.sh). An invalid article stops the run here, before anything is sent.
 # 2. push (scripts/push-content.py):
-#    - every image under public/images/ that the site does not have yet, or has with other bytes, goes to R2;
-#    - each article this push added or changed is sent as its file: a new one becomes a DRAFT in Admin → Posts, a post
-#      that is still a draft is updated, a published post is left alone (edit and publish in the admin).
-#      A manual run sends every article that is not a post yet, and changes none.
+#    only what this push added or changed:
+#    - each added or changed article is sent as its file: a new one becomes a DRAFT in Admin → Posts, a post that is
+#      still a draft is updated, a published post is left alone (edit and publish it in the admin);
+#    - the images those articles use, and each added or changed file under public/images/, go to R2 (a file the site
+#      already has with the same bytes is not sent again).
+#    A manual run sends every article that is not a post yet (and the images they use), and changes no existing post.
+#    Then you review the drafts in Admin → Posts and publish them yourself.
 #    It needs the repository secret JITHENDAR_API_KEY (Admin → API keys, scopes images:write and posts:draft; such a
 #    key cannot publish or delete).
 #
@@ -66,9 +69,11 @@ jobs:
           set -euo pipefail
           [[ -n "$JITHENDAR_API_KEY" ]] || { echo "::error::Secret JITHENDAR_API_KEY is not set (Admin → API keys, scopes images:write and posts:draft)"; exit 1; }
           if [[ "$EVENT" == push && -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            # Added or modified article files of this push. Deleted files are not sent: the post stays until an editor removes it.
-            mapfile -t posts < <(git diff --name-only --no-renames --diff-filter=AM "$BEFORE" "$GITHUB_SHA" -- 'content/blog/*.mdx' 'content/news/*.mdx' 'content/projects/*.mdx')
-            python3 scripts/push-content.py --site "$SITE_URL" "${posts[@]}"
+            # Added or modified articles and images of this push. Deleted files are not sent: the post or image stays
+            # until an editor removes it.
+            mapfile -t files < <(git diff --name-only --no-renames --diff-filter=AM "$BEFORE" "$GITHUB_SHA" -- 'content/blog/*.mdx' 'content/news/*.mdx' 'content/projects/*.mdx' 'public/images/**')
+            if [[ ${#files[@]} -eq 0 ]]; then echo "No added or changed articles or images in this push."; exit 0; fi
+            python3 scripts/push-content.py --site "$SITE_URL" "${files[@]}"
           else
             # Manual run, or a push whose range is unknown: every article that is not a post yet, and no existing post is changed.
             python3 scripts/push-content.py --site "$SITE_URL" --all-posts --create-only
