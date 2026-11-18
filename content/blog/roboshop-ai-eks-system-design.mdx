@@ -2,6 +2,7 @@
 title: "RoboShop AI on Amazon EKS: system design with Istio, Karpenter, KEDA and Gatekeeper"
 slug: roboshop-ai-eks-system-design
 description: "How RoboShop AI maps onto Amazon EKS: NLB and Istio ingress, mesh authorization, Gatekeeper policies, KEDA and Karpenter scaling, and telemetry."
+seoTitle: "RoboShop AI on EKS: Istio, Karpenter, KEDA and Gatekeeper"
 author: jithendar-dharmapuri
 category: kubernetes
 tags: [Amazon EKS, Istio, Karpenter, KEDA, OPA Gatekeeper, Terraform, Argo CD]
@@ -11,7 +12,7 @@ related: [blog/deploy-roboshop-ai-amazon-eks, blog/roboshop-ai-microservices, pr
 ---
 <Todo>Reviewed against roboshop-ai commit 692e72d1f119c20e3bfb32f2e189e5a376a12c4c on 2026-10-30. The deploy/eks folder this article describes is not committed yet: after you push it, replace every `tree/master/deploy/eks` link with the new commit SHA, then re-read this article against it. Nothing here has run on AWS yet; keep the "not yet run on AWS" wording until you have deployed it once, and add your own commentary. The repository licence is "all rights reserved": decide whether readers may deploy their own copy before publishing. Suggested SEO title: "RoboShop AI on Amazon EKS: Istio, Karpenter, KEDA and Gatekeeper design".</Todo>
 
-RoboShop AI is a personal showcase project: a robot store with a storefront, checkout in Razorpay test mode, an optional AI shopping assistant and a private Model Context Protocol (MCP) server, split into independently deployable services. It runs on a small Minikube lab today. This article explains how the same services map onto Amazon EKS, and why each platform component is there. It describes a design and its configuration. The configuration has been validated offline but has not yet run on AWS, and nothing here describes production traffic or measured performance.
+RoboShop AI is a personal showcase project I built: a robot store with a storefront, checkout in Razorpay test mode, an optional AI shopping assistant and a private Model Context Protocol (MCP) server, split into independently deployable services. It runs on a self-managed k3s cluster on Hetzner Cloud today (a small Minikube lab until 10 November 2026). This article explains how the same services map onto Amazon EKS, and why each platform component is there. It describes a design and its configuration. The configuration has been validated offline but has not yet run on AWS, and nothing here describes production traffic or measured performance.
 
 The authoritative configuration lives in the repository under [`deploy/eks`](https://github.com/mrjithendar/roboshop-ai/tree/master/deploy/eks). The step-by-step guide is [Deploy RoboShop AI on Amazon EKS](/blog/deploy-roboshop-ai-amazon-eks).
 

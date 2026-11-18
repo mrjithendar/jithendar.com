@@ -38,7 +38,7 @@ sources:
     url: https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager.html
     publisher: Amazon Web Services
 ---
-<Todo>Draft written from the repository on 2026-11-14 (services/www Dockerfile, .env.example, src/db, kubernetes/30-jithendar-com.yaml). Not run end to end: before publishing, (1) launch a fresh t4g.medium and follow every step, (2) confirm the Compose file starts on Docker Compose v2 with Postgres 18's volume path, (3) confirm the prices in "What it costs" on the AWS pricing pages, (4) check that the access log's ip field shows your own address behind Caddy with TRUSTED_EDGE=gateway. Re-checked against the repository on 2026-11-14 after the move to sites/ (npm run site -- --copy before docker build, host from site.json, TRUSTED_EDGE).</Todo>
+<Todo>Draft written from the repository on 2026-11-14 (services/www Dockerfile, .env.example, src/db, kubernetes/30-jithendar-com.yaml). Not run end to end: before publishing, (1) launch a fresh t4g.medium and follow every step, (2) confirm the Compose file starts on Docker Compose v2 with Postgres 18's volume path, (3) confirm the prices in "What it costs" on the AWS pricing pages, (4) check that the access log's ip field shows your own address behind Caddy with TRUSTED_EDGE=gateway. Re-checked against the repository on 2026-11-14 after the move to sites/ (npm run site -- --copy before docker build, host from site.json, TRUSTED_EDGE). Updated on 2026-11-18 for moks-cms #112: sites now live in their own repositories, so the build uses SITE_DIR instead of sites/<domain>/; follow the build step once more with a separate site checkout.</Todo>
 
 Moks CMS is the AI/ML-powered content management system I built, and jithendar.com is the site it runs. Besides posts, pages and an editor, it answers readers' questions from its own articles (Ask the Blog), drafts and reviews articles with an editorial agent crew, ranks SEO work with machine-learning models fed by Search Console, and generates images. This series shows how to deploy it three ways: on one Linux server, on Kubernetes, and on Amazon EKS.
 
@@ -49,7 +49,7 @@ This guide puts Moks CMS on one Amazon EC2 instance with Docker Compose, Caddy f
 ::toc
 
 :::callout{type="info" title="Adapting this guide"}
-The Moks CMS source is proprietary, so you cannot clone it. The guide reproduces the files that matter, and they also work for any Next.js app built with `output: "standalone"` that keeps its data in PostgreSQL. Replace `example.com` with your domain throughout. If you run Moks CMS under your own domain, give it its own site folder first (`cp -R sites/_template sites/example.com`) and set `host` in its `site.json`: the CMS only lets search engines index that host, so a build for jithendar.com serves every page on any other domain as `noindex`.
+The Moks CMS source is proprietary, so you cannot clone it. The guide reproduces the files that matter, and they also work for any Next.js app built with `output: "standalone"` that keeps its data in PostgreSQL. Replace `example.com` with your domain throughout. If you run Moks CMS under your own domain, give it its own site repository first (copy the moks-cms `sites/_template/` into it) and set `host` in its `site.json`: the CMS only lets search engines index that host, so a build with jithendar.com's `site.json` serves every page on any other domain as `noindex`.
 :::
 
 :::callout{type="info" title="What about the AI features?"}
@@ -248,7 +248,7 @@ ARG APP_ENV=production
 ENV APP_ENV=$APP_ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# The site (site.json, content/, public/images/) must be real copies, not symlinks into sites/<domain>/.
+# The site (site.json, content/, public/images/) must be real copies, not symlinks into the site's repository.
 RUN test -f site/site.json && test ! -L content && test ! -L public/images \
   || { echo 'Run `npm run site -- --copy` in services/www before docker build' >&2; exit 1; }
 RUN --mount=type=cache,target=/app/.next/cache npm run build
@@ -265,7 +265,7 @@ EXPOSE 3000
 CMD ["node", "server.js"]
 ```
 
-Moks CMS serves one site per build, and each site's identity, articles and images live in their own folder, `sites/<domain>/`, at the root of the repository. That folder sits outside the Docker build context, so `npm run site -- --copy` first copies it into `services/www` (`SITE=example.com` picks a site other than jithendar.com). The check before `npm run build` stops a build that skipped this step. The standalone output then carries the site's `content/` folder and the SQL migrations (`outputFileTracingIncludes` in `next.config.ts`), so the image is complete on its own.
+A site's identity, articles and images (`site.json`, `config/`, `content/`, `public/images/`) live in the site's own repository, not in moks-cms. That folder sits outside the Docker build context, so `npm run site -- --copy` first copies it into `services/www` (`SITE_DIR` is the path to your site's checkout). This build bakes one site into the image. jithendar.com itself runs the generic CMS image that moks-cms CI pushes and mounts its files over `/app/site`, `/app/content` and `/app/public/images` from a small content image at start, so publishing never rebuilds the CMS; for one server, baking them in is simpler. The check before `npm run build` stops a build that skipped this step. The standalone output then carries the site's `content/` folder and the SQL migrations (`outputFileTracingIncludes` in `next.config.ts`), so the image is complete on its own.
 
 Build on your laptop or in CI, not on the server: `next build` for a site this size wants more memory than a small instance has spare. Match the server's architecture. Graviton is `linux/arm64`; most other servers are `linux/amd64`. Tag every image with the commit, and pass the same value as `GIT_SHA` so the health endpoint reports it:
 
@@ -273,7 +273,7 @@ Build on your laptop or in CI, not on the server: `next build` for a site this s
 TAG=$(git rev-parse --short=12 HEAD)
 IMAGE_REPO=ghcr.io/your-user/moks-cms
 
-(cd services/www && SITE=example.com npm run site -- --copy)
+(cd services/www && SITE_DIR=../../../example.com npm run site -- --copy)   # your site repository, next to moks-cms
 
 echo "$GHCR_TOKEN" | docker login ghcr.io -u your-user --password-stdin
 docker buildx build services/www \
@@ -584,7 +584,7 @@ Two limits to know:
 | `web` keeps restarting | A required variable is missing; the log names it (for example `BETTER_AUTH_SECRET is required in production.`) | `docker compose logs web` |
 | `web` exits with `DATABASE_URL is required in production.` | The variable is empty or misspelled in `compose.yaml` | `docker compose config` |
 | Sign-in fails or loops back to the sign-in page | `SITE_URL` is not exactly the address in the browser (scheme, host, no trailing slash) | `.env` |
-| Every page is `noindex` | `APP_ENV` is not `production`, or the domain is not `host` in the site's `site.json` | page source, `sites/<domain>/site.json` |
+| Every page is `noindex` | `APP_ENV` is not `production`, or the domain is not `host` in the site's `site.json` | page source, your site's `site.json` |
 | `docker build` stops with `Run npm run site -- --copy` | The site folder was not copied into the build context | run it in `services/www`, then build again |
 | Everyone hits the rate limit together | Cloudflare's proxy is on while `TRUSTED_EDGE=gateway`, so every request seems to come from a Cloudflare edge | the `ip` field in `docker compose logs web`; set DNS only, or follow the Cloudflare steps in step 2 |
 | 502 for a minute after a release | The new container is still starting or applying migrations | `docker compose ps`, `docker compose logs web` |
