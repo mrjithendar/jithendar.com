@@ -3,7 +3,7 @@
 # kubernetes/ is one flat folder; the file name says which group a manifest belongs to:
 #
 #   site               kustomization.yaml (00-… to 85-…): the site, routing, mesh, CI accounts
-#   seo-agent          seo-agent-*.yaml: SEO v4 agent service + flow-trigger CronJobs (applied by hand, docs/seo/MANUAL_SETUP.md)
+#   seo-agent          seo-agent-*.yaml: SEO v4 agent service + the flow dispatcher CronJob (applied by hand, docs/seo/MANUAL_SETUP.md)
 #
 #   scripts/manifests.sh site | kubectl apply -f -
 #   scripts/manifests.sh seo-agent | kubectl diff -f -

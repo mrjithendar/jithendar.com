@@ -1,0 +1,76 @@
+# Flow dispatcher (moks-cms docs/seo/FLOWS.md "Scheduling", D-98): one CronJob for every scheduled CrewAI flow. Every
+# minute it runs only `python -m app.trigger dispatch`, which POSTs /schedules/dispatch with the service token and lets
+# the Istio sidecar exit. The schedules themselves are rows in the site's database (seo_flow_schedules), edited in
+# Admin → CrewAI console → Schedules: seo-agent starts each one that is due (triggered_by=cron, actor schedule:<name>),
+# claims its time slot first so a second call starts nothing, and catches up a time it missed within an hour.
+#
+# This replaces the fifteen per-flow CronJobs that were in seo-agent-60-flow-triggers.yaml (ten SEO flows),
+# seo-agent-61-news-triggers.yaml (three news desk flows) and seo-agent-62-promotion-triggers.yaml (two promotion
+# flows). Their times are the built-in schedules of moks-cms migration 0037, unchanged.
+#
+# Applied by a person with the rest of the seo-agent group; CI never applies CronJobs. Order (once): the moks-cms
+# release with migration 0037 is running, then the seo-agent release with /schedules/dispatch, then
+#   kubectl -n jithendar delete cronjob -l app=seo-agent-trigger      # the fifteen old CronJobs
+#   scripts/manifests.sh seo-agent | kubectl apply -f -                # this file
+# Pause everything: kubectl -n jithendar patch cronjob seo-flow-dispatcher -p '{"spec":{"suspend":true}}' (or pause
+# single schedules in the console). Roll back: suspend this and re-apply the three old files from Git history.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: seo-flow-dispatcher
+  namespace: jithendar
+  labels: { app: seo-agent-dispatcher, app.kubernetes.io/part-of: jithendar-com }
+spec:
+  schedule: "* * * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  # A tick that cannot start within 50 s is skipped: the next one starts what is due (the agent catches up).
+  startingDeadlineSeconds: 50
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 55
+      ttlSecondsAfterFinished: 600
+      template:
+        metadata:
+          labels: { app: seo-agent-trigger, app.kubernetes.io/part-of: jithendar-com }
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          imagePullSecrets: [{ name: harbor-pull }]
+          securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
+          containers:
+            - name: trigger
+              image: registry.jithendar.com/jithendar/seo-agent:latest
+              # Always: a node may still hold an older seo-agent:latest from the per-flow CronJobs, whose trigger has
+              # no `dispatch` command.
+              imagePullPolicy: Always
+              command: ["python", "-m", "app.trigger", "dispatch"]
+              env:
+                - { name: SEO_AGENT_URL, value: "http://seo-agent.jithendar:8080" }
+                - name: SEO_AGENT_TOKEN
+                  valueFrom: { secretKeyRef: { name: seo-agent-env, key: SEO_AGENT_TOKEN } }
+              resources:
+                requests: { cpu: 10m, memory: 48Mi }
+                limits: { cpu: 200m, memory: 128Mi }
+              securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+---
+# The dispatcher's pods (label app: seo-agent-trigger, as the per-flow trigger pods had) may reach only seo-agent's
+# internal API and DNS. seo-agent's own NetworkPolicy (seo-agent-40-seo-agent.yaml) admits them on 8080.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: seo-agent-trigger
+  namespace: jithendar
+  labels: { app.kubernetes.io/part-of: jithendar-com }
+spec:
+  podSelector: { matchLabels: { app: seo-agent-trigger } }
+  policyTypes: ["Ingress", "Egress"]
+  egress:
+    - to: [{ podSelector: { matchLabels: { app: seo-agent } } }]
+      ports: [{ port: 8080, protocol: TCP }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]

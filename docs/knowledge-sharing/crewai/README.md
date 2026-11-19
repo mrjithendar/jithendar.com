@@ -44,7 +44,7 @@ hand, export it from draw.io over the SVG.
 | The five CrewAI behaviours (auto memory, `@persist()` SQLite, router labels, inherited methods, `validate`) | `moks-cms/services/www/docs/seo/DECISIONS.md` D-54, and the code that handles each | Found on 1.15.30. Not re-tested on 1.15.34 |
 | Production crew limits: 300,000 tokens, 1,200 s, turns 4/10/6/8, flow limit 2,700 s | `kubernetes/seo-agent-40-seo-agent.yaml` | Declared in Git. "How I built jithendar.com" still quotes 150k tokens and 600 s |
 | 177 to 161 locked packages when LangGraph and LangChain were removed | `DECISIONS.md` D-54 | As recorded at the v4 switch |
-| Ten SEO CronJobs, two promotion, three news | `kubernetes/seo-agent-60/61/62-*.yaml` | Counted in Git |
+| Ten SEO CronJobs, two promotion, three news | `kubernetes/seo-agent-60/61/62-*.yaml` (until 2026-11-19) | Counted in Git then. Since 2026-11-19 one dispatcher CronJob (`seo-agent-60-dispatcher.yaml`) starts the same fifteen schedules, now rows in the database |
 
 ## Not run
 
