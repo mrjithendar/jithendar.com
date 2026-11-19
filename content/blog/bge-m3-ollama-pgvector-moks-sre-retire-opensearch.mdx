@@ -1,0 +1,340 @@
+---
+title: "Retiring OpenSearch for pgvector: Running bge-m3 Embeddings on a Small arm64 Cluster"
+slug: bge-m3-ollama-pgvector-moks-sre-retire-opensearch
+description: "How MOKS, my AI SRE portal, moved knowledge search from an OpenSearch pod to PostgreSQL and pgvector, with vectors from a shared bge-m3 served by Ollama."
+seoTitle: "bge-m3 on Ollama + pgvector: Replacing OpenSearch on k3s"
+seoDescription: "Serving BAAI bge-m3 with Ollama on arm64 k3s, pinning the weights, locking down callers, and swapping an OpenSearch pod for PostgreSQL + pgvector hybrid search."
+author: jithendar-dharmapuri
+category: ai-engineering
+tags: [Embeddings, bge-m3, Ollama, pgvector, PostgreSQL, OpenSearch, Kubernetes, RAG]
+contentType: tutorial
+status: review
+featuredImage:
+  src: /images/bge-m3-embeddings/moks-search-before-after.png
+  alt: "MOKS knowledge search on mk4, before and after. Before: moks api and worker sent BM25 searches to a moks-opensearch pod (keyword-only index, 2 GiB requested, a 20 Gi volume on worker2), read text and access rules from PostgreSQL, and OpenSearch Dashboards and public /opensearch routes sat beside it. After: the same code uses the PostgresBackend. The question goes to the shared bge-m3 for a 1024-dimension vector (one call at a time, a 2 second wait for the slot, otherwise keyword-only), PostgreSQL returns three rankings (tsvector keyword, identifier match, pgvector k-NN), and moks fuses them with RRF, then checks access on every chunk."
+  width: 1922
+  height: 1202
+related:
+  - blog/switch-embedding-model-bge-m3-seo-agent-jithendar-com
+  - blog/moks-rag-and-skills-design
+  - blog/pytorch-rag-reranking-moks-sre-agent
+  - blog/cloudnativepg-postgres-cluster-minikube-terraform
+  - blog/four-ai-systems-one-cluster
+sources:
+  - title: "BAAI/bge-m3 model card"
+    url: https://huggingface.co/BAAI/bge-m3
+    publisher: Hugging Face
+  - title: "bge-m3 in the Ollama library"
+    url: https://ollama.com/library/bge-m3
+    publisher: Ollama
+  - title: "pgvector"
+    url: https://github.com/pgvector/pgvector
+    publisher: GitHub
+  - title: "text-embeddings-inference"
+    url: https://github.com/huggingface/text-embeddings-inference
+    publisher: GitHub
+  - title: "MOKS source and docs"
+    url: https://github.com/mrjithendar/moks-sre
+    publisher: GitHub
+---
+<Todo>Drafted 2026-11-19 from moks-tech/kubernetes d9b6c49, mrjithendar/moks-sre 982dd05 and read-only checks on mk4 the same day. Before publishing: (1) run Knowledge → Rebuild index and the OpenSearch clean-up, then rewrite "Where this stands" and fill in the two TODO numbers below; (2) confirm the reasons given for PostgreSQL over LanceDB are the ones you want to state; (3) then set status to published with a publishedAt time.</Todo>
+
+MOKS, my SRE investigation portal, searches its own knowledge base (runbooks, design docs, skills) for almost every question it answers. On mk4, my three-node k3s cluster on Hetzner, that search ran on a bundled OpenSearch pod. On 19 November 2026 I replaced it with PostgreSQL and pgvector, embedded by **BAAI bge-m3** running on **Ollama** inside the cluster.
+
+The same bge-m3 pod also serves seo-agent, the service behind this site's Ask the Blog and news desk. Changing the model there turned out to be its own project, so it has [its own article](/blog/switch-embedding-model-bge-m3-seo-agent-jithendar-com). This one covers the shared model service and the MOKS side.
+
+:::callout{type="info" title="Where this stands (19 November 2026)"}
+**Merged and running:** the bge-m3 service, MOKS's embedding config, pgvector in the MOKS database, and `rag.backend: postgres`. **Not done yet:** the index rebuild that adds vectors (until then search is keyword-only, and says so) and deleting the old OpenSearch objects, which are still running.
+:::
+
+::toc
+
+## The problem: a 2.5 GiB search engine doing keyword search
+
+mk4 runs on three Hetzner cax21 servers: 4 arm64 vCPUs and 8 GiB of memory each. Before this change, memory requests on the three nodes stood at 82%, 89% and 65%. MOKS's search stack accounted for a good share of that:
+
+- the `moks-opensearch` StatefulSet, requesting **2 GiB**, with a 20 Gi local-path volume (reclaim policy `Retain`) on worker2;
+- **OpenSearch Dashboards**, requesting another **512 Mi**;
+- two public routes, `/opensearch` and `/opensearch-dashboards`, behind basic auth, plus alerts and a Grafana row for them.
+
+When I looked at what that pod was actually indexing, it was worse than I expected. MOKS keeps a history of its index generations in PostgreSQL, and mk4 had exactly one, created on 10 November:
+
+```text
+backend: opensearch   model_key: keyword-only   dimensions: None   status: active
+```
+
+No embedding model had ever been active on mk4: the Helm values seeded no LLM providers. So 2.5 GiB of memory requests were serving **BM25 over 730 chunks**, which PostgreSQL already does with `tsvector`. And the half of hybrid search that copes with paraphrase (the question says "pod keeps restarting", the runbook says "CrashLoopBackOff") wasn't there at all.
+
+## Choosing bge-m3, and why Ollama
+
+I wanted one embedding model that both MOKS and seo-agent could share, so one copy of the weights in memory serves the whole cluster. bge-m3 fit:
+
+- **1024-dimension dense vectors**, L2-normalised, with no query or passage prefix to get wrong.
+- **Multilingual** and trained on long inputs. The model card describes inputs of up to 8,192 tokens. I cap input at 2,048 tokens because both callers chunk to about 350 to 480 tokens.
+- Much larger than what seo-agent used before: bge-small-en-v1.5, English only, 384 dimensions. Whether that buys better retrieval on my own content is something to measure, not assume; the companion article covers that.
+
+The obvious server for it is Hugging Face's **text-embeddings-inference (TEI)**. But TEI publishes CPU images for amd64 only, and every mk4 node is arm64. **Ollama** has arm64 images and bge-m3 in its library (`bge-m3:567m`, the F16 build, 1.16 GB), so that decided it.
+
+The trade-off: Ollama serves only bge-m3's **dense** vectors, not its sparse or multi-vector outputs. That's acceptable here, because both callers already do keyword search in PostgreSQL. The model only has to supply the semantic half.
+
+## Deploying the model with Terraform
+
+![The bge-m3 deployment on mk4. embeddings.tf (Terraform) installs the local chart as helm_release bge-m3 with a timeout of at least 1200 seconds. In namespace embeddings (Istio sidecar, STRICT mTLS), the init container fetch-model pulls bge-m3:567m (F16, 1.16 GB) from registry.ollama.ai on the first start only, over HTTPS to public addresses, refuses any other digest and skips the download when the weights are already on the volume. The model volume is a 10 Gi Hetzner volume kept on uninstall. ollama serve 0.40.16, pinned by digest, loads the model once and keeps it loaded, uses a 2048-token context, embeds one request at a time and requests 1.5 GiB with a 2.5 GiB limit and no CPU limit. Two enforced policies, a NetworkPolicy and an AuthorizationPolicy, admit only seo-agent (namespace jithendar, service account default) and moks api, worker and crewai (namespace moks, service account moks) to the Service on port 11434 (/api/embed and /v1/embeddings). Any other pod, such as the moks executor or terminal, is refused. Measured on mk4: 1024 dimensions, cold load 5 s, a warm query about 650 ms, about 0.7 chunks per second, a batch of 32 in about 45 s, about 1.3 GiB resident and about 3.5 of 4 cores busy while embedding.](/images/bge-m3-embeddings/bge-m3-shared-service.svg)
+
+The service lives in the `kubernetes` repository: a Terraform file and a small local Helm chart. The Terraform is short:
+
+```hcl
+# minikube-infrastructure/embeddings.tf (excerpt)
+resource "kubernetes_namespace_v1" "embeddings" {
+  metadata {
+    name = "embeddings"
+    labels = {
+      "app.kubernetes.io/part-of" = "embeddings"
+      "istio-injection"           = "enabled"
+    }
+  }
+  depends_on = [helm_release.istiod]
+}
+
+resource "helm_release" "bge_m3" {
+  name      = "bge-m3"
+  namespace = kubernetes_namespace_v1.embeddings.metadata[0].name
+  chart     = "${local.minikube}/embeddings/bge-m3"
+  values    = [local.chart_checksum["embeddings/bge-m3"]]
+
+  wait = true
+  # The first start pulls a 2.9 GB image, attaches a new Hetzner volume and downloads 1.16 GB of weights.
+  timeout = max(var.helm_timeout, 1200)
+}
+```
+
+The interesting parts are in the chart.
+
+### Pin the weights, not just the image
+
+The Ollama image is pinned by its multi-arch index digest, as usual. But a model tag such as `bge-m3:567m` can be re-pushed. If the weights change, every stored vector quietly becomes incomparable with new ones. So the chart pins the **weights' digest** too, and an init container refuses anything else:
+
+```sh
+# deploy/minikube/embeddings/bge-m3/templates/deployment.yaml, init container fetch-model (excerpt)
+if [ -f "$manifest" ] && [ -f "$blob" ] && grep -q "$MODEL_DIGEST" "$manifest"; then
+  echo "$MODEL ($MODEL_DIGEST) is already on the volume"
+  exit 0
+fi
+# ...start a temporary ollama serve, then:
+ollama pull "$MODEL"
+if ! grep -q "$MODEL_DIGEST" "$manifest"; then
+  echo "$MODEL: the downloaded weights are not $MODEL_DIGEST (was the tag re-pushed?); refusing to serve them" >&2
+  exit 1
+fi
+```
+
+The weights go onto a 10 Gi Hetzner volume (about €0.50 a month) rather than node-local storage, so the pod can start on any node without downloading again. The claim carries `helm.sh/resource-policy: keep`, and the Deployment uses `Recreate` because the volume is ReadWriteOnce. The first start pulled about 2.9 GB of image and 1.16 GB of weights. A restart pulls nothing.
+
+### Keep it loaded, and don't set a CPU limit
+
+```yaml
+# values.yaml (excerpt)
+ollama:
+  contextLength: 2048
+  numParallel: 2
+resources:
+  requests:
+    cpu: 500m
+    memory: 1536Mi
+  limits:
+    memory: 2560Mi
+```
+
+The container also sets `OLLAMA_KEEP_ALIVE=-1` and `OLLAMA_MAX_LOADED_MODELS=1`. Without keep-alive, the first request after an idle period pays for loading 1.16 GB.
+
+There is **no CPU limit**, on purpose. Ollama's runner sizes its thread pool to the node's cores. A CFS quota smaller than that thread count stalls it on every batch. The 500m request decides its share when the node is busy.
+
+### Only two callers
+
+Embeddings of private runbooks are worth protecting, and an open model endpoint is free compute for anything in the cluster. So the chart lists its callers, and two independent policies enforce the list:
+
+```yaml
+# values.yaml
+callers:
+  - namespace: jithendar          # seo-agent
+    serviceAccount: default
+    podLabels:
+      app: seo-agent
+  - namespace: moks               # moks-api, moks-worker, moks-crewai
+    serviceAccount: moks
+    podLabels:
+      app: moks
+```
+
+The NetworkPolicy admits those namespaces and labels. The Istio AuthorizationPolicy, enforced rather than dry-run, admits only their mTLS identities (`cluster.local/ns/moks/sa/moks` and so on) on port 11434. That's why MOKS's command executor and web terminal can't reach the model, even though they run in the `moks` namespace: they use other service accounts. The pod itself runs as non-root, with all capabilities dropped and no service account token mounted.
+
+A new caller needs three things: an entry in `callers`, an egress rule to `embeddings:11434` in its own NetworkPolicy, and a sidecar.
+
+## What it measured
+
+On mk4, with the real model:
+
+| | Measured |
+|---|---|
+| Output | 1024 dimensions, L2-normalised |
+| Cold load | about 5 s |
+| One warm query | about 650 ms |
+| Throughput | **about 0.7 chunks/s** for chunks of about 325 tokens |
+| Batch of 32 chunks | about 45 s |
+| Memory | about 1.3 GiB resident |
+| CPU while embedding | about 3.5 of 4 cores |
+
+One surprise: I set `OLLAMA_NUM_PARALLEL=2`, and the server's log shows it, yet the runner starts with `-np 1` (`n_seq_max = 1`). **Ollama embeds one request at a time**, whatever that setting says. Everything that calls the model has to plan for a single queue.
+
+That number shapes the rest of this post. 0.7 chunks a second is fine for answering a question (one short embedding) and slow for indexing.
+
+## Pointing MOKS at the model
+
+MOKS keeps its LLM and embedding providers in its own database, and the Helm chart can seed them. The mk4 values now seed one embedding config:
+
+```yaml
+# deploy/helm/moks/values-hetzner.yaml (excerpt)
+seed:
+  llm:
+    - name: bge-m3
+      purpose: embedding
+      provider: ollama
+      model: bge-m3:567m                      # the chart's model.name; a new tag or digest means a reindex
+      endpoint: http://bge-m3.embeddings:11434
+      embedding_dimensions: 1024
+      timeout_seconds: 300
+      max_concurrency: 1
+      is_active: true
+```
+
+The seed is **create-only**. It activates the entry only when no embedding model is active yet, so a choice made later in the portal is never overwritten by a pod restart. MOKS's existing `ollama` provider already had an `embed()` that calls `/api/embed`, so no new code was needed.
+
+The two limits come straight from the measurements:
+
+- **`timeout_seconds: 300`.** MOKS indexes in batches of 32, which take about 45 s. A timeout tuned for chat calls would cut them off.
+- **`max_concurrency: 1`.** MOKS enforces this with reservation rows in PostgreSQL, taken under an advisory lock, so the limit holds across both API replicas, the worker and the CrewAI pod. A search asks for the slot with a short wait:
+
+```python
+# backend/moks/rag/service.py, _query_vector (excerpt)
+try:
+    return (await budget.embed(provider_for(cfg), cfg, [query], user_id=uuid.UUID(principal.user_id),
+                               purpose="search", wait_seconds=2))[0], None
+except (LLMError, ConnectorError) as exc:
+    log.warning("vector search unavailable", extra={"event": "vector_search_failed", "errorType": type(exc).__name__})
+    return None, f"embedding failed ({getattr(exc, 'kind', 'error')}), so this is keyword only"
+```
+
+If an index batch holds the slot, a question waits two seconds and then answers keyword-only, with the reason attached, instead of queueing for up to 45 s. The same function returns a reason for every other way vectors can be missing: no index yet, no active model, an index built by another model, no pgvector. Every search response reports which mode actually ran, and why.
+
+The last piece is an egress rule in MOKS's NetworkPolicy: namespace `embeddings`, port 11434.
+
+## From OpenSearch to PostgreSQL and pgvector
+
+My first plan was a new LanceDB backend for MOKS, storing vectors in Cloudflare R2. I dropped it in favour of something MOKS already had: its **PostgresBackend**.
+
+- PostgreSQL is already the source of truth for MOKS's documents, chunk text and access rules. It already runs two of the three rankers (keyword and exact identifiers).
+- The shared CloudNativePG image already contains **pgvector 0.8.6**.
+- At 730 chunks, an exact k-NN scan is cheap. There's no approximate index to tune.
+- One store instead of two means no bucket, no credentials and no second copy to keep in sync.
+
+![MOKS knowledge search on mk4, before and after. Before (rag.backend opensearch, 10 to 19 November 2026): moks api and worker index on every sync and search for every question. They send BM25 searches to moks-opensearch (a keyword-only index without vectors, 2 GiB requested, a 20 Gi volume on worker2) and read documents, chunk text, access rules and history from PostgreSQL. OpenSearch Dashboards (512 Mi requested) and the public /opensearch routes with basic auth also point at OpenSearch. After (rag.backend postgres): the same code uses the PostgresBackend. The question goes to the shared bge-m3, which returns a 1024-dimension vector; it takes one call at a time, waits 2 seconds for the slot, and otherwise the search is keyword-only. PostgreSQL on CloudNativePG returns three rankings: tsvector keyword, identifier match and pgvector k-NN by cosine distance. moks fuses them with RRF (k = 60), checks access on every chunk and optionally reranks. Memory requests: OpenSearch's 2 GiB and Dashboards' 512 Mi go, and bge-m3's 1.5 GiB comes, shared with seo-agent.](/images/bge-m3-embeddings/moks-search-before-after.svg)
+
+### Installing an untrusted extension for a tenant
+
+There was one obstacle. pgvector is not a **trusted** extension, so the `moks` database role can't `CREATE EXTENSION vector` itself. MOKS's migration 0002 tries it, and on the shared cluster it had quietly skipped the vector column. The fix belongs to the cluster, not the application. The `kubernetes` repository's Terraform now lets each tenant database list extensions, and the CloudNativePG operator creates them as the superuser:
+
+```hcl
+# minikube-infrastructure/vars/mk4.tfvars (excerpt)
+postgres_databases = {
+  jithendar = { namespace = "jithendar" }
+  moks      = { namespace = "moks", extensions = ["vector"] } # pgvector for its knowledge search (rag.backend postgres)
+}
+```
+
+Then MOKS adds the column itself, the next time it builds an index:
+
+```python
+# backend/moks/rag/backends.py, PostgresBackend
+async def enable_vector(self) -> bool:
+    if await self.has_vector():
+        return True
+    if (await self.db.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'"))).first() is None:
+        return False
+    await self.db.execute(text("ALTER TABLE chunk_embeddings ADD COLUMN IF NOT EXISTS embedding vector"))
+    return True
+```
+
+Without the extension, index builds stay keyword-only as before, and `moks reindex` explains how to install it.
+
+### Three rankings, one fusion
+
+For each question the PostgresBackend produces three ranked lists of chunk ids:
+
+1. **Keyword:** `websearch_to_tsquery` ranked by `ts_rank_cd`. If nothing matches, it retries with OR semantics so partial matches still rank.
+2. **Identifiers:** error codes, resource names, paths and config keys pulled out of the question with a regular expression and matched exactly with `ILIKE`. Embeddings are poor at `ERR_PAY_4071`. An engineer pasting it is giving the best clue they have.
+3. **Vector:** `ORDER BY e.embedding <=> CAST(:v AS vector)`, cosine distance against the active index generation.
+
+MOKS fuses the three with Reciprocal Rank Fusion, which needs no score calibration between rankers:
+
+```python
+# backend/moks/rag/backends.py
+RRF_K = 60
+
+def rrf(*rankings: list[str]) -> list[tuple[str, float]]:
+    scores: dict[str, float] = {}
+    for ranking in rankings:
+        for rank, cid in enumerate(ranking):
+            scores[cid] = scores.get(cid, 0.0) + 1.0 / (RRF_K + rank + 1)
+    return sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+```
+
+Only after fusion does MOKS load the chunks and check access on each one. Whatever a ranker returned is a suggestion, and PostgreSQL's access check decides. Reranking, when it's on, comes after that ([the reranker article](/blog/pytorch-rag-reranking-moks-sre-agent) covers it).
+
+The column is a plain `vector` with no fixed size, and there's no HNSW index. An HNSW index needs a fixed dimension, and at 730 chunks a sequential scan is quick. If the knowledge base grows by an order of magnitude, that's the first thing to revisit.
+
+## Rolling it out without a gap
+
+![MOKS on bge-m3 as of 19 November 2026. Four merged changes: kubernetes#10, the bge-m3 chart and Terraform, applied with the pod on worker3; moks-sre#55, which seeds the bge-m3 config and adds egress to embeddings port 11434; kubernetes#12, pgvector for the moks database with the /opensearch routes removed; and moks-sre#67, rag.backend postgres, taking OpenSearch out of the Argo CD sync. #12 and #67 are safe to merge in either order. Two steps are still to do: Rebuild index (from the Knowledge page or moks reindex; 730 chunks at about 0.7 chunks per second take about 17 minutes; it adds the vector column, and search is keyword-only until then), and deleting what Argo CD left behind: the Application, StatefulSet, Deployment, Services, NetworkPolicies, VirtualServices, the PVC, the Retain PV and its directory on worker2. Argo CD never prunes on mk4, so merging #67 stopped syncing OpenSearch but left it running; its 2 GiB comes back only after the clean-up.](/images/bge-m3-embeddings/moks-bge-m3-rollout.svg)
+
+Four pull requests across two repositories, merged on the same day:
+
+1. **kubernetes#10** deployed bge-m3. Nothing called it yet.
+2. **moks-sre#55** seeded the bge-m3 config and the egress rule. MOKS was still on OpenSearch.
+3. **kubernetes#12** installed pgvector for `moks` and removed the public `/opensearch` routes, their logins, the three OpenSearch alerts and the Harbor mirror of the image.
+4. **moks-sre#67** set `rag.backend: postgres`, removed the OpenSearch settings from the mk4 values, and moved the `moks-opensearch` Argo CD application to `optional/`. The OpenSearch backend stays in the product for other environments.
+
+The last two were designed to merge **in either order**. If the cluster change landed first, MOKS kept using OpenSearch over the in-cluster Service, and only the public URLs stopped answering. If the MOKS change landed first, search ran keyword-only in PostgreSQL until the extension appeared, and the next index build added the vector column. Neither order breaks search.
+
+What neither PR does is delete OpenSearch. **Argo CD never prunes on mk4**, so moving the application out of the sync left the StatefulSet, Dashboards, Services, NetworkPolicies, VirtualServices and the volume running. That's deliberate: deleting a data volume should be a decision someone makes, not a side effect of a merge. MOKS's operator guide has the runbook:
+
+```sh
+kubectl -n argocd delete application moks-opensearch
+kubectl -n moks delete statefulset/moks-opensearch deployment/moks-opensearch-dashboards \
+  service/moks-opensearch service/moks-opensearch-dashboards \
+  networkpolicy/moks-opensearch networkpolicy/moks-opensearch-dashboards \
+  virtualservice/moks-opensearch virtualservice/moks-opensearch-dashboards
+kubectl -n moks delete pvc data-moks-opensearch-0
+kubectl get pv | grep data-moks-opensearch-0          # reclaim policy Retain: delete the PV by name
+```
+
+A `Retain` local-path volume also leaves its directory on the node, so the last step is removing it from worker2 to get the disk back.
+
+Before that, **Rebuild index** on the Knowledge page (or `moks reindex`) builds the first generation with vectors. At about 0.7 chunks a second, 730 chunks should take about 17 minutes. Search stays on keyword until the new generation is complete, then switches.
+
+<Todo>After the rebuild: the actual duration, vector coverage from the Knowledge page, and hybrid vs keyword-only results from `moks eval` on the same questions.</Todo>
+
+## What it costs, and what I gave up
+
+**Memory requests go down by about 1 GiB.** OpenSearch's 2 GiB and Dashboards' 512 Mi go, and bge-m3's 1.5 GiB comes in, and that 1.5 GiB also serves seo-agent. Disk swaps a 20 Gi local-path volume on one node for a 10 Gi Hetzner volume that can follow the pod.
+
+**Indexing is slow.** 0.7 chunks a second is the price of a 567M-parameter model on four ARM cores. MOKS's 730 chunks take about a quarter of an hour, and seo-agent's 2,117 take about 50 minutes. Both are rare, deliberate operations, and search keeps working on keyword while they run.
+
+**Both callers share one queue.** MOKS's two-second slot wait only covers MOKS's own calls. While seo-agent is reindexing, a MOKS question's embedding waits in Ollama's queue behind one of seo-agent's batches of 8. By the throughput above, that's up to roughly 11 seconds. That's an estimate, not a measurement, and the first thing I'll watch once both callers are live.
+
+**One replica.** If the bge-m3 pod is down or restarting, MOKS answers keyword-only with a reason, and seo-agent's Ask the Blog falls back. Nothing fails hard, but nothing is semantic either. A second replica would double the memory, which isn't worth it for this cluster.
+
+**Dense only.** bge-m3 can produce sparse lexical weights too, but Ollama doesn't serve them. PostgreSQL's full-text search fills that role.
+
+## What's next
+
+The rebuild and the clean-up come first. After that, the same model gets its second caller: seo-agent, where swapping bge-small for bge-m3 meant recalibrating five similarity cutoffs and migrating a news desk's stored vectors in place. That's [the companion article](/blog/switch-embedding-model-bge-m3-seo-agent-jithendar-com).
