@@ -1,0 +1,622 @@
+---
+title: "How We Deploy to Kubernetes with Argo CD: App of Apps, Guardrails and the :latest Trap"
+slug: argocd-gitops-deploy-k3s-app-of-apps
+description: "How 26 Argo CD Applications deploy MOKS and RoboShop to our k3s cluster: AppProjects, an app of apps, one Helm chart split in eight, sync policy and lessons."
+seoTitle: "Argo CD App of Apps on k3s: A Complete GitOps Deployment Tutorial"
+seoDescription: "A fact-checked Argo CD tutorial from a real k3s cluster: AppProjects, app of apps, one Helm chart split into Applications, safe sync options, :latest images."
+author: jithendar-dharmapuri
+category: kubernetes
+tags: [Argo CD, GitOps, Kubernetes, k3s, Helm, Kustomize, Terraform, DevOps]
+contentType: tutorial
+status: review
+featuredImage:
+  src: /images/argocd-mk4/argocd-mk4-who-deploys-what.png
+  alt: "Who deploys what on mk4. Four Git repositories: moks-tech/kubernetes feeds Terraform, which CI applies on merge and which installs the platform Helm releases (Istio, Valkey, CloudNativePG, Harbor) and Argo CD itself. Argo CD v3.5.5 in namespace argocd reads master of mrjithendar/moks-sre and mrjithendar/roboshop-ai and syncs 26 Applications in 3 projects, with automated sync and selfHeal but never prune, polling Git every 120 seconds plus up to 60 seconds of jitter. moks-tech/jithendar.com is applied by a GitHub Actions kubectl job instead. On the cluster (k3s v1.37 on Hetzner, one cax11 control plane and three cax21 workers, all arm64): the platform namespaces from Terraform; moks-sre with 9 Applications and 68 tracked resources from one Helm chart split into 8 groups; roboshop-ai with 17 Applications and 42 tracked resources from Kustomize with patches; and jithendar, the site and seo-agent, applied by CI. On 20 November 2026 at about 13:45 UTC, 25 of 26 Applications were Synced and Healthy; moks-foundation was OutOfSync because two leftover PeerAuthentications wait for a prune that never comes."
+  width: 1922
+  height: 1242
+related:
+  - blog/moks-sre-github-actions-ci-cd-pipeline
+  - blog/four-ai-systems-one-cluster
+  - blog/istio-service-mesh-minikube-features-setup-troubleshooting
+  - blog/github-actions-authenticate-minikube
+  - blog/bge-m3-ollama-pgvector-moks-sre-retire-opensearch
+  - blog/15-essential-kubernetes-tools-devops-engineers-2026-part-1
+sources:
+  - title: "Cluster Bootstrapping (App of Apps)"
+    url: https://argo-cd.readthedocs.io/en/stable/operator-manual/cluster-bootstrapping/
+    publisher: Argo CD documentation
+  - title: "Automated Sync Policy"
+    url: https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/
+    publisher: Argo CD documentation
+  - title: "Sync Options"
+    url: https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/
+    publisher: Argo CD documentation
+  - title: "Projects"
+    url: https://argo-cd.readthedocs.io/en/stable/user-guide/projects/
+    publisher: Argo CD documentation
+  - title: "App Deletion"
+    url: https://argo-cd.readthedocs.io/en/stable/user-guide/app_deletion/
+    publisher: Argo CD documentation
+  - title: "Resource Actions"
+    url: https://argo-cd.readthedocs.io/en/stable/operator-manual/resource_actions/
+    publisher: Argo CD documentation
+  - title: "Upgrading 2.4 to 2.5: out-of-bounds symlinks now blocked at fetch"
+    url: https://argo-cd.readthedocs.io/en/stable/operator-manual/upgrading/2.4-2.5/
+    publisher: Argo CD documentation
+  - title: "argo-cd Helm chart"
+    url: https://github.com/argoproj/argo-helm/tree/main/charts/argo-cd
+    publisher: GitHub (argoproj/argo-helm)
+  - title: "helm_release resource"
+    url: https://registry.terraform.io/providers/hashicorp/helm/latest/docs/resources/release
+    publisher: Terraform Registry
+  - title: "MOKS source, chart and Argo CD Applications"
+    url: https://github.com/mrjithendar/moks-sre
+    publisher: GitHub
+  - title: "RoboShop AI source and Argo CD Applications"
+    url: https://github.com/mrjithendar/roboshop-ai
+    publisher: GitHub
+  - title: "mk4 cluster: Terraform and Argo CD install"
+    url: https://github.com/moks-tech/kubernetes
+    publisher: GitHub
+---
+<Todo>Drafted 2026-11-20 from moks-tech/kubernetes b74771b, mrjithendar/moks-sre 7e09449, mrjithendar/roboshop-ai 6f3a341 and read-only kubectl/helm on mk4 at about 13:45 UTC. Before publishing: (1) decide whether to keep "What went wrong" as written (it names real incidents and PR numbers); (2) if the two leftover PeerAuthentications have been deleted, or MK4_DEPLOY has been switched on, update "Where this stands" and Step 8; (3) the 16 to 19 November InvalidSpecError comes from the 19 November session notes, not from a log; (4) set status to published with a publishedAt time.</Todo>
+
+Every workload we run on mk4, our k3s cluster on Hetzner, gets there one of three ways: Terraform, Argo CD, or one GitHub Actions job running `kubectl`. This article is about the middle one. Argo CD deploys two systems for us: **MOKS**, our AI SRE portal, and **RoboShop AI**, a microservices demo shop. That is 26 Argo CD Applications and 110 Kubernetes objects, and nobody runs `kubectl apply` on any of them.
+
+Everything below is taken from the three repositories involved and from the live cluster on 20 November 2026. Every YAML snippet is a copy of a committed file, with `...` where we cut lines (and a few comments trimmed). Where something went wrong, we say when, and how we found out.
+
+:::callout{type="info" title="Where this stands (20 November 2026, about 13:45 UTC)"}
+Argo CD v3.5.5 (Helm chart `argo-cd` 10.10.5) runs 26 Applications in three projects. 25 are Synced and Healthy. `moks-foundation` is OutOfSync on purpose: two objects that Git no longer has are waiting for a prune that our sync policy never runs. The CI job that can sync and restart MOKS through Argo CD exists, but it is switched off, so new MOKS images still need a `rollout restart`.
+:::
+
+::toc
+
+## What runs where, and why Argo CD does not deploy everything
+
+![Who deploys what on mk4. Four Git repositories: moks-tech/kubernetes feeds Terraform, which CI applies on merge and which installs the platform Helm releases (Istio, Valkey, CloudNativePG, Harbor) and Argo CD itself. Argo CD v3.5.5 in namespace argocd reads master of mrjithendar/moks-sre and mrjithendar/roboshop-ai and syncs 26 Applications in 3 projects, with automated sync and selfHeal but never prune, polling Git every 120 seconds plus up to 60 seconds of jitter. moks-tech/jithendar.com is applied by a GitHub Actions kubectl job instead. On the cluster (k3s v1.37 on Hetzner, one cax11 control plane and three cax21 workers, all arm64): the platform namespaces from Terraform; moks-sre with 9 Applications and 68 tracked resources from one Helm chart split into 8 groups; roboshop-ai with 17 Applications and 42 tracked resources from Kustomize with patches; and jithendar, the site and seo-agent, applied by CI. On 20 November 2026 at about 13:45 UTC, 25 of 26 Applications were Synced and Healthy; moks-foundation was OutOfSync because two leftover PeerAuthentications wait for a prune that never comes.](/images/argocd-mk4/argocd-mk4-who-deploys-what.svg)
+
+| Who deploys | What | From | Why this tool |
+|---|---|---|---|
+| **Terraform** (CI applies on merge) | Istio, cert-manager, Prometheus, Grafana, Loki, Valkey, CloudNativePG, Harbor, bge-m3, **and Argo CD itself** | `moks-tech/kubernetes`, `minikube-infrastructure/*.tf` | The platform has ordering and secrets between releases (Argo CD needs a Valkey login before it starts). Argo CD should not depend on something it deploys. |
+| **Argo CD** | MOKS (namespace `moks-sre`), RoboShop (namespace `roboshop-ai`) | `mrjithendar/moks-sre`, `mrjithendar/roboshop-ai`, branch `master` | Many components that change often; `selfHeal` keeps each one equal to Git. |
+| **GitHub Actions + kubectl** | jithendar.com and seo-agent (namespace `jithendar`) | `moks-tech/jithendar.com` | The site's own repository applies its manifests and restarts its Deployments in one workflow (`deploy-kubernetes.yml`); it was never moved to Argo CD. |
+
+The cluster add-ons were once Argo CD Applications too; the kubernetes repository's test fixtures still contain them (metrics-server, cert-manager, Grafana, Prometheus, Loki, the OpenTelemetry Collector, Jaeger). The catalog code (`scripts/argocd/deploy.py`, `validate.py`) and an AppProject `mk-platform` remain, but the catalog's `kustomization.yaml` lists only that project, and its README says why: the add-ons are Terraform Helm releases now. On mk4 that project is not even applied; nothing uses it.
+
+The rule we ended up with: **Terraform for the platform, Argo CD for the applications.** The rest of this article is the second half.
+
+## Before you start
+
+You need, on the cluster:
+
+- **Argo CD installed** in namespace `argocd` (Step 1).
+- **The namespaces' prerequisites that Argo CD will not create.** Our projects deny Secrets, so every Secret an app reads exists before its first sync (Step 7).
+- **Images the nodes can run.** mk4 is all arm64; an amd64-only image fails with `exec format error` no matter how green Argo CD looks.
+
+And on your machine: `kubectl` with admin on the cluster, and the `argocd` CLI if you want `argocd app diff` (CI pins v3.5.6 by checksum). Everything in Steps 2 to 5 is plain YAML applied with `kubectl`; the CLI is optional.
+
+## Step 1: Install Argo CD as a Terraform Helm release
+
+We install Argo CD the same way as the rest of the platform: a `helm_release` in `minikube-infrastructure/argocd.tf`.
+
+```hcl title="minikube-infrastructure/argocd.tf (moks-tech/kubernetes)"
+resource "helm_release" "argocd" {
+  name       = "argocd"
+  namespace  = kubernetes_namespace_v1.argocd.metadata[0].name
+  repository = "https://argoproj.github.io/argo-helm"
+  chart      = "argo-cd"
+  version    = "10.10.5"
+  values = [
+    file("${local.minikube}/argocd/values.yaml"),
+    # The pods read the password at start: a new one (tainted random_password) must roll them.
+    yamlencode({ global = { podAnnotations = { "checksum/redis" = sha1(random_password.redis["argocd"].result) } } }),
+  ]
+  ...
+  depends_on = [
+    helm_release.istiod, helm_release.redis, helm_release.redis_access, helm_release.istio_edge,
+    kubernetes_secret_v1.argocd_redis,
+  ]
+}
+```
+
+The values that matter for deploying apps:
+
+```yaml title="deploy/minikube/argocd/values.yaml (excerpt)"
+fullnameOverride: argocd
+configs:
+  cm:
+    url: https://jithendar.com/argocd
+    admin.enabled: true
+    users.anonymous.enabled: false
+  params:
+    server.insecure: true
+    server.rootpath: /argocd
+    server.basehref: /argocd
+    # Argo CD's database on the shared Valkey: ACL user argocd may open only this one (redis.tf, local.argocd_redis).
+    redis.db: "7"
+...
+redis:
+  enabled: false
+redis-ha:
+  enabled: false
+externalRedis:
+  host: valkey-master.redis.svc.cluster.local
+  port: 6379
+  # redis-username and redis-password of ACL user argocd, written by argocd.tf.
+  existingSecret: argocd-redis-valkey
+
+dex:
+  enabled: false
+notifications:
+  enabled: false
+applicationSet:
+  enabled: false
+```
+
+`server.insecure` is safe here because TLS ends at the Istio gateway in front of it; the root path makes Argo CD serve under `/argocd` without the gateway stripping the prefix.
+
+That gives four pods, each with an Istio sidecar (2/2): `argocd-server`, `argocd-repo-server`, the `argocd-application-controller` StatefulSet, and `argocd-applicationset-controller`. The last one is there although the values file says `applicationSet.enabled: false`: chart 10.10.5 has no such key (its `applicationSet` section starts with `name` and `replicas`), so the line does nothing. We do not use ApplicationSets yet.
+
+Terraform has upgraded the release six times. Revisions 1 and 2 on 10 November installed it; revisions 3 to 6 on 19 November, between 12:27 and 13:05 UTC, were four fixes for Cloudflare caching Argo CD's pages and API, one Helm revision per commit. The install, the `/argocd` route behind Istio and those cache fixes deserve their own walkthrough, so here is just how to sign in:
+
+```bash
+kubectl -n argocd get secret argocd-initial-admin-secret \
+  -o jsonpath='{.data.password}' | base64 --decode; echo
+
+argocd login jithendar.com --grpc-web --grpc-web-root-path /argocd --username admin
+```
+
+Change the admin password on the User Info page afterwards. Anonymous access is off.
+
+## Step 2: Write the AppProjects first
+
+An Application always belongs to a project, and the project is the only thing that limits what it can do: which repositories it reads, which namespaces it writes to, which kinds it may create. We have three projects in use.
+
+| Project | Source repos | Destinations | Notable rules |
+|---|---|---|---|
+| `moks-root` | `mrjithendar/moks-sre` | namespace `argocd` only | may create `Application` objects and nothing else; no cluster-scoped kinds |
+| `moks` | `mrjithendar/moks-sre` | `moks-sre`, plus Roles in `jithendar`, `roboshop-ai`, `velero`, `harbor`, `monitoring`, `observability` | 20 namespaced kinds listed one by one; `Namespace`, `ClusterRole`, `ClusterRoleBinding` cluster-wide; **no Secret**; a `ci` role |
+| `roboshop` | `mrjithendar/roboshop-ai` | `roboshop-ai` | every namespaced kind **except Secret**; only `Namespace` cluster-wide |
+
+Here is the MOKS project, shortened:
+
+```yaml title="deploy/argocd/hetzner/project.yaml (mrjithendar/moks-sre)"
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: moks
+  namespace: argocd
+spec:
+  description: MOKS SRE portal
+  sourceRepos:
+    - https://github.com/mrjithendar/moks-sre.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: moks-sre
+    - server: https://kubernetes.default.svc
+      namespace: jithendar          # Role for database backups (databaseBackups.namespaces)
+    ...
+  clusterResourceWhitelist:
+    - {group: "", kind: Namespace}
+    - {group: rbac.authorization.k8s.io, kind: ClusterRole}
+    - {group: rbac.authorization.k8s.io, kind: ClusterRoleBinding}
+  namespaceResourceWhitelist:
+    - {group: "", kind: ConfigMap}
+    - {group: "", kind: Service}
+    ...
+    - {group: apps, kind: Deployment}
+    - {group: apps, kind: ReplicaSet}  # Argo CD leaves unlisted kinds out of the app tree, so these
+    - {group: "", kind: Pod}           # two are what show the portal's pods, logs and events
+    ...
+  # Secrets are deliberately absent: they are created out of band (deploy/secrets) and Argo CD
+  # can neither create nor prune them.
+```
+
+Two choices here are worth copying.
+
+**The root gets its own project.** An Application can name any project. If the root that writes Applications lived in `moks`, anyone who could change the root's folder could write an Application in a more powerful project. `moks-root` may only create Applications in `argocd`, and the AppProjects themselves are *not* in any folder an Application reads, so no sync can widen a project.
+
+**List kinds instead of `'*'`.** A whitelist is noisier to maintain (the comment about ReplicaSet and Pod is there because the UI hid the pods until they were listed), but a chart change that suddenly renders a new kind fails loudly instead of slipping in.
+
+The cost of keeping projects out of Git sync is that **they drift**. They are applied by hand (`scripts/deploy-hetzner.sh` does it), so the live project is whatever was applied last. Right now Git lists one source repository for `moks` and `moks-root`, and the live objects list two: the new URL and the old `mrjithendar/moks.git` from before the repository was renamed. That one is harmless. The rename itself was not; see [What went wrong](#what-went-wrong-with-dates).
+
+## Step 3: One Helm chart, eight Applications
+
+MOKS is one Helm chart (`deploy/helm/moks`). Until November it was also one Argo CD Application, so every sync touched everything: the API, the workers, the executor, its RBAC, the network policies. We split it without splitting the chart. Every template is wrapped in a group check:
+
+```yaml title="deploy/helm/moks/templates/_helpers.tpl"
+{{/* resourceGroup picks what this render contains: "all" for the whole chart, or one group for one
+     child Argo CD Application (docs/ARGOCD_APP_SPLIT.md). Every resource belongs to exactly one group.
+     Returns "true" or nothing, and refuses a typo rather than rendering an empty Application. */}}
+{{- define "moks.inGroup" -}}
+{{- $selected := toString .root.Values.resourceGroup -}}
+{{- if not (has $selected (list "all" "foundation" "database" "migrate" "api" "worker" "executor" "terminal" "reranker" "routing" "backup" "crewai")) -}}
+{{- fail (printf "resourceGroup %q is not a resource group; see docs/ARGOCD_APP_SPLIT.md" $selected) -}}
+{{- end -}}
+{{- if or (eq $selected "all") (eq $selected .group) -}}true{{- end -}}
+{{- end -}}
+```
+
+```yaml title="deploy/helm/moks/templates/api.yaml (first lines)"
+{{- if include "moks.inGroup" (dict "root" . "group" "api") }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: moks-api
+```
+
+Each child Application passes `resourceGroup` as a Helm parameter and keeps the same `releaseName: moks`, so names, labels and the ConfigMap checksums stay exactly what they were in the single Application. Moving a resource between Applications therefore restarts nothing.
+
+Three details make this safe:
+
+- **The `fail` on an unknown group.** Without it, a typo in an Application renders zero objects, and an empty render plus a prune would delete everything that Application tracked.
+- **A CI check for coverage.** `scripts/validate-argocd-split.py` fails if a group renders something and has no Application, or the other way round.
+- **Shared objects live in one group.** `moks-config` is hashed by every Deployment but rendered only by `foundation`; where `routing` holds Istio policy (on our EKS environment), the deny-all AuthorizationPolicy and every ALLOW rule stay together in it, because syncing a deny without its allows would cut PostgreSQL off. On mk4, `moks-routing` holds just the `/moks` VirtualService.
+
+## Step 4: The app of apps for MOKS
+
+![Two catalog shapes on mk4. MOKS, an app of apps from mrjithendar/moks-sre: scripts/deploy-hetzner.sh runs a preflight (Argo CD, CloudNativePG, Secrets), applies two projects and the root with kubectl, and waits for Synced and Healthy. The root, moks-root in project moks-root, reads deploy/argocd/hetzner/apps and may only write Applications into namespace argocd. It writes 8 children named moks- plus a group: foundation with 18 resources, api 3, worker 1, crewai 1, executor 26, terminal 8, routing 1 and reranker 10. Every child has the same source: chart deploy/helm/moks with values-hetzner.yaml, release name moks and a resourceGroup parameter, destination namespace moks-sre; only foundation creates the namespace and sets its labels. A folder optional/ is not read by the root: database, migrate and backup render nothing on mk4, and moving a file into apps/ turns one on. RoboShop, a flat catalog from roboshop-ai: kubectl apply -k argocd-k3s, applied by hand with no parent Application, creates the AppProject roboshop (one repository, one namespace, Secrets denied) and 17 Applications named roboshop- plus an app: web, user, cart, catalogue, payment, shipping, currency, ai-gateway, mcp-server, kafka-bridge, moks, mongodb, postgres, rabbitmq, roboshop-config, mesh and routing, 42 resources tracked. Kustomize patches in the spec move 5 apps' volumes from gp3-encrypted to hcloud-volumes and set the origin and Turnstile host to jithendar.com. Both use automated sync with selfHeal, prune off, Prune=false,Delete=false on every Application, no finalizer and branch master.](/images/argocd-mk4/argocd-mk4-app-of-apps.svg)
+
+The root is an ordinary Application whose source folder contains Application manifests:
+
+```yaml title="deploy/argocd/hetzner/root.yaml"
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: moks-root
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  project: moks-root
+  source:
+    repoURL: https://github.com/mrjithendar/moks-sre.git
+    targetRevision: master
+    path: deploy/argocd/hetzner/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      enabled: true
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - PruneLast=true
+      - FailOnSharedResource=true
+```
+
+And one of the eight children:
+
+```yaml title="deploy/argocd/hetzner/apps/moks-api.yaml"
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: moks-api
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  project: moks
+  source:
+    repoURL: https://github.com/mrjithendar/moks-sre.git
+    targetRevision: master
+    path: deploy/helm/moks
+    helm:
+      releaseName: moks
+      valueFiles: [values-hetzner.yaml]
+      parameters:
+        - {name: resourceGroup, value: api}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: moks-sre
+  syncPolicy:
+    automated:
+      enabled: true
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - PruneLast=true
+      - FailOnSharedResource=true
+```
+
+The children are identical apart from the name and the group. One of them, `moks-foundation`, also owns the namespace:
+
+```yaml title="deploy/argocd/hetzner/apps/moks-foundation.yaml (syncPolicy)"
+  syncPolicy:
+    ...
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true
+      - FailOnSharedResource=true
+    managedNamespaceMetadata:
+      labels:
+        app.kubernetes.io/part-of: moks
+        pod-security.kubernetes.io/enforce: baseline
+        pod-security.kubernetes.io/warn: restricted
+        istio-injection: enabled   # sidecars (values-hetzner.yaml mesh); session pods opt out by label
+```
+
+Only one Application may set namespace metadata. If two did, they would fight over the labels on every sync.
+
+### Bootstrapping it
+
+`scripts/deploy-hetzner.sh` is the only imperative step, and it is safe to rerun:
+
+1. **Preflight, read-only:** Argo CD and the CloudNativePG cluster exist; the local checkout matches `origin/master` for the chart and the Argo CD folders ("Argo CD reads origin/master, which differs from this checkout. Push first."); six Secrets exist in `moks-sre`; the Harbor registry answers.
+2. **Apply** `project-root.yaml`, `hetzner/project.yaml` and `root.yaml` in one `kubectl apply`, then annotate the root with `argocd.argoproj.io/refresh=hard`.
+3. **Retire** child Applications whose file moved to `optional/`, but only if they have no finalizer and track no resources.
+4. **Wait** up to ten minutes for every child to be `Synced/Healthy`, then `curl` `https://jithendar.com/moks/api/health`.
+
+```bash
+scripts/deploy-hetzner.sh --check     # read-only preflight
+scripts/deploy-hetzner.sh             # preflight, apply projects + root, wait for the children
+```
+
+On mk4 the root and seven children were created on 10 November at 11:58 UTC; `moks-routing` joined on 19 November. The tracked resources per child today: foundation 18, executor 26, reranker 10, terminal 8, api 3, and one each for worker, crewai and routing.
+
+:::callout{type="warning" title="A Synced root says nothing about the children"}
+Syncing `moks-root` only writes Application objects. It does not wait for the children, and Argo CD does not judge a parent by its children's health by default. That is why the script polls each child, and why CI (Step 8) syncs the children one by one instead of the root.
+:::
+
+The `optional/` folder holds three more Applications (`moks-database`, `moks-migrate`, `moks-backup`) that would render nothing on mk4 today: PostgreSQL is the shared CloudNativePG cluster, not a bundled StatefulSet. The root reads only `apps/`, so moving a file between the folders is how a group is turned on or off.
+
+## Step 5: A flat catalog for RoboShop
+
+RoboShop does not use a root. Its 17 Applications and their project sit in one folder with a `kustomization.yaml`, applied once by hand:
+
+```bash
+kubectl label namespace roboshop-ai istio-injection=enabled --overwrite
+kubectl apply -k argocd-k3s
+kubectl -n argocd get applications -l app.kubernetes.io/part-of=roboshop-k3s
+```
+
+The manifests in `services/*` were written for EKS, so the k3s Applications patch them on the way in instead of forking them. The PostgreSQL one, for example:
+
+```yaml title="argocd-k3s/postgres.yaml (mrjithendar/roboshop-ai)"
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: roboshop-postgres
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: roboshop-k3s
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  project: roboshop
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: roboshop-ai
+  syncPolicy:
+    automated:
+      enabled: true
+      prune: false
+      selfHeal: true
+    syncOptions:
+    - FailOnSharedResource=true
+    - PruneLast=true
+    - CreateNamespace=true
+  # Hetzner k3s: Hetzner Cloud volumes (hcloud-volumes, the default); the manifests ask for EKS gp3-encrypted.
+  source:
+    repoURL: https://github.com/mrjithendar/roboshop-ai.git
+    targetRevision: master
+    path: services/postgres
+    kustomize:
+      patches:
+      - target:
+          kind: PersistentVolumeClaim
+          name: shipping-postgres
+        patch: |-
+          - op: replace
+            path: /spec/storageClassName
+            value: hcloud-volumes
+```
+
+Five Applications patch a storage class this way (ai-gateway, kafka-bridge, mongodb, postgres, rabbitmq). `roboshop-config` patches the public origin and Turnstile host to `jithendar.com`, and `mesh` and `routing` read k3s-only folders (`argocd-k3s/apps/*`).
+
+**Root or flat list?** The flat list is simpler and we would choose it again for a catalog that rarely changes. Its price: adding or removing an Application is a manual `kubectl apply -k`, and nothing notices if someone deletes one. With a root, a new file in `apps/` is a deployment like any other.
+
+## Step 6: The sync policy, line by line
+
+Every one of the 26 Applications uses the same policy. This table is the most important part of the article, because each line is a decision about what happens when something goes wrong.
+
+| Setting | What it does | Why we chose it |
+|---|---|---|
+| `automated.enabled: true` | Argo CD syncs whenever Git and the cluster differ | A merged PR is deployed without anyone pressing Sync. On for MOKS since 8 November and for RoboShop from its first day (11 November). |
+| `selfHeal: true` | A change made in the cluster by hand is reverted | Git stays the only truth; a `kubectl edit` lasts until the next reconcile. |
+| `prune: false` | Objects removed from Git are **not** deleted | A bad render (empty group, wrong path) cannot delete a database. The cost: leftovers (see below). |
+| `Prune=false,Delete=false` (annotation on the Application) | Same idea for the Application object itself | Belt and braces; Argo CD documents both as sync options. |
+| No `resources-finalizer` | Deleting an Application leaves its objects running | Deleting the wrong Application is recoverable: re-apply it and it adopts the objects again. |
+| `FailOnSharedResource=true` | A sync fails if another Application already manages an object | Catches two groups rendering the same object, the classic split mistake. |
+| `PruneLast=true` | When pruning does run (a manual sync with prune), it runs after everything else is healthy | Only matters for hand-run syncs; harmless otherwise. |
+| `CreateNamespace=true` | Creates the destination namespace | MOKS: only on `moks-foundation`. RoboShop: on all apps except `mesh`. |
+| `targetRevision: master` | Track the branch head | No release tags yet: master is what we deploy. |
+
+How fast is "automatic"? Argo CD checks Git every `timeout.reconciliation`, which on mk4 is the default **120 s plus up to 60 s of jitter**, so a merge reaches the cluster within about three minutes. You can see it in the history: `moks-foundation` synced at least five revisions on 20 November alone.
+
+The price of `prune: false` is visible right now. When moks-sre#91 removed the OpenSearch backend on 20 November, `moks-foundation` synced at 10:27 UTC and went OutOfSync: two PeerAuthentications (`moks-opensearch-edge`, `moks-opensearch-dashboards-edge`) are marked `requiresPruning` and will stay until someone deletes them. Find them with:
+
+```bash
+kubectl -n argocd get application moks-foundation -o json \
+  | jq -r '.status.resources[] | select(.requiresPruning) | "\(.kind) \(.namespace)/\(.name)"'
+```
+
+We accept that. Deleting two stale objects by hand once a month is cheaper than a prune that deletes a PersistentVolumeClaim because a template failed to render.
+
+## Step 7: Secrets stay out of Argo CD
+
+Both projects deny the `Secret` kind, so no Application can create, change or prune one. Secrets reach the cluster three other ways:
+
+- **Terraform** writes the ones that come from other Terraform resources: Argo CD's own Valkey login (`argocd-redis-valkey`), each app's PostgreSQL credentials (`postgres-db-credentials`), RoboShop's Valkey login (`redis-roboshop-credentials`).
+- **A script, once:** `scripts/create-secrets-hetzner.sh` in moks-sre (`moks-secrets`, `moks-reranker-secrets`, `moks-secret-sync` and the terminal's Secret).
+- **The registry tooling:** `harbor-pull`, the pull secret for `registry.jithendar.com`.
+
+`deploy-hetzner.sh` refuses to continue if any of the six MOKS Secrets is missing, because a Deployment that syncs fine and then crash-loops on a missing Secret looks Healthy to Argo CD for a while and fails later.
+
+When MOKS moved from namespace `moks` to `moks-sre` on 20 November (moks-sre#75 and #77; the children synced the move from about 05:55 UTC), this is what made the move a manual job: the project had to allow `moks-sre` before any child could sync there, and every Secret had to exist in the new namespace first. Argo CD could not do either, by design.
+
+## Step 8: Shipping new code, and the :latest trap
+
+![Two kinds of change on mk4. When a chart or manifest changes in Git: the PR is merged to master, Argo CD notices by polling every 120 seconds plus up to 60 seconds of jitter, renders with helm template or kustomize build, diffs live against rendered and finds OutOfSync, and applies with selfHeal and no prune until Synced and Healthy. When new code ships under the same image tag: CI builds the image and pushes :latest, Harbor stores a new digest under the same tag, Git is unchanged so Argo CD has nothing to sync. Two ways out: the CI deploy job, which syncs the apps and runs Argo CD's restart action with the project role moks/ci, is switched off because MK4_DEPLOY is unset; today someone runs kubectl rollout restart by hand. New pods then pull again (imagePullPolicy Always) and roll one by one. The trap: a chart change syncs on its own, an image change does not; merge both without a restart and the cluster runs the new chart with the old code.](/images/argocd-mk4/argocd-mk4-deploy-loop.svg)
+
+Every MOKS and RoboShop application image is a `:latest` tag in our Harbor registry with `imagePullPolicy: Always` (RoboShop's data stores are pinned: `mongo:8.2`, `postgres:18-alpine`, `apache/kafka:4.1.2`). From `kubectl get deploy` in `moks-sre`:
+
+```text
+moks-api       registry.jithendar.com/jithendar/moks:latest          Always
+moks-worker    registry.jithendar.com/jithendar/moks:latest          Always
+moks-crewai    registry.jithendar.com/jithendar/moks-crewai:latest   Always
+moks-reranker  registry.jithendar.com/jithendar/moks-reranker:latest Always
+...
+```
+
+Argo CD compares manifests, not image digests. When CI pushes a new `moks:latest`, nothing in Git changes, so **Argo CD has nothing to do**. A chart change merged in the same PR *does* sync, and its pods then start on whatever image the node pulls at that moment. We hit exactly this after moks-sre#67: the new chart synced, the pods restarted on the image from before #67, and the feature that needed both failed until a manual restart.
+
+MOKS's CI already has the fix, a `deploy` job that runs after the image is pushed (the whole pipeline around it is in [MOKS CI/CD Explained](/blog/moks-sre-github-actions-ci-cd-pipeline)):
+
+```yaml title=".github/workflows/ci.yml (deploy job, excerpt)"
+  deploy:
+    needs: [release, release-crewai]
+    if: ${{ !cancelled() && needs.release.result == 'success' && vars.MK4_DEPLOY == 'true' }}
+    ...
+      - name: Sync the MOKS Applications from master
+        run: |
+          set -euo pipefail
+          for app in foundation database api worker crewai executor terminal routing reranker; do
+            argocd app get "moks-$app" -o name > /dev/null 2>&1 || { echo "moks-$app does not exist; skipped"; continue; }
+            argocd app get "moks-$app" --refresh > /dev/null
+            argocd app sync "moks-$app" --timeout 600
+            argocd app wait "moks-$app" --sync --health --timeout 600
+          done
+      - name: Restart onto the new image
+        run: |
+          set -euo pipefail
+          for pair in worker:moks-worker api:moks-api executor:moks-executor terminal:moks-terminal; do
+            app="moks-${pair%%:*}"; deploy="${pair#*:}"
+            argocd app actions run "$app" restart --kind Deployment --resource-name "$deploy" --namespace moks-sre
+            argocd app wait "$app" --health --timeout 600
+          done
+```
+
+Git first (so the ConfigMap is current), then the restart action, worker before API so running investigations can finish. CI never gets a kubeconfig. It gets an Argo CD token for a **project role** that can do three things and nothing else:
+
+```yaml title="deploy/argocd/hetzner/project.yaml (roles)"
+  roles:
+    - name: ci
+      description: GitHub Actions deploys MOKS after a release build
+      policies:
+        - p, proj:moks:ci, applications, get, moks/*, allow
+        - p, proj:moks:ci, applications, sync, moks/*, allow
+        - p, proj:moks:ci, applications, action/apps/Deployment/restart, moks/*, allow
+```
+
+No delete, no parameter override, no logs, no exec, and no access to `moks-root`, which is in another project. `scripts/setup-argocd-ci.sh` issues the token (365 days by default), checks that it *can* read `moks-api` and *cannot* read `moks-root`, and stores it as the repository secret `ARGOCD_AUTH_TOKEN`.
+
+:::callout{type="warning" title="Not switched on yet"}
+On 20 November the moks-sre repository has no `MK4_DEPLOY` variable and no `ARGOCD_AUTH_TOKEN` secret, so the deploy job is skipped on every build. Until `setup-argocd-ci.sh` is run, a new MOKS image goes live with `kubectl -n moks-sre rollout restart deploy/moks-api` (and the other Deployments). RoboShop has no deploy job at all; the same applies to it.
+:::
+
+The longer-term fix is to stop deploying `:latest`: push an immutable tag or digest and let CI commit it to the values file, so an image change *is* a Git change and Argo CD's normal loop ships it.
+
+## Step 9: Check that it worked
+
+```bash
+# Every Application, its sync and health status, and the commit it runs
+kubectl -n argocd get applications.argoproj.io
+
+# One app: last sync result, conditions, which resources differ
+argocd app get moks-api --grpc-web --grpc-web-root-path /argocd
+argocd app diff moks-foundation --grpc-web --grpc-web-root-path /argocd
+
+# Sync history (revision and time)
+kubectl -n argocd get application moks-api \
+  -o jsonpath='{range .status.history[*]}{.revision}{"  "}{.deployedAt}{"\n"}{end}'
+
+# The last operation, including a failed render
+kubectl -n argocd get application moks-root \
+  -o jsonpath='{.status.operationState.phase}{"  "}{.status.operationState.message}{"\n"}'
+
+# The app itself
+curl -fsS https://jithendar.com/moks/api/health
+```
+
+The last-operation query is the one that would have caught our worst incident sooner. A failed render does not make an Application Degraded: the workloads keep running and stay Healthy, and the error shows up only as a `ComparisonError` condition, an Unknown sync status and a failed `operationState`. Health-only alerts never fire for it.
+
+## What went wrong, with dates
+
+![Argo CD on mk4 from 8 to 20 November 2026. 8 November: deploy.py, catalog checks and tests in the kubernetes repository; auto-sync switched on in moks-sre and kubernetes. 10 November: Argo CD becomes a Terraform release with its cache on Valkey database 7; moks-root and 7 children created. 11 November: the RoboShop catalog, argocd-k3s with 17 apps, applied with kubectl, volumes on Hetzner Cloud. 16 to 19 November, an incident: the repository was renamed and the hand-applied projects lacked the new URL, so the children showed InvalidSpecError. 19 November: four Cloudflare cache fixes, Helm revisions 3 to 6 between 12:27 and 13:05 UTC, and the new child moks-routing. 20 November at 05:55 UTC: MOKS moves to namespace moks-sre (pull requests 75 and 77), one sync per child. 20 November at 09:10 UTC, an incident: a committed frontend/node_modules symlink makes every MOKS app fail to render until pull request 90. 20 November at 10:27 UTC, drift: pull request 91 drops OpenSearch and two PeerAuthentications stay OutOfSync, since nothing prunes them. Sources: commit times in the three repositories, and Application creation times, sync history and Helm release history read from mk4 on 20 November.](/images/argocd-mk4/argocd-mk4-timeline.svg)
+
+### A symlink stopped every MOKS deployment for 47 minutes
+
+On 20 November moks-sre#85 merged at 09:10 UTC carrying `frontend/node_modules`: a symlink into an absolute path on a developer's machine, made by a Git worktree borrowing another checkout's packages. `.gitignore` had `node_modules/`, which matches only directories, so the link was committed.
+
+Since version 2.5 Argo CD refuses to render a repository that contains a symlink pointing outside it. Every MOKS Application reads the same repository, so every one of them failed with the same error:
+
+```text
+ComparisonError: Failed to load target state: failed to generate manifest for source 1 of 1:
+rpc error: code = Unknown desc = repository contains out-of-bounds symlinks. file: frontend/node_modules
+```
+
+Nothing went down: the running pods were untouched. But nothing could deploy either, including the new `moks-embedder` from the same PR. moks-sre#90 removed the link at 09:57 UTC, changed `.gitignore` to match `node_modules` in any form, and added a CI step that fails on any tracked symlink leaving the repository. The children synced again from 09:59 UTC.
+
+**Lesson:** anything that breaks rendering breaks *every* Application that reads the repository. Check for it in CI, where it costs a red build instead of a deploy freeze.
+
+### Renaming a repository broke the hand-applied projects
+
+On 16 November the repository was renamed from `mrjithendar/moks` to `mrjithendar/moks-sre`, and moks-sre#40 pointed every Application at the new URL. The children picked the new URL up from Git, but the live projects (applied by hand, never synced) still allowed only the old one. From 16 to 19 November the MOKS children showed InvalidSpecError ("not permitted in project") until the projects were re-applied with both URLs on 19 November. The old URL is still in the live projects today; Git dropped it in moks-sre#56.
+
+**Lesson:** a URL is part of a project's allow list. Change the project first, then the Applications.
+
+### Comments that disagree with the spec
+
+The child Application files still say "Manual sync, never with prune", and `root.yaml` says the children "have no automated sync". Both come from the split runbook, which was written for manual syncs. The spec below the comments has `automated.enabled: true`, and the spec is what runs. When you read someone's Argo CD manifests, including ours, trust the YAML, then check the live object.
+
+### Cloudflare cached Argo CD
+
+Argo CD shares the `jithendar.com` origin with the site, behind Cloudflare. On 19 November Cloudflare served a cached copy of Argo CD's entry page with the wrong `<base href>` (a blank page), a signed-out `userinfo` answer (a login loop), and a signed-in `/api/v1/clusters` response to anyone. Four commits in the kubernetes repository fixed it in the `/argocd` VirtualService: API answers get `cache-control: no-store, no-transform`, every page is requested as `text/html` so Argo CD always returns the rewritten, uncacheable index, and every answer carries `no-transform`. A probe today returns `cf-cache-status: DYNAMIC` with `cache-control: no-store, no-transform`.
+
+**Lesson:** a CDN in front of an admin UI caches by URL, not by session. Mark the API `no-store` before you put it behind one.
+
+### Leftovers are the price of never pruning
+
+Besides today's two PeerAuthentications, the OpenSearch retirement on 19 November left a StatefulSet, a Deployment, Services, NetworkPolicies, VirtualServices and a PVC running after Git stopped rendering them, and its Application had to be deleted by hand. With `prune: false`, removing something from Git is a two-step job: merge, then delete. Write the second step into the PR description.
+
+## A checklist to copy
+
+1. Install Argo CD with the same tool as the rest of your platform, and do not let it depend on anything it deploys.
+2. Write AppProjects before Applications: list source repos, destinations and kinds; deny Secrets; give a root its own project that may only create Applications.
+3. Keep AppProjects out of every folder an Application syncs, and re-apply them whenever a repository URL or namespace changes.
+4. Split a large chart into Applications with a group parameter that **fails on an unknown value**, and check in CI that every group has exactly one Application.
+5. Use an app of apps when the catalog changes; a flat `kubectl apply -k` list is fine when it does not.
+6. Automated sync with `selfHeal`, `prune: false`, `Prune=false,Delete=false`, `FailOnSharedResource=true`, no finalizer. Plan for the leftovers.
+7. Let exactly one Application own each namespace's metadata (`CreateNamespace` + `managedNamespaceMetadata`).
+8. Create Secrets outside Argo CD, and fail the bootstrap if one is missing.
+9. If you deploy `:latest`, a Git sync will not ship new code: restart through Argo CD's restart action with a project-scoped token, or better, deploy immutable tags.
+10. Check `operationState` and `conditions`, not only Synced/Healthy, and fail CI on anything that would break rendering for everyone (out-of-bounds symlinks).
+
+## References
+
+**Our repositories** (the files quoted above):
+
+- [moks-tech/kubernetes](https://github.com/moks-tech/kubernetes): `minikube-infrastructure/argocd.tf`, `deploy/minikube/argocd/values.yaml`, `deploy/minikube/applications/`, `scripts/argocd/`
+- [mrjithendar/moks-sre](https://github.com/mrjithendar/moks-sre): `deploy/argocd/`, `deploy/helm/moks/templates/_helpers.tpl`, `scripts/deploy-hetzner.sh`, `scripts/setup-argocd-ci.sh`, `docs/ARGOCD_APP_SPLIT.md`, `.github/workflows/ci.yml`; pull requests #40, #56, #75, #77, #85, #90, #91
+- [mrjithendar/roboshop-ai](https://github.com/mrjithendar/roboshop-ai): `argocd-k3s/`
+
+**Argo CD documentation:**
+
+- [Cluster Bootstrapping (App of Apps)](https://argo-cd.readthedocs.io/en/stable/operator-manual/cluster-bootstrapping/)
+- [Automated Sync Policy](https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/) (including the 120 s + 60 s reconciliation interval)
+- [Sync Options](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/) (`Prune=false`, `Delete=false`, `FailOnSharedResource`, `PruneLast`, `CreateNamespace`, `managedNamespaceMetadata`)
+- [Projects](https://argo-cd.readthedocs.io/en/stable/user-guide/projects/) (whitelists, project roles and tokens)
+- [App Deletion](https://argo-cd.readthedocs.io/en/stable/user-guide/app_deletion/) (finalizers and cascading delete)
+- [Resource Actions](https://argo-cd.readthedocs.io/en/stable/operator-manual/resource_actions/) (the Deployment restart action)
+- [Helm](https://argo-cd.readthedocs.io/en/stable/user-guide/helm/) and [Kustomize](https://argo-cd.readthedocs.io/en/stable/user-guide/kustomize/) in Argo CD
+- [Upgrading 2.4 to 2.5](https://argo-cd.readthedocs.io/en/stable/operator-manual/upgrading/2.4-2.5/) ("Out-of-bounds symlinks now blocked at fetch")
+- [Automation from CI Pipelines](https://argo-cd.readthedocs.io/en/stable/user-guide/ci_automation/)
+
+**Tools:**
+
+- [argo-cd Helm chart](https://github.com/argoproj/argo-helm/tree/main/charts/argo-cd) (argoproj/argo-helm) and [Argo CD v3.5.5 release notes](https://github.com/argoproj/argo-cd/releases/tag/v3.5.5)
+- [Terraform `helm_release`](https://registry.terraform.io/providers/hashicorp/helm/latest/docs/resources/release)
+- [Istio VirtualService reference](https://istio.io/latest/docs/reference/config/networking/virtual-service/) (delegates)
+- [Cloudflare default cache behavior](https://developers.cloudflare.com/cache/concepts/default-cache-behavior/)
