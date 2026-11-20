@@ -1,0 +1,695 @@
+---
+title: "How We Deployed Argo CD on k3s at Hetzner: Terraform, the Helm Chart and Every Value Explained"
+slug: argocd-k3s-hetzner-terraform-helm
+description: "How Argo CD runs at jithendar.com/argocd on a k3s cluster on Hetzner: Terraform's helm_release, the argo-cd chart, every value, Valkey and Cloudflare."
+seoTitle: "Argo CD on k3s (Hetzner) with Terraform and Helm: A Walkthrough"
+seoDescription: "Install Argo CD with the argo-cd Helm chart from Terraform on k3s at Hetzner: values explained, external Valkey, Istio sub-path routing, Cloudflare caching."
+author: jithendar-dharmapuri
+category: kubernetes
+tags: [Argo CD, GitOps, Kubernetes, k3s, Hetzner, Helm, Terraform, Istio, Cloudflare, Valkey]
+contentType: tutorial
+status: review
+featuredImage:
+  src: /images/argocd-k3s-hetzner/argocd-install-layers.png
+  alt: "Argo CD on mk4 in three layers. Layer 1, servers and k3s: the hetzner-k3s CLI creates the servers, private network, firewall rules, k3s and Hetzner's cloud controller and CSI driver; m1 is a cax11 running the control plane and etcd on k3s v1.37.2+k3s1; w1, w2 and w3 are cax21 workers with 4 arm64 vCPUs and 8 GiB each, flannel over 10.0.0.0/16, in Falkenstein; Hetzner Cloud provides volumes and load balancers. Layer 2, add-ons: Terraform applies, in order, istiod and istio-edge, then Valkey with ACL user argocd on database 7, then helm_release argocd with chart argo-cd 10.10.5, Argo CD v3.5.5. None of them is an Argo CD Application. Layer 3, applications: Argo CD syncs 26 Applications from public GitHub repositories over HTTPS without credentials: moks-root, an app of apps that writes 8 MOKS Applications for namespace moks-sre, and 17 RoboShop Applications for namespace roboshop-ai, all automated with self-heal and never prune. The jithendar.com site itself is deployed by GitHub Actions, not Argo CD."
+  width: 1922
+  height: 1310
+related:
+  - blog/argocd-gitops-deploy-k3s-app-of-apps
+  - blog/valkey-redis-sentinel-minikube-terraform
+  - blog/istio-service-mesh-minikube-features-setup-troubleshooting
+  - blog/learning-terraform-real-project-tools-repository
+  - blog/lets-encrypt-k3s-cert-manager-automatic-renewal
+  - blog/four-ai-systems-one-cluster
+sources:
+  - title: "Argo CD: Installation"
+    url: https://argo-cd.readthedocs.io/en/stable/operator-manual/installation/
+    publisher: Argo CD
+  - title: "Argo CD: Ingress configuration (UI base path)"
+    url: https://argo-cd.readthedocs.io/en/stable/operator-manual/ingress/
+    publisher: Argo CD
+  - title: "Argo CD: argocd-cmd-params-cm.yaml"
+    url: https://argo-cd.readthedocs.io/en/stable/operator-manual/argocd-cmd-params-cm-yaml/
+    publisher: Argo CD
+  - title: "Argo CD: User management (local users, admin)"
+    url: https://argo-cd.readthedocs.io/en/stable/operator-manual/user-management/
+    publisher: Argo CD
+  - title: "argo-cd Helm chart"
+    url: https://github.com/argoproj/argo-helm/tree/main/charts/argo-cd
+    publisher: GitHub
+  - title: "hetzner-k3s"
+    url: https://github.com/vitobotta/hetzner-k3s
+    publisher: GitHub
+  - title: "Terraform Helm provider: helm_release"
+    url: https://registry.terraform.io/providers/hashicorp/helm/latest/docs/resources/release
+    publisher: HashiCorp
+  - title: "Cloudflare: Origin Cache Control"
+    url: https://developers.cloudflare.com/cache/concepts/cache-control/
+    publisher: Cloudflare
+  - title: "Cloudflare: Rocket Loader"
+    url: https://developers.cloudflare.com/speed/optimization/content/rocket-loader/
+    publisher: Cloudflare
+  - title: "moks-tech/kubernetes (Terraform, values and charts for mk4)"
+    url: https://github.com/moks-tech/kubernetes
+    publisher: GitHub
+---
+<Todo>Drafted 2026-11-20 from moks-tech/kubernetes b74771b, mrjithendar/moks-sre cd2f58f, mrjithendar/roboshop-ai d33b00d, the argo-cd 10.10.5 chart rendered with our values, and read-only kubectl and helm on mk4 the same day. Before publishing: (1) decide whether "Loose ends" should stay public or be fixed first (the dead applicationSet key, the leftover argocd-redis Secret, the mk-platform AppProject that is not on the cluster); (2) "What's next" says /argocd is not behind Cloudflare Access yet: keep or drop that; (3) re-read the pod numbers if you publish much later; (4) then set status to published with a publishedAt time.</Todo>
+
+Argo CD runs on mk4, my k3s cluster on Hetzner Cloud, and answers at [jithendar.com/argocd](https://jithendar.com/argocd). It keeps 26 Applications in sync with Git: the MOKS SRE portal and the RoboShop demo shop. This article covers the part those Applications take for granted: **how Argo CD itself got onto the cluster**.
+
+That means the cluster underneath, the Terraform that installs Argo CD, the **argo-cd Helm chart and every value we give it**, its cache on a shared Valkey, and how a request for `/argocd` gets from a browser through Cloudflare, a Hetzner load balancer and Istio to the right pod. It ends with the four caching bugs Cloudflare found for us on 19 November and the commits that fixed them. How the applications are then deployed *through* Argo CD (AppProjects, the app of apps, the sync policy, the `:latest` trap) is the companion article, [How We Deploy to Kubernetes with Argo CD](/blog/argocd-gitops-deploy-k3s-app-of-apps).
+
+Everything below is taken from Git and from the running cluster. Each code block names its file, and the [references](#git-references) at the end link every commit.
+
+:::callout{type="info" title="At a glance (20 November 2026)"}
+**Cluster:** mk4, k3s v1.37.2+k3s1, one cax11 control plane and three cax21 workers (arm64) in Falkenstein. **Installed by:** Terraform, `helm_release.argocd` in `minikube-infrastructure/argocd.tf`. **Chart:** `argo-cd` 10.10.5 from argoproj/argo-helm, which ships **Argo CD v3.5.5**. **Values:** `deploy/minikube/argocd/values.yaml` plus one block from Terraform. **Cache:** the shared Valkey, ACL user `argocd`, database 7. **Helm revision:** 6.
+:::
+
+::toc
+
+## Three layers, three tools
+
+![Argo CD on mk4 in three layers. Layer 1, servers and k3s: the hetzner-k3s CLI creates the servers, private network, firewall rules, k3s and Hetzner's cloud controller and CSI driver; m1 is a cax11 control plane with etcd on k3s v1.37.2+k3s1; w1, w2 and w3 are cax21 workers with 4 arm64 vCPUs and 8 GiB each, flannel over 10.0.0.0/16, in Falkenstein (fsn1); Hetzner Cloud provides volumes (hcloud-volumes) and load balancers for LoadBalancer Services. Layer 2, add-ons, terraform apply with vars/mk4.tfvars, state in S3: Terraform installs istiod and istio-edge (sidecars, STRICT mTLS, the Gateway and its certificate, the routing table with /argocd), then Valkey in namespace redis with ACL user argocd on database 7, then helm_release argocd, chart argo-cd 10.10.5, Argo CD v3.5.5, values.yaml plus a checksum. argocd depends on istiod, istio-edge, valkey, redis-access and its Secret, and none of them is an Argo CD Application. Layer 3, applications: Argo CD syncs all 26 from public GitHub repositories (mrjithendar/moks-sre and mrjithendar/roboshop-ai, HTTPS, no credentials). moks-root is an app of apps that writes the Applications in deploy/argocd/hetzner/apps and nothing else: 8 MOKS Applications, one Helm chart split by resourceGroup, in namespace moks-sre. 17 RoboShop Applications, one per service or layer, in project roboshop and namespace roboshop-ai. All are automated with self-heal and never prune. Not in Argo CD: the jithendar.com site, deployed by GitHub Actions with kubectl apply, and every add-on in layer 2, Argo CD included.](/images/argocd-k3s-hetzner/argocd-install-layers.svg)
+
+The design rests on one rule: **each layer is installed by the layer below it, never by itself.**
+
+1. **Servers and k3s.** The `hetzner-k3s` CLI creates the Hetzner servers and installs k3s from one YAML file.
+2. **Add-ons.** One Terraform root, `minikube-infrastructure/`, installs everything the cluster needs before any application: Istio, the public gateway, cert-manager, the shared PostgreSQL and Valkey, monitoring, and **Argo CD**. Each is a `helm_release`, and GitHub Actions applies the root on every merge.
+3. **Applications.** Argo CD syncs those from Git.
+
+Why not let Argo CD manage itself, as many GitOps guides suggest? Because Argo CD depends on things on this cluster: Istio sidecars, the gateway that publishes it, and Valkey for its cache. If Argo CD managed Valkey and a bad sync broke Valkey, Argo CD would lose its cache while trying to repair it. With Terraform underneath, a broken Argo CD can always be reinstalled by something that doesn't need Argo CD. The file says so in its first comment:
+
+```hcl
+# minikube-infrastructure/argocd.tf (header)
+# No Redis of its own: Argo CD's cache is on the shared Valkey (redis.tf) as the built-in tenant "argocd" (ACL user
+# argocd, database 7 only, no admin command). Valkey is a Terraform release, never an Argo CD Application, so the GitOps
+# controller does not depend on something it deploys itself.
+```
+
+Changing Argo CD's own settings is still a merge to `master`. But the deploy is *pushed* by a GitHub Actions workflow running Terraform, not *pulled* by Argo CD. That's the point: the thing that installs Argo CD doesn't need Argo CD to be working.
+
+## Step 1: the cluster
+
+mk4 was created on 10 November 2026 with [hetzner-k3s](https://github.com/vitobotta/hetzner-k3s). The whole cluster is one file in the `kubernetes` repository:
+
+```yaml
+# hetzner-k3s.yaml (excerpt)
+# Create:  hetzner-k3s create --config hetzner-k3s.yaml
+cluster_name: jithendar
+k3s_version: v1.37.2+k3s1
+
+networking:
+  private_network:
+    enabled: true
+    subnet: 10.0.0.0/16
+  cni:
+    enabled: true
+    encryption: false
+    mode: flannel
+
+# All nodes in one EU location: 20 TB traffic included; Arm (CAX) is the cheapest line.
+masters_pool:
+  instance_type: cax11
+  instance_count: 1      # single master keeps cost down (no HA, no API load balancer)
+  locations:
+    - fsn1
+
+worker_node_pools:
+  - name: workers
+    instance_type: cax21
+    instance_count: 3
+    location: fsn1
+
+protect_against_deletion: true
+create_load_balancer_for_the_kubernetes_api: false
+```
+
+Besides k3s, hetzner-k3s installs Hetzner's cloud controller manager and CSI driver. Two of their features matter for Argo CD:
+
+- **`hcloud-volumes`** is the default StorageClass. Argo CD itself stores nothing on disk (its state is the Application objects, and its cache is in Valkey), but several of the Applications it syncs do.
+- **A `LoadBalancer` Service gets a real Hetzner load balancer.** The Istio ingress gateway's Service asks for one with annotations:
+
+```yaml
+# deploy/minikube/istio/ingressgateway.yaml (excerpt)
+annotations:
+  load-balancer.hetzner.cloud/name: mk4-edge
+  load-balancer.hetzner.cloud/type: lb11
+  load-balancer.hetzner.cloud/location: fsn1
+  load-balancer.hetzner.cloud/use-private-ip: "true"
+  load-balancer.hetzner.cloud/uses-proxyprotocol: "true"
+```
+
+That LB11 is the only public entry point for every web tool on the cluster, Argo CD included. It sends ports 80 and 443 to the gateway's NodePorts 31080 and 31443 with a PROXY protocol header, so the gateway sees each visitor's real address.
+
+The nodes as they are today (renamed to m1 and w1 to w3 on 20 November):
+
+```text
+$ kubectl get nodes          # columns trimmed
+NAME   STATUS   ROLES                VERSION
+m1     Ready    control-plane,etcd   v1.37.2+k3s1
+w1     Ready    <none>               v1.37.2+k3s1
+w2     Ready    <none>               v1.37.2+k3s1
+w3     Ready    <none>               v1.37.2+k3s1
+```
+
+## Step 2: what Argo CD needs before it's installed
+
+Terraform installs Argo CD last, because it needs three things to exist first. The `depends_on` list in `argocd.tf` names them:
+
+| Dependency | Terraform release | Why Argo CD needs it |
+|---|---|---|
+| Istio control plane | `helm_release.istiod` | Namespace `argocd` has `istio-injection=enabled`. Without istiod there's no sidecar, and Valkey (STRICT mTLS) refuses the connection. |
+| Public edge | `helm_release.istio_edge` | The Gateway, the `*.jithendar.com` certificate and the routing table that sends `/argocd` to Argo CD. |
+| Valkey and its access rules | `helm_release.redis`, `helm_release.redis_access` | Argo CD's cache. The ACL user `argocd` must be loaded, and namespace `argocd` must be admitted by Valkey's AuthorizationPolicy and NetworkPolicy. |
+
+The **routing table** is one entry in the edge chart's values. Every admin tool on the cluster is a path under jithendar.com, and each application owns a *delegate* VirtualService for its own prefix:
+
+```yaml
+# deploy/minikube/istio/edge/values.yaml (excerpt)
+# The routing table for jithendar.com. First match wins, so a prefix that begins with another one comes first
+# (/prometheus/api/v1/write before /prometheus). A delegate that does not exist (an application not installed) drops
+# its route, and the request falls through to the site, which answers 404.
+root:
+  host: jithendar.com
+  delegates:
+    - {name: argocd, prefix: /argocd, to: argocd/argocd}
+    - {name: kiali, prefix: /kiali, to: istio-system/kiali}
+    - {name: grafana, prefix: /grafana, to: monitoring/grafana}
+    # ...
+  # Everything else.
+  default: jithendar/jithendar-com-site
+```
+
+`to: argocd/argocd` means "the VirtualService named `argocd` in namespace `argocd`". The edge doesn't know where Argo CD's pods are. The Argo CD release brings that VirtualService itself, in its Helm values (Step 5). On the Istio side, namespace `argocd` also gets an `allow-known-callers` AuthorizationPolicy: only Argo CD's own pods, the gateway (`istio-ingress`) and Prometheus (`monitoring`) may call into it.
+
+## Step 3: the Terraform
+
+All of `argocd.tf` is three resources and a few locals. Here it is without the header comment:
+
+```hcl
+# minikube-infrastructure/argocd.tf
+locals {
+  argocd_namespace = "argocd"
+  # Merged into the Valkey tenants (redis.tf, local.redis_tenants). values.yaml's configs.params "redis.db" must match.
+  argocd_redis  = { namespace = local.argocd_namespace, databases = [7] }
+  argocd_values = yamldecode(file("${local.minikube}/argocd/values.yaml"))
+}
+
+# In the mesh: Valkey accepts only mTLS (STRICT), so every Argo CD pod needs a sidecar.
+resource "kubernetes_namespace_v1" "argocd" {
+  metadata {
+    name = local.argocd_namespace
+    labels = {
+      "app.kubernetes.io/part-of" = "argocd"
+      "istio-injection"           = "enabled"
+    }
+  }
+}
+
+# What the chart's externalRedis.existingSecret reads (keys fixed by the chart).
+resource "kubernetes_secret_v1" "argocd_redis" {
+  metadata {
+    name      = local.argocd_values.externalRedis.existingSecret
+    namespace = kubernetes_namespace_v1.argocd.metadata[0].name
+    # ...labels
+  }
+  data = {
+    redis-username = "argocd"
+    redis-password = random_password.redis["argocd"].result
+  }
+
+  lifecycle {
+    precondition {
+      condition     = local.argocd_values.configs.params["redis.db"] == tostring(local.argocd_redis.databases[0])
+      error_message = "configs.params redis.db in deploy/minikube/argocd/values.yaml must be ${local.argocd_redis.databases[0]}, Argo CD's database on Valkey (local.argocd_redis)."
+    }
+    precondition {
+      condition     = local.argocd_values.externalRedis.host == local.redis_host
+      error_message = "externalRedis.host in deploy/minikube/argocd/values.yaml must be ${local.redis_host}."
+    }
+  }
+}
+
+resource "helm_release" "argocd" {
+  name       = "argocd"
+  namespace  = kubernetes_namespace_v1.argocd.metadata[0].name
+  repository = "https://argoproj.github.io/argo-helm"
+  chart      = "argo-cd"
+  version    = "10.10.5"
+  values = [
+    file("${local.minikube}/argocd/values.yaml"),
+    # The pods read the password at start: a new one (tainted random_password) must roll them.
+    yamlencode({ global = { podAnnotations = { "checksum/redis" = sha1(random_password.redis["argocd"].result) } } }),
+  ]
+
+  # The VirtualService and NetworkPolicy were applied with kubectl (kustomize) before this release rendered them.
+  take_ownership = true
+  wait           = true
+  timeout        = var.helm_timeout
+
+  depends_on = [
+    helm_release.istiod, helm_release.redis, helm_release.redis_access, helm_release.istio_edge,
+    kubernetes_secret_v1.argocd_redis,
+  ]
+}
+```
+
+What each piece is for:
+
+- **The namespace is Terraform's, not the chart's.** The `istio-injection` label must be there before the first pod starts. If it were added later, every pod would need a restart to get its sidecar.
+- **The Secret is written by Terraform, so the password never enters Git.** `random_password.redis["argocd"]` is generated once and kept in Terraform's encrypted state (an S3 backend). The same value goes into Valkey's ACL (in `redis.tf`) and into this Secret, so the two always match.
+- **`values.yaml` is read twice.** Helm gets it as values, and Terraform decodes it with `yamldecode()` to check it. The two `precondition` blocks fail the plan if someone changes the Redis host or database number in the YAML without changing Terraform's side. A typo becomes a plan error instead of a pod in CrashLoopBackOff.
+- **The version is pinned.** `10.10.5` is the chart version, and the chart pins the Argo CD image (`quay.io/argoproj/argocd:v3.5.5`). An upgrade is a one-line diff in a pull request.
+- **A second values document from Terraform** adds `checksum/redis` to every pod. Helm only restarts pods whose spec changed. A new password changes only the Secret, so without this annotation the pods would keep the old password until something else restarted them.
+- **`take_ownership = true`** lets the release adopt the VirtualService and NetworkPolicy that were applied with kubectl before the chart rendered them, instead of failing with "resource already exists".
+
+### Applying it: by hand once, then on every merge
+
+By hand, from a machine whose kubeconfig reaches the cluster:
+
+```bash
+terraform -chdir=minikube-infrastructure init        # S3 backend, key terraform/k3s-mk4.tfstate
+terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars
+```
+
+`vars/mk4.tfvars` holds the kube context and the per-cluster choices (tenant databases, IP allowlists, Cloudflare switches). The root installs every add-on, so a plan shows changes across the whole cluster, not only Argo CD.
+
+Day to day, nobody runs that command. Two workflows in the `kubernetes` repository do:
+
+| Workflow | When | What it does | What it can reach |
+|---|---|---|---|
+| `check-mk-infrastructure.yml` | Every pull request that touches `minikube-infrastructure/` or `deploy/minikube/argocd/` (among other paths) | `terraform fmt -check`, `validate`, `terraform test` with `vars/mk4.tfvars`, `helm lint` and `helm template` of the local charts | Nothing: no cluster token, no state. The repository is public, so pull request code never gets either. |
+| `create-mk-infrastructure.yml` | Every push to `master` on the same paths, or by hand with "plan only" | `terraform plan`, then `apply` of that saved plan | The cluster through ServiceAccount `kube-system/github-minikube-terraform`, and the S3 state through an AWS role assumed with GitHub OIDC. Both live in the GitHub environment `mk4`, which only `master` can use. |
+
+The apply job runs on GitHub-hosted runners, never on the cluster. It shares a concurrency group with `cancel-in-progress: false`, because a cancelled `helm upgrade` leaves a release stuck in `pending-upgrade`. It only runs while the repository variable `MINIKUBE_TERRAFORM_APPLY` is `true`, which is the switch to turn automatic applies off during maintenance.
+
+### Adopting an Argo CD that already exists
+
+Argo CD wasn't born in Terraform. The first install on mk4 came from the repository's own scripts (`scripts/argocd/deploy.py`) and ran the chart's bundled Redis. Terraform took it over without a reinstall, as the root's README describes:
+
+```bash
+terraform import -var-file=vars/mk4.tfvars kubernetes_namespace_v1.argocd argocd
+terraform import -var-file=vars/mk4.tfvars helm_release.argocd argocd/argocd
+terraform apply -var-file=vars/mk4.tfvars   # rolls Valkey (new ACL user), then upgrades Argo CD: argocd-redis is removed
+```
+
+Helm's history shows the whole story:
+
+```text
+$ helm -n argocd history argocd          # DESCRIPTION column trimmed
+REVISION  UPDATED                   STATUS      CHART            APP VERSION
+1         Tue Nov 10 13:40:14 2026  superseded  argo-cd-10.10.5  v3.5.5
+2         Tue Nov 10 15:00:52 2026  superseded  argo-cd-10.10.5  v3.5.5
+3         Thu Nov 19 12:27:11 2026  superseded  argo-cd-10.10.5  v3.5.5
+4         Thu Nov 19 12:41:15 2026  superseded  argo-cd-10.10.5  v3.5.5
+5         Thu Nov 19 12:48:34 2026  superseded  argo-cd-10.10.5  v3.5.5
+6         Thu Nov 19 13:05:55 2026  deployed    argo-cd-10.10.5  v3.5.5
+```
+
+| Revision (UTC) | What changed | Applied by | Git |
+|---|---|---|---|
+| 1, 10 Nov 13:40 | First install: the chart's own Redis pod, no VirtualService in the release | hand (scripts) | |
+| 2, 10 Nov 15:00 | Terraform adopts it: Redis pod gone, cache on Valkey database 7, VirtualService and NetworkPolicy from `extraObjects`, `checksum/redis` on every pod | hand (Terraform) | [`5a8ec33`](https://github.com/moks-tech/kubernetes/commit/5a8ec3381f7fd4bc356f30da66bf142fc3a997f9) |
+| 3, 19 Nov 12:27 | `Accept: text/html` for `/argocd/` | CI, push to master | [`8f5eb06`](https://github.com/moks-tech/kubernetes/commit/8f5eb06ca6226bd00b3283ab7db789d83ad3c585) |
+| 4, 19 Nov 12:41 | `Cache-Control: no-store` on `/argocd/api/` | CI, push to master | [`fe3efdd`](https://github.com/moks-tech/kubernetes/commit/fe3efdd2021388a5cfddba63eed25b94aeefd125) |
+| 5, 19 Nov 12:48 | `Accept: text/html` on every page, not just the entry page | CI, push to master | [`6f93d92`](https://github.com/moks-tech/kubernetes/commit/6f93d923906bbf0f1f54951a555249d1857fe3fc) |
+| 6, 19 Nov 13:05 | `no-transform` on every answer | CI, push to master | [`1f76443`](https://github.com/moks-tech/kubernetes/commit/1f76443cd42353189ac9f1a167ceeba4175f4370) |
+
+The chart version never moved. Every revision after the second is a values change, and each one maps to exactly one commit. Each workflow run started within seconds of its push, and the Helm revision landed less than a minute later. That's the payoff of keeping values in Git and letting a pipeline apply them.
+
+## Step 4: what the argo-cd Helm chart is
+
+The [argo-cd chart](https://github.com/argoproj/argo-helm/tree/main/charts/argo-cd) is the community-maintained Helm packaging of Argo CD, published by the Argo project at `https://argoproj.github.io/argo-helm`. Upstream Argo CD also ships a plain `install.yaml`. The chart renders the same components, but every part is switchable and sized through values, and that's what a Terraform `helm_release` needs.
+
+Version 10.10.5 can render these components:
+
+| Component | Kind | On mk4 |
+|---|---|---|
+| `argocd-server` | Deployment | Yes: UI, REST and gRPC API, login |
+| `argocd-repo-server` | Deployment | Yes: clones Git, runs `helm template` or `kustomize build` |
+| `argocd-application-controller` | StatefulSet | Yes: compares Git with the cluster and syncs |
+| `argocd-applicationset-controller` | Deployment | Yes (see Step 5: we tried to turn it off) |
+| `argocd-redis` / `redis-ha` | Deployment / StatefulSet | No: we use Valkey |
+| `argocd-dex-server` | Deployment | No: no SSO |
+| `argocd-notifications-controller` | Deployment | No |
+| `argocd-commit-server` | Deployment | No (off by default) |
+| CRDs `Application`, `AppProject`, `ApplicationSet` | CustomResourceDefinition | Yes, with `helm.sh/resource-policy: keep` |
+
+The chart is big. Its default `values.yaml` is **4,951 lines**, and rendering it with our values produces **33,555 lines** of YAML, **30,890 of which are the three CRDs**. Our values file is about 150 lines, comments included. Before changing anything, look at what the chart offers and what it will render:
+
+```bash
+# Every default, with comments
+helm show values argo-cd --repo https://argoproj.github.io/argo-helm --version 10.10.5 > defaults.yaml
+
+# Exactly what Terraform will apply (Terraform adds the checksum block on top)
+helm template argocd argo-cd --repo https://argoproj.github.io/argo-helm --version 10.10.5 \
+  -n argocd -f deploy/minikube/argocd/values.yaml > rendered.yaml
+grep '^kind:' rendered.yaml | sort | uniq -c
+```
+
+Helm merges values in order: the chart's defaults first, then each document in `values = [...]`, each overriding the one before. On mk4 that's the chart defaults, then `values.yaml`, then Terraform's `yamlencode()` block. Maps merge key by key, and lists are replaced whole.
+
+![deploy/minikube/argocd/values.yaml and what each block makes the argo-cd chart 10.10.5 (Argo CD v3.5.5) render. configs.cm (url https://jithendar.com/argocd, admin.enabled true, users.anonymous.enabled false) renders ConfigMap argocd-cm: the external URL, the local admin user on, anonymous off. configs.params (server.insecure true, server.rootpath and server.basehref /argocd, redis.db 7) renders ConfigMap argocd-cmd-params-cm, read by every component as environment variables, to which the chart adds redis.server. configs.rbac (policy.default empty) renders ConfigMap argocd-rbac-cm: a user without a role gets nothing, admin is role:admin built in. server, controller and repoServer (one replica each, Service ClusterIP, no Ingress, requests 50m/128Mi, 100m/256Mi and 100m/256Mi) render the argocd-server and argocd-repo-server Deployments and the argocd-application-controller StatefulSet with limits 500m/512Mi, 1/1Gi and 1/1Gi. redis and redis-ha disabled with externalRedis valkey-master and existingSecret argocd-redis-valkey render no Redis pod; REDIS_USERNAME and REDIS_PASSWORD come from the Secret Terraform writes. dex and notifications disabled are not rendered. applicationSet enabled false is ignored, because this chart has no such switch: the applicationset controller is rendered anyway and running, with no ApplicationSet. extraObjects render VirtualService argocd (the /argocd delegate with two routes) and NetworkPolicy istio-sidecars. Terraform's global.podAnnotations checksum/redis makes every pod roll when the Valkey password changes. Chart defaults we keep: crds.install and crds.keep true, global.networkPolicy.create true, giving 3 CRDs kept on uninstall and ingress NetworkPolicies for server, repo-server and controller. Merge order: the chart's 4,951-line values.yaml, then our file, then Terraform's block; rendered, 33,555 lines, 30,890 of them the three CRDs.](/images/argocd-k3s-hetzner/argocd-helm-values.svg)
+
+## Step 5: values.yaml, block by block
+
+The whole file is at [`deploy/minikube/argocd/values.yaml`](https://github.com/moks-tech/kubernetes/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/deploy/minikube/argocd/values.yaml). Here it is in the order it's written.
+
+### Names and Argo CD's own settings
+
+```yaml
+fullnameOverride: argocd
+configs:
+  cm:
+    url: https://jithendar.com/argocd
+    admin.enabled: true
+    users.anonymous.enabled: false
+  params:
+    server.insecure: true
+    server.rootpath: /argocd
+    server.basehref: /argocd
+    # Argo CD's database on the shared Valkey: ACL user argocd may open only this one (redis.tf, local.argocd_redis).
+    redis.db: "7"
+  rbac:
+    policy.default: ''
+```
+
+- **`fullnameOverride: argocd`** names every object `argocd-...` (`argocd-server`, `argocd-repo-server`). The upstream manifests use these names, and so do the docs and the CLI.
+- **`configs.cm`** becomes the ConfigMap `argocd-cm`, Argo CD's main settings.
+  - `url` is Argo CD's external address. It's used to build links and, if SSO is ever turned on, the callback URL. It has to include the `/argocd` path.
+  - `admin.enabled: true` keeps the built-in local `admin` user. With Dex disabled (below), it's the only way to sign in. These two settings are the chart's defaults, written down so a reader of the file doesn't have to know that.
+  - `users.anonymous.enabled: false`: nobody sees anything without signing in.
+- **`configs.params`** becomes `argocd-cmd-params-cm`. Each key is a command-line flag that every component reads as an environment variable.
+  - `server.insecure: true` makes argocd-server serve **plain HTTP**. TLS ends at the Istio gateway, and the hop from the gateway to the pod is Istio mTLS. Without this setting argocd-server would serve its own self-signed TLS and redirect HTTP to HTTPS, and the gateway would have to talk TLS to it.
+  - `server.rootpath` and `server.basehref` make Argo CD serve under `/argocd` itself. `rootpath` puts the routes there (`/argocd/api/...`, `/argocd/applications`), and `basehref` writes `<base href="/argocd/">` into the page so the UI loads its scripts from the right place. Because Argo CD expects the prefix, **the gateway must not strip it**. That's the most common mistake when serving Argo CD under a path.
+  - `redis.db: "7"` selects the Valkey database that the ACL user `argocd` is allowed to open. It's a string because ConfigMap values are strings. Terraform's precondition compares it with `tostring(7)`.
+- **`configs.rbac.policy.default: ''`**: a signed-in user with no role binding gets no permissions. `admin` has the built-in `role:admin`, so this only matters once there are more users.
+
+### The three workloads
+
+```yaml
+server:
+  replicas: 1
+  service:
+    type: ClusterIP
+  ingress:
+    enabled: false
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+controller:
+  replicas: 1
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: '1', memory: 1Gi}
+repoServer:
+  replicas: 1
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: '1', memory: 1Gi}
+```
+
+- **One replica each.** On a four-node cluster running 26 Applications, high availability for Argo CD isn't worth the memory. If argocd-server restarts, the UI is gone for a minute. If the controller restarts, syncs wait. Nothing that's already deployed stops.
+- **`service.type: ClusterIP` and `ingress.enabled: false`** (both chart defaults) because the Istio gateway is the only way in. No second load balancer and no Ingress object.
+- **The chart sets no resources by default.** Without requests, the scheduler treats Argo CD as free and can place it on a full node. The numbers are sized from use: the controller is the heaviest (it holds the live state of every Application), and the repo-server spikes while rendering Helm charts.
+
+### The cache: Valkey instead of Redis
+
+```yaml
+# No Redis of its own: Argo CD's cache is on the shared Valkey in namespace redis (minikube-infrastructure/redis.tf),
+# through valkey-master (HAProxy to the current primary, so failovers keep the address), Istio mTLS on the way.
+# Every key Argo CD writes has a TTL, so maxmemory-policy volatile-lru may evict it; Argo CD then recomputes it.
+redis:
+  enabled: false
+redis-ha:
+  enabled: false
+externalRedis:
+  host: valkey-master.redis.svc.cluster.local
+  port: 6379
+  # redis-username and redis-password of ACL user argocd, written by argocd.tf.
+  existingSecret: argocd-redis-valkey
+```
+
+Argo CD uses Redis only as a cache: rendered manifests, application trees, session state. It's safe to lose. The chart's default is its own Redis Deployment. We turned that off and pointed Argo CD at the cluster's **shared, highly available Valkey**, which every application on mk4 uses (its own article: [One Redis for Every App](/blog/valkey-redis-sentinel-minikube-terraform)).
+
+Isolation comes from Valkey's ACLs. `redis.tf` gives each tenant a user that can open only its own database numbers and can't run admin commands:
+
+```hcl
+# minikube-infrastructure/redis.tf (excerpt)
+redis_tenants = merge(var.redis_tenants, { argocd = local.argocd_redis })
+
+redis_tenant_acl = { for name, t in local.redis_tenants : name =>
+  "~* &* +@all -@admin -flushall -swapdb db=${join(",", t.databases)}"
+}
+```
+
+For Argo CD that renders `-@admin -flushall -swapdb db=7`: database 7 only, no `CONFIG`, no `FLUSHALL`, no way into another tenant's data. The name `argocd` and database 7 are reserved in the variable validation, so nobody can add a tenant that collides with them. The chart turns `externalRedis` into `redis.server: valkey-master.redis.svc.cluster.local:6379` in the params ConfigMap, and `REDIS_USERNAME` / `REDIS_PASSWORD` environment variables from the Secret.
+
+### Components switched off, and one that can't be
+
+```yaml
+dex:
+  enabled: false
+notifications:
+  enabled: false
+applicationSet:
+  enabled: false
+```
+
+- **`dex.enabled: false`**: no Dex server. Sign-in is the local `admin` user.
+- **`notifications.enabled: false`**: no notifications controller. Nothing here sends Slack or email messages on sync events.
+- **`applicationSet.enabled: false` does nothing.** Chart 10.10.5 has no such switch. The ApplicationSet controller's template has no condition, so it's always rendered. The release has been running it since 10 November (about 44 Mi, with no requests or limits), and no ApplicationSet exists on the cluster. Helm silently ignores values a chart doesn't read. The only way to catch it is to compare `helm template` output with what you expect, which is how I found it while writing this. See [Loose ends](#loose-ends).
+
+### Objects the release carries: extraObjects
+
+`extraObjects` is a list of arbitrary manifests that the chart renders as they are, so they're installed, upgraded and removed together with Argo CD. We use it for two objects that belong to Argo CD but that the chart doesn't know about.
+
+The first is the **NetworkPolicy for the Istio sidecars**. With `global.networkPolicy.create: true` (the chart's default), the chart gives the server, repo-server and controller ingress NetworkPolicies that admit only Argo CD's own ports. Prometheus also needs to scrape each sidecar's own ports:
+
+```yaml
+  # The chart's NetworkPolicies isolate ingress for its pods. Prometheus (namespace monitoring) also needs the
+  # sidecar's ports, or Kiali gets no traffic for argocd: 15020 merged metrics and health, 15090 Envoy's own. Nothing
+  # here is egress-isolated, so the sidecars reach DNS, istiod and Valkey.
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: istio-sidecars
+      namespace: argocd
+    spec:
+      podSelector: {}
+      policyTypes: [Ingress]
+      ingress:
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: monitoring
+          ports:
+            - {port: 15020, protocol: TCP}
+            - {port: 15090, protocol: TCP}
+```
+
+The second is the **VirtualService that the edge's `/argocd` delegate points to**. It gets its own step, because most of the lessons are in it.
+
+## Step 6: what's running
+
+```text
+$ kubectl -n argocd get pods -o wide     # columns trimmed
+NAME                                                READY   STATUS    NODE
+argocd-application-controller-0                     2/2     Running   w2
+argocd-applicationset-controller-6484855d89-4k987   2/2     Running   w3
+argocd-repo-server-c68457b9c-4wh9h                  2/2     Running   w3
+argocd-server-7bfcddc746-x6sqc                      2/2     Running   w1
+```
+
+`2/2` is Argo CD plus its Istio sidecar. The sidecars run as Kubernetes native sidecars, so they start before the application container and stop after it.
+
+![Inside namespace argocd, where istio-injection is enabled and every pod is 2 of 2. You reach argocd-server (UI, REST and gRPC API, login, RBAC, sessions, about 102 Mi in use) from a browser at /argocd or the argocd CLI over gRPC-web. argocd-server asks argocd-repo-server for manifests; the repo-server runs git fetch against GitHub (moks-sre and roboshop-ai, public HTTPS, no repository credentials) and then helm template or kustomize build, using about 56 Mi. The application-controller, a StatefulSet with one replica using about 298 Mi, asks the repo-server to render, compares desired state from Git with live state from the Kubernetes API, and syncs the workloads in namespaces moks-sre (8 apps) and roboshop-ai (17). The controller caches in Valkey (valkey-master.redis, ACL user argocd, database 7 only, STRICT mTLS). The applicationset-controller is running but no ApplicationSet exists; it uses about 44 Mi. NetworkPolicies: the chart's for server, repo-server and controller, and ours letting monitoring reach the sidecar ports 15020 and 15090. Server, repo-server and controller all cache in Valkey; every key has a TTL, so Valkey may evict it and Argo CD recomputes it. In use on 20 November 2026: about 500 Mi for Argo CD plus about 166 Mi for four sidecars.](/images/argocd-k3s-hetzner/argocd-components.svg)
+
+Two details in the picture are worth calling out:
+
+- **No repository credentials.** Every repository Argo CD reads (`mrjithendar/moks-sre`, `mrjithendar/roboshop-ai`) is public, so the repo-server clones them anonymously over HTTPS. There are no `repository` Secrets in the namespace. Private Git sources would need one.
+- **The cache can be thrown away.** Every key Argo CD writes to Valkey has a TTL. Valkey's `volatile-lru` policy may evict any of them under memory pressure, and Argo CD rebuilds what's missing.
+
+### Signing in
+
+```bash
+# The first admin password, generated by Argo CD at first start
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 --decode; echo
+
+# The CLI over gRPC-web, under the same path as the UI
+argocd login jithendar.com --grpc-web --grpc-web-root-path /argocd --username admin
+```
+
+Change the password on the User Info page after the first sign-in. Argo CD's docs then recommend deleting `argocd-initial-admin-secret`, because it's only used once. `--grpc-web` carries the CLI's gRPC calls inside ordinary HTTP requests, so they take the same path through Cloudflare and the gateway as the UI. `--grpc-web-root-path /argocd` is needed because the API lives under the same prefix as the UI.
+
+## Step 7: serving it at jithendar.com/argocd
+
+![The path of a request to https://jithendar.com/argocd. A browser or the argocd CLI with gRPC-web goes through Cloudflare (proxied DNS; it caches by URL alone, ignores cookies and Accept, and Rocket Loader rewrites HTML), then the Hetzner LB11 mk4-edge (TCP 80 and 443 with PROXY protocol to NodePorts 31080 and 31443), then istio-ingressgateway (TLS for *.jithendar.com from a DNS-01 certificate, a routing table where the first match wins, /argocd delegated to argocd/argocd). In namespace argocd, the VirtualService argocd from extraObjects has two routes. argocd-api, for /argocd/api/, sets the response header cache-control to no-store, no-transform (commits fe3efdd and 1f76443). argocd, for everything else, sets the request header accept to text/html and adds no-transform to the response (commits 8f5eb06, 6f93d92 and 1f76443). Both go to argocd-server on port 80, plain HTTP inside the mesh (server.insecure), serving under /argocd itself through rootpath and basehref, so the prefix is never stripped; it serves the UI, REST API and gRPC-web. Why two routes: Argo CD sends no Cache-Control on API GETs, and a page request that does not accept text/html, such as curl or a probe, gets the file as built with base href slash, or a 404; Cloudflare cached all of these by URL and served them to every browser. Fixed on 19 November 2026, Helm revisions 3 to 6: a cached /argocd/ with the wrong base (blank page), a cached signed-out userinfo (login loop) and a signed-in /api/v1/clusters served to anyone, a curl's cached 404 for /argocd/applications, and Rocket Loader holding back main.js (blank page).](/images/argocd-k3s-hetzner/argocd-request-path.svg)
+
+For its first nine days the VirtualService was a single route: send everything under `/argocd` to `argocd-server:80`. On 19 November that stopped being enough. Argo CD showed a blank page in some browsers, sent others back to the login page on every reload, and for a while served a signed-in answer listing the cluster (name, server, version, API groups) to anyone who asked. The common cause: jithendar.com's DNS records are **proxied** by Cloudflare, so every request to `/argocd` passes through Cloudflare's cache first.
+
+None of these were Argo CD bugs. They came from how Cloudflare caches: **by URL alone**. Cloudflare ignores the cookies and `Accept` header that Argo CD's answers depend on, and adds a one-hour `max-age` to responses that don't set their own cache headers. Four commits fixed it, each one a Helm upgrade.
+
+| Symptom | Cause | Fix | Commit |
+|---|---|---|---|
+| Blank page at `/argocd/` | Argo CD answers a request that accepts `text/html` with `index.html` rewritten to `<base href="/argocd/">` and `no-cache, private`. Any other request (curl, a probe) gets the file as built, with `<base href="/">` and no cache header. Cloudflare cached that one, so browsers loaded `main.*.js` from `/` and got a 404. | Set `Accept: text/html` on requests to the entry page | [`8f5eb06`](https://github.com/moks-tech/kubernetes/commit/8f5eb06ca6226bd00b3283ab7db789d83ad3c585) |
+| Login loop, and a signed-in API answer served to everyone | The API answers GETs without `Cache-Control`. Cloudflare cached a signed-out `/api/v1/session/userinfo` (every reload went back to the login page) and a signed-in `/api/v1/clusters`. | `Cache-Control: no-store` on every `/argocd/api/` response | [`fe3efdd`](https://github.com/moks-tech/kubernetes/commit/fe3efdd2021388a5cfddba63eed25b94aeefd125) |
+| 404 on `/argocd/applications` | The same two-way answer on **every** UI route, not only the entry page. Cloudflare served a curl's cached 404 to browsers. | Set `Accept: text/html` on every request outside the API. Files with a `.` in the path are served as before. | [`6f93d92`](https://github.com/moks-tech/kubernetes/commit/6f93d923906bbf0f1f54951a555249d1857fe3fc) |
+| Blank page, no API calls at all | Cloudflare's Rocket Loader rewrote the `main.*.js` script tag so its own loader would run it. Where that loader didn't run (an extension, a race), the UI never started. | `Cache-Control: no-transform` on every response, which Cloudflare honours by leaving the bytes alone | [`1f76443`](https://github.com/moks-tech/kubernetes/commit/1f76443cd42353189ac9f1a167ceeba4175f4370) |
+
+The result is two routes, each commented with the reason for it:
+
+```yaml
+# deploy/minikube/argocd/values.yaml, extraObjects (excerpt; the full comments are in the file)
+  - apiVersion: networking.istio.io/v1
+    kind: VirtualService
+    metadata:
+      name: argocd
+      namespace: argocd
+    spec:
+      http:
+        - name: argocd-api
+          match:
+            - uri: {prefix: /argocd/api/}
+          headers:
+            response:
+              set: {cache-control: 'no-store, no-transform'}
+          route:
+            - destination:
+                host: argocd-server.argocd.svc.cluster.local
+                port: {number: 80}
+        - name: argocd
+          headers:
+            request:
+              set: {accept: text/html}
+            response:
+              add: {cache-control: no-transform}
+          route:
+            - destination:
+                host: argocd-server.argocd.svc.cluster.local
+                port: {number: 80}
+```
+
+A few things to notice:
+
+- There's **no `hosts` and no `gateways`** in it. It's a *delegate*: the edge's root VirtualService for jithendar.com matches `/argocd` and hands the request to it. Only the root binds the public hostname, so no application can grab another one's path.
+- The API route matches first, so the `Accept` rewrite only ever touches pages. `no-store` applies only to the API, so the UI's hashed script and style files stay cacheable.
+- The **response** header on the UI route is `add`, not `set`. Argo CD's own `no-cache, private` on pages and `immutable` on hashed files stay, and `no-transform` is added next to them.
+
+There was also a fifth blank page, and it wasn't in the cluster at all. Argo CD shares **one origin** with the site (`https://jithendar.com`), so the two share `localStorage`. The site stored its theme as a bare string under the key `theme`. Argo CD's UI reads the same key at start-up with `JSON.parse(localStorage.getItem("theme"))`, so it threw a `SyntaxError` and never rendered. The fix was on the site's side: it now keeps its theme under `site-theme` and moves an old bare value out of `theme`. The lesson: when admin tools live under paths of a public site, the browser treats them as one application.
+
+## Step 8: handing Argo CD its applications
+
+This step is a short tour. [The companion article](/blog/argocd-gitops-deploy-k3s-app-of-apps) covers it in depth: the AppProjects, one Helm chart split into eight Applications, the app of apps, the sync policy line by line, secrets, and why shipping new `:latest` code needs more than a sync.
+
+With Argo CD installed, each application repository brings its own Applications and AppProjects. MOKS uses an **app of apps**: one root Application whose only job is to write the others.
+
+```yaml
+# mrjithendar/moks-sre: deploy/argocd/hetzner/root.yaml (excerpt)
+# App of apps for MOKS. Syncing it writes the Application objects in apps/ and nothing else: it starts no
+# child sync and waits for no child, so a Synced root says nothing about the workloads.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: moks-root
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  project: moks-root
+  source:
+    repoURL: https://github.com/mrjithendar/moks-sre.git
+    targetRevision: master
+    path: deploy/argocd/hetzner/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      enabled: true
+      prune: false
+      selfHeal: true
+```
+
+The root's project, `moks-root`, may only create `Application` objects in namespace `argocd`. A root can't widen a project, because AppProjects are applied by hand. The children run under project `moks`, which lists the namespaces the MOKS chart may deploy to (`moks-sre` and its diagnostics, terminal and lab namespaces, among others). RoboShop keeps one Application per service in [`argocd-k3s/`](https://github.com/mrjithendar/roboshop-ai/tree/d33b00d703a46864fa2e90c474cfdd26baba4f27/argocd-k3s), under project `roboshop`, which denies `Secret` objects outright (secrets are created outside Git).
+
+```text
+$ kubectl -n argocd get applications            # summarised
+PROJECT     APPLICATIONS                                            SOURCE
+moks-root   moks-root                                               moks-sre  deploy/argocd/hetzner/apps
+moks        moks-api, -worker, -crewai, -executor, -foundation,     moks-sre  deploy/helm/moks (one chart,
+            -reranker, -routing, -terminal  (8)                               split by resourceGroup)
+roboshop    roboshop-web, -cart-service, ... (17)                   roboshop-ai  services/*, argocd-k3s/apps/*
+```
+
+Every one of the 26 has the same policy:
+
+| Setting | Value | Why |
+|---|---|---|
+| `automated.enabled` | `true` | A merge to `master` is a deploy |
+| `selfHeal` | `true` | A hand edit on the cluster gets reverted to Git |
+| `prune` | `false` | Removing a file from Git never deletes a running object, a volume least of all |
+| `Prune=false,Delete=false` | annotation | Belt and braces: even a manual prune sync or a deleted Application leaves the objects alone |
+| `FailOnSharedResource=true` | sync option | Two Applications can't silently fight over one object |
+| Finalizers | none | Deleting an Application never cascades to what it manages |
+
+"Never prune" has a cost: deleting something takes a person. When MOKS retired its OpenSearch pod, moving its Application out of Git stopped the syncing but left the pod running, and it had to be deleted by hand. On this cluster that's on purpose.
+
+Two things deliberately **aren't** Argo CD Applications: the jithendar.com site itself, which is deployed by a GitHub Actions workflow with `kubectl apply`, and every add-on from Step 2, Argo CD included.
+
+## What it costs
+
+| Pod | Requests | Limits | In use (20 Nov 2026) |
+|---|---|---|---|
+| argocd-application-controller | 100m, 256 Mi | 1 CPU, 1 Gi | 298 Mi, about 4m CPU |
+| argocd-server | 50m, 128 Mi | 500m, 512 Mi | 102 Mi, about 1m CPU |
+| argocd-repo-server | 100m, 256 Mi | 1 CPU, 1 Gi | 56 Mi, about 1m CPU |
+| argocd-applicationset-controller | none | none | 44 Mi, about 2m CPU |
+| 4 Istio sidecars | 20m, 64 Mi each | 2 CPU, 256 Mi each | 166 Mi in total |
+| **Total** | **330m, 896 Mi** | | **about 666 Mi** |
+
+There's no Redis pod in that list. The cache lives in database 7 of a Valkey that runs anyway. On worker nodes with 8 GiB each, Argo CD requests a little under 1 GiB of the cluster's 24 GiB of worker memory. Idle, it uses a few millicores. The repo-server and controller spike for a few seconds when a sync renders a chart.
+
+## Loose ends
+
+Writing this meant comparing every value with what the chart actually renders and what's actually on the cluster. Three things didn't match:
+
+1. **`applicationSet.enabled: false` is ignored** (Step 5). The ApplicationSet controller runs anyway, with no resource requests. The fix is either to delete the line (the controller is cheap and might be used one day) or to set `applicationSet.replicas: 0`.
+2. **A leftover Secret.** `argocd-redis`, created by the first install's bundled Redis, is still in the namespace. Nothing in the current release references it.
+3. **The `mk-platform` AppProject** in the `kubernetes` repository's Argo CD catalog (`deploy/minikube/applications/`) isn't on the cluster. The live projects are `default`, `moks`, `moks-root` and `roboshop`, which each application repository brings with it. Either the catalog's project gets applied, or it goes away.
+
+None of them affects what's running, which is exactly why they went unnoticed.
+
+## What's next
+
+- **Cloudflare Access in front of `/argocd`.** The edge chart already has the check: with it on, the gateway refuses `/argocd`, `/grafana`, `/kiali` and the other admin paths unless the request carries a valid Access token. It's off until the Zero Trust application exists. Until then, Argo CD's own login is the only gate.
+- **SSO instead of the shared `admin` user**, once more than one person needs in. That would turn Dex back on, and `configs.cm.url` already has the right value for the callback.
+- **Chart upgrades through pull requests.** The next argo-cd release is a one-line change of `version` in `argocd.tf`. Diff `helm template` output for the old and new versions before applying, because that diff is how the ignored `applicationSet` key turned up.
+
+## Git references
+
+Everything above was read on 20 November 2026 from these commits. All three repositories are public.
+
+**moks-tech/kubernetes** at [`b74771b`](https://github.com/moks-tech/kubernetes/tree/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347):
+
+- [`hetzner-k3s.yaml`](https://github.com/moks-tech/kubernetes/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/hetzner-k3s.yaml): the cluster
+- [`minikube-infrastructure/argocd.tf`](https://github.com/moks-tech/kubernetes/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/minikube-infrastructure/argocd.tf): namespace, Secret, `helm_release`
+- [`deploy/minikube/argocd/values.yaml`](https://github.com/moks-tech/kubernetes/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/deploy/minikube/argocd/values.yaml): the values, VirtualService and NetworkPolicy
+- [`deploy/minikube/argocd/README.md`](https://github.com/moks-tech/kubernetes/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/deploy/minikube/argocd/README.md): access, sign-in and troubleshooting
+- [`minikube-infrastructure/redis.tf`](https://github.com/moks-tech/kubernetes/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/minikube-infrastructure/redis.tf): Valkey tenants and ACLs
+- [`deploy/minikube/istio/edge/values.yaml`](https://github.com/moks-tech/kubernetes/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/deploy/minikube/istio/edge/values.yaml): the routing table
+- [`deploy/minikube/istio/ingressgateway.yaml`](https://github.com/moks-tech/kubernetes/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/deploy/minikube/istio/ingressgateway.yaml): the Hetzner load balancer annotations
+
+Commits that changed Argo CD:
+
+| Commit | Date | Change |
+|---|---|---|
+| [`5a8ec33`](https://github.com/moks-tech/kubernetes/commit/5a8ec3381f7fd4bc356f30da66bf142fc3a997f9) | 10 Nov 2026 | `argocd.tf`: Argo CD installed by Terraform, cache on Valkey |
+| [`8f5eb06`](https://github.com/moks-tech/kubernetes/commit/8f5eb06ca6226bd00b3283ab7db789d83ad3c585) | 19 Nov 2026 | Argo CD's entry page is never cached with the wrong base |
+| [`fe3efdd`](https://github.com/moks-tech/kubernetes/commit/fe3efdd2021388a5cfddba63eed25b94aeefd125) | 19 Nov 2026 | Argo CD's API answers are never cached by Cloudflare |
+| [`6f93d92`](https://github.com/moks-tech/kubernetes/commit/6f93d923906bbf0f1f54951a555249d1857fe3fc) | 19 Nov 2026 | Every Argo CD page is served rewritten and uncacheable |
+| [`1f76443`](https://github.com/moks-tech/kubernetes/commit/1f76443cd42353189ac9f1a167ceeba4175f4370) | 19 Nov 2026 | Cloudflare passes Argo CD's pages through unmodified |
+
+**mrjithendar/moks-sre** at [`cd2f58f`](https://github.com/mrjithendar/moks-sre/tree/cd2f58fd004ca0b37016a136b320db4ef14971b2/deploy/argocd): `deploy/argocd/hetzner/root.yaml`, `apps/`, `project-root.yaml`.
+
+**mrjithendar/roboshop-ai** at [`d33b00d`](https://github.com/mrjithendar/roboshop-ai/tree/d33b00d703a46864fa2e90c474cfdd26baba4f27/argocd-k3s): `argocd-k3s/`, the RoboShop Applications and project.
