@@ -4,7 +4,10 @@
 # edge (/mcp/public, /mcp/admin; Kong only, via Service seo-agent-mcp and kubernetes/kong/seo-agent-mcp.deck.yaml).
 # Applied by a person (scripts/manifests.sh seo-agent | kubectl apply -f -) after the one-time steps in
 # docs/seo/MANUAL_SETUP.md "v3" and "v4": Secret seo-agent-env (scripts/create-seo-agent-secrets.sh), pgvector enabled.
-# Secret seo-agent-env (never committed): ANTHROPIC_API_KEY, SEO_AGENT_TOKEN, SEO_AGENT_CALLBACK_TOKEN. The admin MCP
+# The news desk is not here since 2026-11-21: it is the news agent (news-agent-*.yaml, mrjithendar/newsroom), which
+# calls this service's POST /search and the one LLM budget's holds with its own token, SEO_AGENT_NEWS_TOKEN.
+# Secret seo-agent-env (never committed): ANTHROPIC_API_KEY, SEO_AGENT_TOKEN, SEO_AGENT_CALLBACK_TOKEN,
+# SEO_AGENT_NEWS_TOKEN (scripts/create-news-agent-secrets.sh adds it). The admin MCP
 # needs no signing keys: its OAuth tokens are opaque and verified by hash in the shared Postgres (DECISIONS D-60).
 ---
 apiVersion: v1
@@ -63,12 +66,6 @@ data:
   PUBLIC_MCP_DAILY_CALLS: "5000"
   ADMIN_MCP_RPM_PER_TOKEN: "120"
   ADMIN_MCP_KICKOFFS_PER_HOUR: "10"
-  # News desk (services/www/docs/news). Off until a person switches it on (MANUAL_SETUP §3); the web app reads its own
-  # NEWS_DESK_ENABLED too. Image provider: template (free) unless configured (IMAGES.md); OpenAI also needs
-  # OPENAI_API_KEY in Secret seo-agent-env.
-  NEWS_DESK_ENABLED: "false"
-  NEWS_IMAGE_PROVIDER: template
-  NEWS_OPENAI_IMAGE_MODEL: gpt-image-1
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector.observability:4318
   OTEL_SERVICE_NAME: seo-agent
   LOG_LEVEL: INFO
@@ -150,7 +147,8 @@ spec:
   ports: [{ name: http-mcp, port: 8090, targetPort: mcp, protocol: TCP }]
 ---
 # Allowed traffic (kindnet enforces NetworkPolicy on mk4). In on 8080: the site (admin API, review decisions, /api/ask
-# proxy), the flow-trigger CronJobs, Prometheus (/metrics). In on 8090 (MCP edge) only: the Kong gateway. Out: Postgres, the site's callback port, the OTel collector, DNS and HTTPS to public
+# proxy), the flow-trigger CronJobs, the news agent (POST /search and the LLM budget's holds; its token reaches nothing
+# else), Prometheus (/metrics). In on 8090 (MCP edge) only: the Kong gateway. Out: Postgres, the site's callback port, the OTel collector, DNS and HTTPS to public
 # addresses (Anthropic API). The crew's documentation fetches go through the site's SSRF-safe fetcher, not from here.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -165,6 +163,7 @@ spec:
     - from:
         - podSelector: { matchLabels: { app: jithendar-com } }
         - podSelector: { matchLabels: { app: seo-agent-trigger } }
+        - podSelector: { matchLabels: { app: news-agent } }
       ports: [{ port: 8080, protocol: TCP }]
     # Kong (namespace kong, tools repo docs/kong) reaches the MCP port and nothing else. Until the Kong cutover this
     # rule matches no pod; the MCP servers are also switched off by default.

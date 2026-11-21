@@ -1,6 +1,6 @@
 name: deploy to kubernetes
 
-# Deploys the whole site from kubernetes/ to the mk4 cluster: the CMS (moks-cms) and the SEO agent. Every manifest
+# Deploys the whole site from kubernetes/ to the mk4 cluster: the CMS (moks-cms), the SEO agent and the news agent. Every manifest
 # names :latest with imagePullPolicy Always, so a deploy is "apply, then restart": a restarted Deployment pulls the
 # newest :latest. The CMS rolls one pod at a time (maxSurge 1, maxUnavailable 0: no downtime); the SEO agent is one
 # pod with strategy Recreate (its flow runs are in-process, two pods at once would fail each other's runs), so it is
@@ -31,6 +31,8 @@ name: deploy to kubernetes
 #                      Owner decision 2026-11-14 (moks-cms, services/www/docs/DEPLOYMENT.md): a merged pull request can
 #                      therefore change what CI itself may do in the namespace.
 #   seo-agent          application objects only; its CronJobs stay with a person
+#   news-agent         application objects only (the news desk's service, mrjithendar/newsroom); its CronJob stays
+#                      with a person. Its Secret news-agent-env must exist before the first apply.
 # Never applied by CI: Secrets, ClusterRoles and ClusterRoleBindings, ClusterIssuers, the RuntimeClass, admission
 # policies, CronJobs. Nothing is ever deleted (no --prune).
 #
@@ -85,8 +87,8 @@ jobs:
       - name: Render and select application objects
         run: |
           set -euo pipefail
-          # The site group is applied in full (--all); the other two only as application objects.
-          for group in site seo-agent; do
+          # The site group is applied in full (--all); the other groups only as application objects.
+          for group in site seo-agent news-agent; do
             echo "::group::$group"
             flags=(); [[ "$group" == site ]] && flags=(--all)
             scripts/manifests.sh "$group" | python scripts/ci-app-manifests.py "${flags[@]}" > /dev/null
@@ -124,8 +126,8 @@ jobs:
         run: |
           set -euo pipefail
           : > "$RUNNER_TEMP/rollouts.txt"
-          # The site group is applied in full (--all); the other two only as application objects.
-          for group in site seo-agent; do
+          # The site group is applied in full (--all); the other groups only as application objects.
+          for group in site seo-agent news-agent; do
             flags=(); [[ "$group" == site ]] && flags=(--all)
             scripts/manifests.sh "$group" | python scripts/ci-app-manifests.py "${flags[@]}" --rollouts "$RUNNER_TEMP/$group.rollouts" > "$RUNNER_TEMP/$group.yaml"
             cat "$RUNNER_TEMP/$group.rollouts" >> "$RUNNER_TEMP/rollouts.txt"
@@ -146,7 +148,7 @@ jobs:
           export KUBECONFIG="$RUNNER_TEMP/kubeconfig"
           trap 'rm -f "$KUBECONFIG"' EXIT
           (umask 077; perl -pe 's/\$\{(MK4_[A-Z_]+)\}/$ENV{$1}/g' .github/jithendar-ci-applier.yaml > "$KUBECONFIG")
-          groups=(site seo-agent)
+          groups=(site seo-agent news-agent)
 
           # Every object must pass the API server's validation and admission before anything changes.
           for g in "${groups[@]}"; do
@@ -173,6 +175,7 @@ jobs:
           case "$EVENT:$COMPONENT" in
             repository_dispatch:www) wanted=(deployment/jithendar-com) ;;
             repository_dispatch:seo-agent) wanted=(deployment/seo-agent) ;;
+            repository_dispatch:news-agent) wanted=(deployment/news-agent) ;;
             repository_dispatch:*) echo "::error::Unknown component: $COMPONENT"; exit 1 ;;
             *) mapfile -t wanted < <(grep '^deployment/' "$RUNNER_TEMP/rollouts.txt" || true) ;;
           esac
@@ -215,7 +218,7 @@ jobs:
             if [[ ${#restarted[@]} -gt 0 ]]; then echo "- Restarted in $ns: ${restarted[*]}"; fi
             if [[ ${#skipped[@]} -gt 0 ]]; then echo "- Not restarted (not found in $ns): ${skipped[*]}"; fi
             echo "- Ready: $(paste -sd ' ' "$RUNNER_TEMP/rollouts.txt")"
-            echo '- Not applied by CI: Secrets, ClusterRoles and ClusterRoleBindings, ClusterIssuers, RuntimeClass, admission policies, CronJobs; and for seo-agent also RBAC, ServiceAccounts and quotas. The practice executor deploys from moks-tech/practice-programming.'
+            echo '- Not applied by CI: Secrets, ClusterRoles and ClusterRoleBindings, ClusterIssuers, RuntimeClass, admission policies, CronJobs; and for seo-agent and news-agent also RBAC, ServiceAccounts and quotas. The practice executor deploys from moks-tech/practice-programming.'
           } >> "$GITHUB_STEP_SUMMARY"
       # The site is checked even when another workload failed to roll out, so that failure cannot hide a broken site.
       # Cloudflare answers 403 to GitHub-hosted runners, so the app is tested through a port-forward to the site

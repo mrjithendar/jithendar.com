@@ -1,7 +1,7 @@
 # moks-tech/practice-programming's CI restarts deployment/jithendar-com on each new practice catalog and moves the
-# executor Deployments to a new image (its scripts/ci-rollout.py). Image tags of the CMS, the SEO agent and the executor
+# executor Deployments to a new image (its scripts/ci-rollout.py). Image tags of the CMS, the SEO and news agents and the executor
 # change through the manifests (deploy-kubernetes.yml, ServiceAccount github-ci-applier).
-# This ServiceAccount may only do that: watch deployments and pods in jithendar and restart those three Deployments.
+# This ServiceAccount may only do that: watch deployments and pods in jithendar and restart the Deployments named below.
 # It cannot read Secrets or create pods.
 # scripts/setup-ci-deployer.sh applies this file and stores its token as the repository secret MK4_CI_TOKEN.
 apiVersion: v1
@@ -23,7 +23,7 @@ rules:
 # kubectl rollout restart (patches the pod template's restartedAt annotation)
 - apiGroups: ["apps"]
   resources: ["deployments"]
-  resourceNames: ["jithendar-com", "practice-executor-api", "practice-dispatcher", "seo-agent"]
+  resourceNames: ["jithendar-com", "practice-executor-api", "practice-dispatcher", "seo-agent", "news-agent"]
   verbs: ["patch"]
 # rollout diagnostics
 - apiGroups: [""]

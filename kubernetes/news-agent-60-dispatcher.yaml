@@ -1,0 +1,70 @@
+# The news agent's flow dispatcher: one CronJob, every minute, running only `python -m app.trigger dispatch`, which POSTs
+# the news agent's /schedules/dispatch with its service token and lets the Istio sidecar exit. The schedules are rows in
+# the site's database (seo_flow_schedules: news-dispatch, news-train, news-style-review), edited in Admin → CrewAI
+# console → Schedules. The news agent starts the news_* ones that are due and leaves the others to the seo-agent's own
+# dispatcher (seo-agent-60-dispatcher.yaml); each claims a time slot first, so nothing starts twice.
+#
+# Applied by a person; CI never applies CronJobs:
+#   scripts/manifests.sh news-agent | kubectl apply -f -
+# Replaces the old per-flow CronJobs news-dispatch, news-train and news-style-review (they POSTed to the seo-agent,
+# which no longer runs the news flows): kubectl -n jithendar delete cronjob news-dispatch news-train news-style-review
+# Pause everything: kubectl -n jithendar patch cronjob news-flow-dispatcher -p '{"spec":{"suspend":true}}' (or pause
+# single schedules in the console). Roll back: suspend this.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: news-flow-dispatcher
+  namespace: jithendar
+  labels: { app: news-agent-dispatcher, app.kubernetes.io/part-of: jithendar-com }
+spec:
+  schedule: "* * * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  # A tick that cannot start within 50 s is skipped: the next one starts what is due (the agent catches up).
+  startingDeadlineSeconds: 50
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 55
+      ttlSecondsAfterFinished: 600
+      template:
+        metadata:
+          labels: { app: news-agent-trigger, app.kubernetes.io/part-of: jithendar-com }
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          imagePullSecrets: [{ name: harbor-pull }]
+          securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
+          containers:
+            - name: trigger
+              image: registry.jithendar.com/jithendar/news-agent:latest
+              imagePullPolicy: Always
+              command: ["python", "-m", "app.trigger", "dispatch"]
+              env:
+                - { name: NEWS_AGENT_URL, value: "http://news-agent.jithendar:8080" }
+                - name: NEWS_AGENT_TOKEN
+                  valueFrom: { secretKeyRef: { name: news-agent-env, key: NEWS_AGENT_TOKEN } }
+              resources:
+                requests: { cpu: 10m, memory: 48Mi }
+                limits: { cpu: 200m, memory: 128Mi }
+              securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+---
+# The dispatcher's pods (label app: news-agent-trigger) may reach only the news agent's internal API and DNS. The news
+# agent's own NetworkPolicy (news-agent-40-news-agent.yaml) admits them on 8080.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: news-agent-trigger
+  namespace: jithendar
+  labels: { app.kubernetes.io/part-of: jithendar-com }
+spec:
+  podSelector: { matchLabels: { app: news-agent-trigger } }
+  policyTypes: ["Ingress", "Egress"]
+  egress:
+    - to: [{ podSelector: { matchLabels: { app: news-agent } } }]
+      ports: [{ port: 8080, protocol: TCP }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
