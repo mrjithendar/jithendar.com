@@ -1,0 +1,363 @@
+---
+title: "Inside rag_eval.yaml: The 95 Questions That Grade Ask the Blog's Retrieval"
+slug: rag-eval-yaml-question-set-ask-the-blog
+description: "A field-by-field tour of the question set that grades Ask the Blog's retrieval, how each field is scored, and what a full run with the production model found."
+seoTitle: "rag_eval.yaml Explained: Building a RAG Evaluation Question Set"
+seoDescription: "Every field of a RAG retrieval eval set explained: types, slugs, section anchors, hard-set tags, Recall@k, MRR, the calibrated floor, and real results."
+author: jithendar-dharmapuri
+category: ai-engineering
+tags: [RAG, Retrieval Evaluation, Evaluation Dataset, Embeddings, bge-small, Recall@k, MRR, AI Engineering, LLMOps]
+contentType: tutorial
+status: review
+featuredImage:
+  src: /images/rag-eval-yaml/rag-eval-yaml-floor.png
+  alt: "A strip plot of cosine similarity from 0.50 to 0.95. The top lane has one dot per answerable question at the best cosine of an expected article; most sit between 0.72 and 0.87, and the lowest hard-set dots sit at 0.60 to 0.66. The bottom lane has the eleven no-answer questions, spread from 0.52 to 0.78, with the three near-miss questions at 0.72 to 0.78. Vertical lines mark three floors: 0.59 loses no answer and lets 10 of 11 no-answer questions through, 0.66 (today's setting) loses four answers and lets 8 through, 0.70 loses eleven answers and lets 5 through."
+  width: 1922
+  height: 1078
+related:
+  - blog/rag-evaluation-ask-the-blog-jithendar-com
+  - blog/pytorch-rag-reranking-moks-sre-agent
+  - blog/moks-rag-and-skills-design
+---
+
+<Todo>Drafted 2026-11-22 from mrjithendar/moks-seo-agent e4669f7, a local run of scripts/rag_eval.py with the production model, and read-only checks on mk4 (details in docs/knowledge-sharing/rag-eval-yaml/README.md). Before publishing: (1) the floor section shows that ASK_BLOG_MIN_SCORE 0.66 drops four hard-set answers; decide whether to keep 0.66, and update "What the floor should be" to match. (2) The stale c03 anchor and the stale paths in the file's header comment are not fixed in moks-seo-agent yet; fix them or keep the text. (3) When seo_ml_flow finishes its first run with the file in place, add its live Recall@3 to "Where the file lives" and the move figure's "On 22 November" box. (4) If you change this article, re-run the contamination check in "Keeping the labels honest". (5) Then set status to published with a publishedAt time.</Todo>
+
+Ask the Blog is the assistant on jithendar.com that answers questions only from my articles and cites the section each statement comes from. Whether it finds the right section is decided long before the model writes a word, by retrieval. I wrote about how I [evaluate that retrieval](/blog/rag-evaluation-ask-the-blog-jithendar-com): the workflow, the metrics and the settings they chose.
+
+This post goes one level down, into the file all of that depends on: `app/data/rag_eval.yaml` in the `moks-seo-agent` repository. It's 542 lines of YAML, and every number the evaluation reports comes from it. I'll go through every field, show how the code scores each one, and then share what the first complete run with the production embedding model found when I ran all 95 questions on 22 November 2026.
+
+The short version of that run:
+
+- The first 55 questions still score 100% Recall@3. The 40 harder questions added later score **78.4%**, so they do the job they were written for.
+- **Paraphrases are the weak spot**: 68.4% Recall@3 with the production settings, and 47.4% with hybrid search.
+- On all 95 questions the calibrated floor is **0.59**, not the 0.66 configured today. At 0.66, four answerable questions lose their right article before the grader ever sees it.
+- The labels have held up: every expected article still exists. One section anchor has gone stale.
+- My earlier article about this evaluation now shows up in the results of three of the questions it describes.
+
+## Where the file lives, and why it moved
+
+The question set ships inside the seo-agent's Python package:
+
+```python
+# app/rag_eval.py (excerpt)
+K = 6
+# The question set ships with the app (app/data): the weekly seo_ml_flow runs it against the live index in the pod,
+# where tests/ is not in the image (.dockerignore). It was tests/fixtures/rag_eval.yaml until 2026-11-22.
+EVAL_PATH = Path(__file__).resolve().parent / "data" / "rag_eval.yaml"
+```
+
+Five things read it:
+
+- **pytest**, on every pull request, with hashed embeddings. These runs only prove the harness works.
+- **`scripts/rag_eval.py`**, the real evaluation, run locally or in the manual `rag-eval.yml` workflow with the production model.
+- **`seo_ml_flow`**, the ML flow inside the running seo-agent, whose last step evaluates the live index.
+- **`scripts/rag_mine_eval.py`**, which uses the file to skip questions that are already in the set when it mines new ones from Ask the Blog's logs.
+- **People**, who edit it by hand. The comments at the top of the file are written for them.
+
+Until 22 November the file lived at `tests/fixtures/rag_eval.yaml`. That was fine for pytest and the script, but the seo-agent's Docker image leaves `tests/` out (`.dockerignore` lists it). So the live evaluation inside the pod could never find its questions.
+
+![Two lanes. Before: the question set sat in tests/fixtures in the repository; docker build drops tests/ because .dockerignore lists it; in the seo-agent pod, seo_ml_flow's rag_eval step opened a path under /srv/tests/fixtures, raised FileNotFoundError, and the run ended failed on 18 and 20 November. After commit 400e1b9: the file is app/data/rag_eval.yaml, COPY app ./app puts it at /srv/app/data/rag_eval.yaml, the pod evaluates the live index and writes a seo_rag_eval_runs row and the seo_rag_eval_recall_at_3 gauge, and a missing file is reported as skipped instead of failing. A test, test_the_eval_set_ships_in_the_image, checks that tests is ignored, app is copied and the set loads. On 22 November the pod had the file, but seo_rag_eval_runs had no rows yet. The frozen article copy, tests/fixtures/rag_corpus, stays in tests because only CI and manual runs use it.](/images/rag-eval-yaml/rag-eval-yaml-move.svg)
+
+The failures are in `seo_flow_runs` on mk4, our k3s cluster: `seo_ml_flow` failed on 18 November and again on 20 November with `FileNotFoundError: [Errno 2] No such file or directory: '/srv/tests/fixtures/rag_eval.yaml'`. Each step of that flow runs even if an earlier one failed, so the other models were still trained, but one failed step marks the whole run `failed`, which is what the `SeoMlFlowFailing` alert watches. Commit `400e1b9` (PR #30) moved the file into `app/data/`, which the Dockerfile copies with `COPY app ./app`. It also made a missing file a skip instead of an error:
+
+```python
+# app/seo_ml/train.py (excerpt)
+async def run_rag_eval(store: MlStore, retriever: Any) -> dict[str, Any]:
+    from ..rag_eval import EVAL_PATH, evaluate, load_eval_set
+
+    if not getattr(retriever, "available", False):
+        return {"skipped": "vector index unavailable"}
+    if not EVAL_PATH.exists():  # an image built without app/data: the other models are still trained
+        return {"skipped": f"evaluation set not found ({EVAL_PATH.name})"}
+    res = await evaluate("live", lambda q, k: retriever.search(q, k), load_eval_set())
+    m = {**res.metrics, "calibrated_floor": res.calibrated_floor, "p95_ms": res.latency_ms["p95"], "mode": getattr(getattr(retriever, "config", None), "mode", "?")}
+    await store.record_rag_eval("live", m)
+    metrics.RAG_EVAL_RECALL3.set(res.metrics["recall@3"])
+    return m
+```
+
+A new test, `test_the_eval_set_ships_in_the_image`, reads `.dockerignore` and the Dockerfile and fails if the file ever drifts back out of the image.
+
+On 22 November, right after the fix was deployed, I checked the pod read-only: `/srv/app/data/rag_eval.yaml` was there. But `seo_rag_eval_runs` had **no rows at all**. The 21 November run was interrupted by a restart, and no run had finished since the fix. So the `seo_rag_eval_recall_at_3` gauge has never had a value. The earlier article describes the weekly live check as if it were working. It's only now in a position to work.
+
+## The file at a glance
+
+The file opens with a comment block that is its schema and its editing policy in one:
+
+```yaml
+# app/data/rag_eval.yaml (header)
+# Retrieval evaluation set for Ask the Blog / search_articles / vector_search (docs/seo/RAG.md "Evaluation").
+#
+# Each question was written from the published articles in sites/jithendar.com/content/blog (then services/www/content/blog; 2026-11-10, 37 articles).
+#   slugs:   the article(s) that answer it (any one counts as a hit)
+#   anchors: acceptable section anchors (github-slugger ids, as on the site); a hit in one of these is a
+#            "section-anchor hit". Empty for no-answer questions.
+#   type:    concept | how-to | exact-term (a command, flag, config key, error string or version) | troubleshooting |
+#            no-answer (not covered on the site: retrieval should give the grader nothing convincing)
+#   tags:    optional, reported per tag: paraphrase | multi-hop | exact | near-miss (the hard set, ids x01…)
+# Rules for editing: keep at least 40 questions and at least 6 no-answer; don't tune questions to a retriever (write
+# them the way a reader would ask); when an article is renamed or restructured, fix its slugs/anchors here.
+version: 1
+questions:
+```
+
+(The paths in the third line are history: the site has had its own repository since 16 November. That comment is due an update.)
+
+Then come 95 entries in two groups:
+
+| Group | Ids | Questions | By type | By tag |
+|---|---|---|---|---|
+| First set (10 November) | `c01`–`c14`, `h01`–`h12`, `e01`–`e11`, `t01`–`t10`, `n01`–`n08` | 55 | 14 concept, 12 how-to, 11 exact-term, 10 troubleshooting, 8 no-answer | none |
+| Hard set (11 November) | `x01`–`x40` | 40 | 17 concept, 6 how-to, 11 exact-term, 3 troubleshooting, 3 no-answer | 19 paraphrase, 7 multi-hop, 11 exact, 3 near-miss |
+| **All** | | **95** | **84 answerable, 11 no-answer** | |
+
+The 95 questions point at 33 different articles and 150 different section anchors. Fourteen questions list more than one article.
+
+## One entry, field by field
+
+Here is one entry from the hard set, and what each field turns into:
+
+```yaml
+# app/data/rag_eval.yaml (one entry)
+  - id: x37
+    question: "Error: error getting credentials when Terraform pulls the Valkey chart"
+    type: exact-term
+    tags: [exact]
+    slugs: [valkey-redis-sentinel-minikube-terraform]
+    anchors: [terraform-cannot-pull-the-chart-error-getting-credentials]
+```
+
+![Six YAML fields on the left, each with an arrow to the code that reads it on the right. id: x37 goes into the per-question table of every report; ids starting with c, h, e, t and n are the first 55 and x01 to x40 the hard set. question is passed to search with k = 6, embedded as written with bge-small's query prefix, with min_score 0 because floors are applied afterwards. type is checked against five values and feeds the By question type table; no-answer questions are scored only on false positives and the floor. tags, optional, feed the Hard set by tag table; near-miss questions are no-answer questions, so they land in the false-positive rate. slugs give the rank: the first top-6 hit whose blog slug is listed; the best cosine among those hits is the best expected cosine; the generation eval also uses them for label citation precision. anchors give the section-anchor hit rate: a top-6 hit of an expected article whose heading anchor is listed. At the bottom, load_eval_set raises one ValueError for the whole file for an unknown type or tag or an answerable question without slugs; the version key is not read by the code.](/images/rag-eval-yaml/rag-eval-yaml-anatomy.svg)
+
+### `id`
+
+A short, unique label. The first letter says which group a question came from: `c` concept, `h` how-to, `e` exact-term, `t` troubleshooting, `n` no-answer, and `x` for the hard set. The code doesn't interpret the prefix. It's there so that a row in a report (`| x37 | exact-term | 1 | ✓ | 0.860 | …`) can be traced back to the file at a glance. Uniqueness is checked by a test (below).
+
+### `question`
+
+The text exactly as a reader would type it, and the evaluation embeds it exactly as written. It isn't lower-cased or stripped of punctuation, because `/`, `:`, `=` and quotes carry meaning in technical queries. Ask the Blog does the same: it only normalises the question for its cache key and its log of unanswered questions.
+
+Two YAML details matter here. A question that contains `: ` or starts with a quote must be quoted, or YAML reads it as a mapping. That's why `x37` and the other error-string questions are in double quotes. A question that itself contains double quotes goes in single quotes. `x32` does this, because the Terraform error it quotes contains `kind "Cluster"`.
+
+The header's most important rule is about this field: *don't tune questions to a retriever*. If I reword a question until my current retriever gets it right, the score goes up and the measurement stops meaning anything.
+
+### `type`
+
+One of five values, and each exists to test a different way retrieval can fail:
+
+- **concept** ("why", "what is the difference between"): the answer is an explanation spread over a section, so it tests semantic matching.
+- **how-to**: the answer is a procedure, often split over several numbered steps and code blocks, so it tests whether chunking kept a step findable.
+- **exact-term**: a command, flag, config key, error string or version. Embeddings are weakest here, because a model that knows `set -o pipefail` is "about bash" doesn't know it's *this* flag. These questions are the reason hybrid search and the identifier boost exist.
+- **troubleshooting**: a symptom, as a person types it in the middle of an incident.
+- **no-answer**: something the site doesn't cover. Its `slugs` and `anchors` must be empty. These questions measure the opposite of recall: whether retrieval hands the paid relevance grader something that only looks convincing.
+
+`load_eval_set` rejects any other value, and an answerable type without `slugs`:
+
+```python
+# app/rag_eval.py (excerpt)
+def load_eval_set(path: Path | str = EVAL_PATH) -> list[Question]:
+    doc = yaml.safe_load(Path(path).read_text())
+    qs = [Question(q["id"], q["question"], q["type"], list(q.get("slugs") or []), list(q.get("anchors") or []), list(q.get("tags") or [])) for q in doc["questions"]]
+    bad = [q.id for q in qs if q.type not in TYPES or (q.type != "no-answer" and not q.slugs) or any(t not in TAGS for t in q.tags)]
+    if bad:
+        raise ValueError(f"malformed eval questions: {bad}")
+    return qs
+```
+
+Notice that it collects every bad id before raising. A broken edit fails the whole file once, with the full list, instead of one question at a time. Also notice what it never reads: `version: 1`. That key is documentation only.
+
+### `slugs`
+
+The article or articles that answer the question, as the last part of the URL (`/blog/<slug>`). **Any one** of them counts: retrieval is scored at article level first. A question gets more than one slug in two cases. Either two articles genuinely cover it (the monolith-or-microservices question lists three), or it's a multi-hop question that needs two articles. For multi-hop questions, retrieving either article counts as a retrieval hit. Whether the answer actually uses both is left to the generation evaluation.
+
+A test checks every slug against the article files, so a renamed article breaks CI instead of silently scoring zero.
+
+### `anchors`
+
+The sections that count as *the right part* of an expected article. They're heading ids as the site generates them, with **github-slugger** (through rehype-slug): lower-cased, punctuation removed, spaces turned into hyphens. That is why some anchors look odd. The heading "`set -e`, `set -u` and `set -o pipefail`, one at a time" becomes `set--e-set--u-and-set--o-pipefail-one-at-a-time`: backticks and commas are dropped, every space becomes a hyphen, and the flag's own hyphen stays, so `set -e` turns into `set--e`.
+
+Three details decide whether an anchor can ever match:
+
+1. **Only h1 to h3 count.** The chunker splits articles at h1, h2 and h3, and each chunk carries the anchor of its heading. An h4 heading's id is a valid link on the page, but no chunk carries it, so it can never be a hit.
+2. **The introduction has no anchor.** Text before the first heading becomes a chunk with an empty anchor, which matches nothing.
+3. **Anchors are pooled across the question's slugs.** The check is "this hit's article is expected *and* this hit's anchor is in the list". It doesn't record which slug an anchor belongs to.
+
+### `tags`
+
+Optional, and only on the hard set. The tags describe *why* a question is hard:
+
+- **paraphrase** (19): asked without the article's own words. One asks what stops scripts from spamming the contact form, while the article talks about Turnstile and bot protection.
+- **multi-hop** (7): needs two articles.
+- **exact** (11): an error string or flag quoted verbatim, such as `x37` above.
+- **near-miss** (3): a no-answer question right next to a covered topic. One asks about backing up Velero to a cloud the site never writes about, next to an article that does cover Velero.
+
+Each tag gets its own Recall@3 and MRR row in the report. `near-miss` questions are no-answer questions, so they have no rank and appear in the false-positive rate instead. A test requires at least 30 tagged questions, every tag in use, and at least five multi-hop questions with two or more slugs.
+
+## How one question becomes numbers
+
+![The pipeline for one question. The question from rag_eval.yaml, exactly as written, is embedded with bge-small ONNX and its query prefix, 20 candidates are found by exact cosine over every chunk of the corpus, and the top 6 hits keep at most 3 chunks per article with code windows merged. score_question looks at hits 1 to 6. For an answerable question, the first hit whose slug is listed sets the rank, the highest cosine among those hits is the best expected cosine, and a listed heading anchor on such a hit is an anchor hit. For a no-answer question only the highest cosine of all six hits is kept. summarize then reports Recall at k for k = 1, 3 and 6, MRR as the mean of one over rank with zero when absent, the anchor hit rate, the calibrated floor as the lowest best expected cosine rounded down, and the no-answer false-positive rate at a floor f. A worked example: question x02, a paraphrase how-to, ranks the expected GitHub Actions article third with cosine 0.69, so it misses Recall at 1, hits Recall at 3 and 6, and scores a reciprocal rank of one third; its fourth hit is the same article's short-version section, a listed anchor, so it is an anchor hit.](/images/rag-eval-yaml/rag-eval-yaml-scoring.svg)
+
+The evaluation calls the same search function the site uses, with **k = 6** (Ask the Blog's top-k) and **no score floor**. Floors are applied afterwards, from the recorded cosines, so one run produces the whole floor table instead of one run per floor. Then each question is scored on its six hits:
+
+```python
+# app/rag_eval.py (excerpt)
+def score_question(q: Question, hits: list[Hit], latency_ms: float) -> QResult:
+    r = QResult(q, hits, latency_ms, best_cosine=max((h.score for h in hits), default=0.0))
+    if q.type == "no-answer":
+        return r
+    for i, h in enumerate(hits, start=1):
+        if slug_of(h.path) in q.slugs:
+            if r.rank is None:
+                r.rank = i
+            r.best_expected_cosine = max(r.best_expected_cosine or -1.0, h.score)
+            if h.anchor and h.anchor in q.anchors:
+                r.anchor_hit = True
+    return r
+```
+
+From those per-question results, `summarize` computes everything in the report. The denominators matter: recall, MRR and anchor hits are over the **84 answerable** questions, and false positives are over the **11 no-answer** questions.
+
+| Metric | Computed as | What it tells me |
+|---|---|---|
+| Recall@1, @3, @6 | share of answerable questions with `rank ≤ k` | is the right article near the top? |
+| MRR | mean of `1 / rank`, 0 when it isn't in the top 6 | how near the top, on average |
+| Section-anchor hit rate | share of answerable questions with an anchor hit in the top 6 | would the citation land on the right heading? |
+| No-answer FP @ f | share of no-answer questions whose best cosine is `≥ f` | how many unanswerable questions would reach the grader at floor f |
+| Calibrated floor | lowest best expected cosine over answerable questions that were found, rounded **down** to 0.01 | the highest floor that loses no answer the set knows about |
+| Floor table | for a fixed list of floors (plus the configured and calibrated ones): answers lost, FP rate | the trade-off in one view |
+| Latency p50 / p95 | the search call: embed, fetch candidates, fuse | |
+
+The rounding is deliberate. On 22 November the lowest expected cosine was question `x08` at 0.5998. Rounding to the nearest 0.01 would give 0.60 and lose `x08`. Rounding down gives 0.59 and keeps it. In the code it's one line: `float(np.floor(min(found) * 100) / 100)`.
+
+The report also breaks Recall@3 and MRR down **by type** and **by tag**, and ends with a per-question table of rank, anchor hit, best cosine and the top three results. That table is where the interesting failures are.
+
+## What the first full run found
+
+The committed results in `docs/seo/rag-eval/` are from 10 November and cover only the first 55 questions. The hard set had only been run with hashed embeddings, which measure tokenisation, not retrieval. So on 22 November I ran all 95 with the real thing:
+
+- `bge-small-en-v1.5` ONNX, at the revision and SHA-256 checksums pinned in the seo-agent Dockerfile (I verified both files);
+- moks-seo-agent at `e4669f7`, `scripts/rag_eval.py` with its five default configurations, and Postgres 17 for the full-text side of hybrid search;
+- the frozen blog copy in `tests/fixtures/rag_corpus`: 51 files, of which 45 are not drafts, giving 2,117 chunks with the token chunker.
+
+| Configuration | Chunks | Over 512 tokens | Recall@1 | Recall@3 | Recall@6 | MRR | Section hit | Calibrated floor | p95 ms |
+|---|---|---|---|---|---|---|---|---|---|
+| baseline-v4 (character chunker) | 1,449 | 216 | 85.7 | 94.0 | 95.2 | 0.895 | 88.1 | 0.59 | 9.8 |
+| token chunker, vector | 2,117 | 0 | 81.0 | 90.5 | 95.2 | 0.865 | 88.1 | 0.59 | 0.8 |
+| + at most 3 per article (**production**) | 2,117 | 0 | 81.0 | 90.5 | 95.2 | 0.865 | 88.1 | 0.59 | 0.8 |
+| hybrid, no identifier boost | 2,117 | 0 | 77.4 | 85.7 | 94.0 | 0.821 | 82.1 | 0.55 | 8.5 |
+| hybrid (`RAG_MODE=hybrid`) | 2,117 | 0 | 78.6 | 84.5 | 94.0 | 0.826 | 82.1 | 0.55 | 8.0 |
+
+The production configuration (`RAG_MODE=vector`, `RAG_MAX_PER_ARTICLE=3`) split into the two groups:
+
+| Production config | Answerable | Recall@1 | Recall@3 | Recall@6 | MRR | Section hit | Calibrated floor |
+|---|---|---|---|---|---|---|---|
+| First 55 | 47 | 95.7 | 100 | 100 | 0.979 | 95.7 | 0.68 |
+| Hard 40 | 37 | 62.2 | 78.4 | 89.2 | 0.721 | 78.4 | 0.59 |
+
+And by tag, where the configurations really differ:
+
+| Tag | n | baseline-v4 | production (vector) | hybrid |
+|---|---|---|---|---|
+| paraphrase | 19 | 73.7 | 68.4 | 47.4 |
+| multi-hop | 7 | 100 | 85.7 | 85.7 |
+| exact | 11 | 100 | 90.9 | 100 |
+
+Recall@3 by type for production: concept 87.1 (31 questions), how-to 88.9 (18), exact-term 95.5 (22), troubleshooting 92.3 (13).
+
+Here is how I read it.
+
+**The hard set does its job.** The first 55 are still saturated at 100% Recall@3, exactly as they were on 10 November. The hard set brings the headline number down to something that can move.
+
+**Hybrid search trades paraphrases for exact strings.** It gets every exact error string right, because Postgres full text and the identifier boost reward literal matches. But it drops paraphrase recall from 68.4% to 47.4%, because for a question asked in other words the full-text list is mostly noise, and RRF fuses that noise in at equal weight. That supports `RAG_MODE=vector` again, now on 95 questions instead of 55.
+
+**The old chunker does better on the hard set, and I don't want to hide that.** v4 beats the token chunker on paraphrase and multi-hop questions. Its bigger chunks carry more context per vector. But 216 of its embedded inputs are over bge-small's 512-token limit, the longest at 1,600 tokens, and the model silently drops everything past the limit. I kept the token chunker for that reason, and I still would. The eval now shows that the choice has a real cost, which makes a larger token target worth an experiment.
+
+**The four questions the production configuration never found** are all paraphrases, and each fails for a reason you can see in the per-question table:
+
+- `x06` asks about the in-memory cache losing its writable node. The word "cache" pulls the top four hits to the Next.js caching articles, and the Valkey failover section never appears.
+- `x09` asks why the closest-looking document isn't always the best evidence. The expected PyTorch reranking article loses to a MOKS article and to my earlier RAG evaluation post, which takes three of the six slots.
+- `x15` describes a 90/10 canary with timeouts in plain words. The Istio article's canary example loses to RoboShop's rate-limiting sections.
+- `x16` asks whether an access rule can be tried without blocking anyone. Istio's AuthorizationPolicy dry run loses to sections about Gatekeeper and service boundaries.
+
+**Against today's blog the numbers are slightly lower.** With the 53 non-draft articles in the site repository (2,497 chunks), production Recall@3 is 89.3% and paraphrase Recall@3 is 63.2%. More articles means more near neighbours for each question. The live index has 52 published articles, so this is the closest local stand-in for what the weekly live run will see.
+
+## What the floor should be
+
+`ASK_BLOG_MIN_SCORE` is a cosine pre-filter. Ask the Blog drops every candidate below it **before** fusion and grading, so an expected article below the floor never reaches the grader. It's set to 0.66 in the seo-agent ConfigMap, the calibrated floor of the first 55 questions on 10 November. On those 55 it's still safe today: their calibrated floor is 0.68. On all 95 it isn't:
+
+![A strip plot of cosine similarity from 0.50 to 0.95. Top lane: answerable questions at the best cosine of an expected article, blue for the first 55 and violet for the hard set. All the first-55 dots sit at 0.68 or higher; the lowest dots are hard-set paraphrases at 0.60 to 0.66. Bottom lane: no-answer questions in red and near-miss questions in orange, spread from 0.52 to 0.78. Three vertical lines: 0.59, calibrated on all 95, loses no expected answer and lets 10 of 11 no-answer questions reach the grader; 0.66, today's ASK_BLOG_MIN_SCORE, loses four answers, x08, x07, x03 and x18, and lets 8 of 11 reach the grader; 0.70 loses eleven answers and lets 5 of 11 reach the grader. Four answerable questions, x06, x09, x15 and x16, are not drawn because no expected article reached the top 6.](/images/rag-eval-yaml/rag-eval-yaml-floor.svg)
+
+| Floor | Expected answers lost | No-answer questions that reach the grader |
+|---|---|---|
+| 0.55 | 0 | 10 of 11 |
+| **0.59** (calibrated on 95) | 0 | 10 of 11 |
+| 0.60 | 1 | 10 of 11 |
+| 0.65 | 2 | 8 of 11 |
+| **0.66** (today) | 4: `x08`, `x07`, `x03`, `x18` | 8 of 11 |
+| 0.70 | 11 | 5 of 11 |
+
+All four questions the current floor loses are hard-set paraphrases. The right article *is* retrieved for them, but at 0.60 to 0.66, so the floor throws it away and the reader gets the "no article on this yet" fallback.
+
+The plot also shows why no floor can do the grader's job. The no-answer questions spread across the same band as real answers, and the three near-miss questions score 0.72 to 0.78, higher than most hard-set answers. A cosine floor is a cheap way to skip obviously hopeless questions. Telling a near miss from a real answer takes the grader.
+
+Choosing the number is a judgement call, and it isn't made in this article. 0.59 loses nothing the set knows about and sends two more of the eleven no-answer questions to the grader. 0.66 saves those two grader calls and loses four real answers. Either way the change is one line, `ASK_BLOG_MIN_SCORE` in the `seo-agent-config` ConfigMap, followed by a restart of the seo-agent.
+
+## Keeping the labels honest
+
+A labelled set is only as good as its labels, and the articles keep changing under it. Three checks matter.
+
+**Do the slugs still exist?** `test_eval_set_shape` checks this on every CI run, along with the size rules from the header:
+
+```python
+# tests/test_rag_v5.py (excerpt)
+def test_eval_set_shape() -> None:
+    qs = load_eval_set(EVAL_PATH)
+    assert len(qs) >= 40 and sum(1 for q in qs if q.type == "no-answer") >= 6
+    slugs = {a["slug"] for a in _articles()}
+    for q in qs:
+        assert set(q.slugs) <= slugs, q.id
+    raw = yaml.safe_load(EVAL_PATH.read_text())
+    assert len({q["id"] for q in raw["questions"]}) == len(raw["questions"])
+```
+
+So of the header's three rules, two are enforced in code ("at least 40 and 6", and fixing renamed slugs). The third, "don't tune questions to a retriever", depends on whoever edits the file.
+
+**Do the anchors still exist?** Nothing checks this. So I ran the seo-agent's own chunker over both the frozen copy and today's 53 articles and compared every listed anchor with the anchors the chunks actually carry. 149 of 150 are fine. One is stale: `c03` lists `the-incident-that-forced-the-issue`, but that heading in the CloudNativePG article is now "The incident that forced the issue (on Minikube)", so its id gained `-on-minikube`. `c03` still scored a section hit through its other three anchors, which is exactly how a stale anchor stays hidden. The fix is one line in the YAML. A test like `test_eval_set_shape` for anchors would catch the next one.
+
+**Is the evaluation grading itself?** The index contains every article on the site, including articles *about* the evaluation. My earlier post quotes eval questions and discusses the same ideas, and the run shows it: it's in the top six for `n05`, `x09` (three slots, pushing the right article out) and `x36`. This post describes 95 questions, so I checked it too. I added it to the frozen corpus and re-ran the production configuration.
+
+The first draft did change a result. Its YAML example quoted `x27`, an error string, word for word. That chunk scored 0.818 against the question, the Valkey article only 0.769, so `x27` fell from rank 1 to rank 2 (Recall@1 81.0 → 79.8, MRR 0.865 → 0.859). I switched the example to `x37`, whose article matches it at 0.860. With this version every metric is unchanged. The article still appears in the top six for four questions (`x03`, `x09`, `x14` and `x37`) without moving any rank, but on `x37` its chunk scores 0.850, only 0.01 below the right article. An eval question quoted in a public article costs something, so this article quotes one.
+
+Real reader questions are the other half of keeping the set useful. `scripts/rag_mine_eval.py` (read-only) pulls candidates from Ask the Blog's logs: open gaps, fallbacks, and answers that barely cleared the floor. It leaves `type`, `slugs` and `anchors` empty on purpose, so a person labels each one from the articles and never from what the retriever returned. So far the log has only a handful of questions, so there's nothing worth mining yet.
+
+## Adding a question
+
+The checklist I follow:
+
+1. **Write it the way a reader would**, before looking at what the retriever returns for it.
+2. **Pick the type.** If the site doesn't cover it, it's `no-answer` with empty `slugs` and `anchors`.
+3. **Fill `slugs` from the articles**: every article that genuinely answers it.
+4. **Fill `anchors` from the rendered page.** Copy the heading ids (h1 to h3 only) from the article's table of contents or the `#` links. Don't type them by hand.
+5. **Tag it** if it belongs to the hard set, and give it the next `x` id.
+6. **Quote the question** if it contains `: `, starts with a quote, or is an error message.
+7. **Run the checks**: `uv run pytest tests/test_rag_v5.py tests/test_review_llm_rag.py -k eval`, then the real evaluation.
+
+```bash
+# in moks-seo-agent: the five configurations, production model, Postgres full text in a scratch database
+uv run python scripts/rag_eval.py --embeddings onnx --model-dir /path/to/bge-small-en-v1.5 \
+    --dsn postgresql://postgres@127.0.0.1:5432/scratch --out /tmp/rag-eval
+# the same against the site's current articles instead of the frozen copy
+RAG_EVAL_BLOG_DIR=/path/to/jithendar.com/content/blog uv run python scripts/rag_eval.py \
+    --embeddings onnx --model-dir /path/to/bge-small-en-v1.5 --configs token-vector-div --out /tmp/rag-eval-live
+```
+
+Or from GitHub: **Actions → RAG eval (manual) → Run workflow** in moks-seo-agent. It downloads the model at the Dockerfile's pinned revision and checks its checksums. Every report goes to the job summary.
+
+## Key takeaways
+
+1. **The question set is the evaluation.** Metrics and workflows are plumbing. What you measure is decided by which questions you write, which answers you accept, and how you label them.
+2. **Label sections, not just articles.** Section anchors catch a citation that would land on the wrong heading, which article-level recall can't see.
+3. **Tag hard questions by why they're hard.** One combined number hid the fact that hybrid search wins on exact strings and loses badly on paraphrases.
+4. **Re-calibrate thresholds when the set grows.** The 0.66 floor was right for 55 questions. With 95, the set shows it costs four real answers.
+5. **Ship the test data with the code that needs it.** A file in `tests/` is invisible to anything that runs in the image. Here that kept the live evaluation from ever recording a result.
+6. **Check your labels as well as your retriever**, and remember that articles about your evaluation are part of the corpus your evaluation searches.
