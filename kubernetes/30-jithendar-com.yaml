@@ -82,6 +82,10 @@ spec:
         # default: legacy v2 path) and SEO_AGENT_CALLBACK_TOKEN is set.
         - name: SEO_AGENT_URL
           value: http://seo-agent.jithendar:8080
+        # The news agent (news-agent-*.yaml): the Newsroom's kick-offs and the CrewAI console's news flows go there.
+        # Its tokens (NEWS_AGENT_TOKEN, NEWS_AGENT_CALLBACK_TOKEN) are in jithendar-com-env.
+        - name: NEWS_AGENT_URL
+          value: http://news-agent.jithendar:8080
         - name: SEO_AGENT_CALLBACK_PORT
           value: '9465'
         - name: GEMINI_IMAGE_SIZE
@@ -284,9 +288,10 @@ spec:
   sessionAffinity: None
   type: ClusterIP
 ---
-# SEO v3: the seo-agent's callback API on the site pods (port 9465). Separate from the public Service on purpose: the
+# SEO v3: the agents' callback API on the site pods (port 9465). Separate from the public Service on purpose: the
 # Istio VirtualService routes only jithendar-com:80, so nothing outside the cluster can reach this port; the
-# NetworkPolicy below admits only seo-agent pods to it, and every request needs SEO_AGENT_CALLBACK_TOKEN.
+# NetworkPolicy below admits only the seo-agent and news-agent pods to it, and every request needs one of their tokens
+# (SEO_AGENT_CALLBACK_TOKEN, NEWS_AGENT_CALLBACK_TOKEN: the news desk's routes only).
 apiVersion: v1
 kind: Service
 metadata:
@@ -354,6 +359,14 @@ spec:
     - podSelector:
         matchLabels:
           app: seo-agent
+  # The news agent (kubernetes/news-agent-*.yaml): Newsroom kick-offs and the CrewAI console's news flows.
+  - ports:
+    - port: 8080
+      protocol: TCP
+    to:
+    - podSelector:
+        matchLabels:
+          app: news-agent
   # Python practice executor API (kubernetes/practice-executor-*.yaml; PRACTICE_EXECUTOR_URL=http://practice-executor.jithendar).
   - ports:
     - port: 8080
@@ -412,11 +425,14 @@ spec:
     ports:
     - port: 9464
       protocol: TCP
-  # SEO v3: callbacks from the seo-agent service only (token-protected as well).
+  # Callbacks from the seo-agent and the news agent only (token-protected as well).
   - from:
     - podSelector:
         matchLabels:
           app: seo-agent
+    - podSelector:
+        matchLabels:
+          app: news-agent
     ports:
     - port: 9465
       protocol: TCP

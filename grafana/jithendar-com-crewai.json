@@ -1,7 +1,7 @@
 {
   "uid": "jithendar-com-crewai",
   "title": "Jithendar.com · CrewAI",
-  "description": "CrewAI flows, crews, tasks and tool calls of the SEO agent: metrics (Prometheus), run lines (Loki) and traces (Jaeger). Source: jithendar.com repository, grafana/.",
+  "description": "CrewAI flows, crews, tasks and tool calls of the SEO agent: metrics (Prometheus), run lines (Loki) and traces (Jaeger). Source: jithendar.com repository, grafana/. Both agents: the seo-agent and, since 2026-11-21, the news agent (news crew), job=~\"seo-agent|news-agent\".",
   "tags": [
     "jithendar-com",
     "seo-agent",
@@ -54,7 +54,7 @@
           "type": "prometheus",
           "uid": "roboshop-prometheus"
         },
-        "expr": "changes(max(process_start_time_seconds{job=\"seo-agent\"})[2m:30s]) > 0",
+        "expr": "changes(max(process_start_time_seconds{job=~\"seo-agent|news-agent\"})[2m:30s]) > 0",
         "step": "60s",
         "titleFormat": "seo-agent pod started"
       }
@@ -71,10 +71,10 @@
           "uid": "roboshop-prometheus"
         },
         "query": {
-          "query": "label_values(seo_flow_runs_total{job=\"seo-agent\"}, flow)",
+          "query": "label_values(seo_flow_runs_total{job=~\"seo-agent|news-agent\"}, flow)",
           "refId": "flow"
         },
-        "definition": "label_values(seo_flow_runs_total{job=\"seo-agent\"}, flow)",
+        "definition": "label_values(seo_flow_runs_total{job=~\"seo-agent|news-agent\"}, flow)",
         "refresh": 2,
         "sort": 1,
         "multi": false,
@@ -95,10 +95,10 @@
           "uid": "roboshop-prometheus"
         },
         "query": {
-          "query": "label_values(seo_crew_runs_total{job=\"seo-agent\"}, crew)",
+          "query": "label_values(seo_crew_runs_total{job=~\"seo-agent|news-agent\"}, crew)",
           "refId": "crew"
         },
-        "definition": "label_values(seo_crew_runs_total{job=\"seo-agent\"}, crew)",
+        "definition": "label_values(seo_crew_runs_total{job=~\"seo-agent|news-agent\"}, crew)",
         "refresh": 2,
         "sort": 1,
         "multi": false,
@@ -159,7 +159,7 @@
             "type": "prometheus",
             "uid": "roboshop-prometheus"
           },
-          "expr": "sum(increase(seo_flow_runs_total{job=\"seo-agent\"}[24h]))",
+          "expr": "sum(increase(seo_flow_runs_total{job=~\"seo-agent|news-agent\"}[24h]))",
           "legendFormat": "",
           "instant": true,
           "range": false
@@ -216,7 +216,7 @@
             "type": "prometheus",
             "uid": "roboshop-prometheus"
           },
-          "expr": "sum(increase(seo_flow_runs_total{job=\"seo-agent\", status=\"failed\"}[24h])) or vector(0)",
+          "expr": "sum(increase(seo_flow_runs_total{job=~\"seo-agent|news-agent\", status=\"failed\"}[24h])) or vector(0)",
           "legendFormat": "",
           "instant": true,
           "range": false
@@ -277,7 +277,7 @@
             "type": "prometheus",
             "uid": "roboshop-prometheus"
           },
-          "expr": "sum(increase(seo_crew_runs_total{job=\"seo-agent\"}[24h]))",
+          "expr": "sum(increase(seo_crew_runs_total{job=~\"seo-agent|news-agent\"}[24h]))",
           "legendFormat": "",
           "instant": true,
           "range": false
@@ -334,7 +334,7 @@
             "type": "prometheus",
             "uid": "roboshop-prometheus"
           },
-          "expr": "sum(increase(seo_crew_cost_usd_total{job=\"seo-agent\"}[24h])) or vector(0)",
+          "expr": "sum(increase(seo_crew_cost_usd_total{job=~\"seo-agent|news-agent\"}[24h])) or vector(0)",
           "legendFormat": "",
           "instant": true,
           "range": false
@@ -391,7 +391,7 @@
             "type": "prometheus",
             "uid": "roboshop-prometheus"
           },
-          "expr": "(sum(increase(seo_crew_tool_calls_total{job=\"seo-agent\", status!=\"ok\"}[24h])) or vector(0)) / clamp_min(sum(increase(seo_crew_tool_calls_total{job=\"seo-agent\"}[24h])), 1)",
+          "expr": "(sum(increase(seo_crew_tool_calls_total{job=~\"seo-agent|news-agent\", status!=\"ok\"}[24h])) or vector(0)) / clamp_min(sum(increase(seo_crew_tool_calls_total{job=~\"seo-agent|news-agent\"}[24h])), 1)",
           "legendFormat": "",
           "instant": true,
           "range": false
@@ -456,7 +456,7 @@
             "type": "prometheus",
             "uid": "roboshop-prometheus"
           },
-          "expr": "max(seo_llm_budget_used_ratio{job=\"seo-agent\"})",
+          "expr": "max(seo_llm_budget_used_ratio{job=~\"seo-agent|news-agent\"})",
           "legendFormat": "",
           "instant": true,
           "range": false
@@ -534,7 +534,7 @@
             "type": "prometheus",
             "uid": "roboshop-prometheus"
           },
-          "expr": "sum by (flow, status) (increase(seo_flow_runs_total{job=\"seo-agent\", flow=~\"$flow\"}[$__interval]))",
+          "expr": "sum by (flow, status) (increase(seo_flow_runs_total{job=~\"seo-agent|news-agent\", flow=~\"$flow\"}[$__interval]))",
           "legendFormat": "{{flow}} · {{status}}"
         }
       ],
@@ -591,7 +591,7 @@
             "type": "prometheus",
             "uid": "roboshop-prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (le, flow) (rate(seo_flow_duration_seconds_bucket{job=\"seo-agent\", flow=~\"$flow\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le, flow) (rate(seo_flow_duration_seconds_bucket{job=~\"seo-agent|news-agent\", flow=~\"$flow\"}[$__rate_interval])))",
           "legendFormat": "p95 {{flow}}"
         },
         {
@@ -600,7 +600,7 @@
             "type": "prometheus",
             "uid": "roboshop-prometheus"
           },
-          "expr": "histogram_quantile(0.5, sum by (le, flow) (rate(seo_flow_duration_seconds_bucket{job=\"seo-agent\", flow=~\"$flow\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.5, sum by (le, flow) (rate(seo_flow_duration_seconds_bucket{job=~\"seo-agent|news-agent\", flow=~\"$flow\"}[$__rate_interval])))",
           "legendFormat": "p50 {{flow}}"
         }
       ],
@@ -654,7 +654,7 @@
             "type": "prometheus",
             "uid": "roboshop-prometheus"
           },
-          "expr": "(time() - max by (flow) (seo_flow_last_success_timestamp_seconds{job=\"seo-agent\", flow=~\"$flow\"})) / 3600",
+          "expr": "(time() - max by (flow) (seo_flow_last_success_timestamp_seconds{job=~\"seo-agent|news-agent\", flow=~\"$flow\"})) / 3600",
           "legendFormat": "",
           "instant": true,
           "range": false
@@ -735,7 +735,7 @@
             "type": "prometheus",
             "uid": "roboshop-prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (le, flow, step) (rate(seo_flow_step_duration_seconds_bucket{job=\"seo-agent\", flow=~\"$flow\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le, flow, step) (rate(seo_flow_step_duration_seconds_bucket{job=~\"seo-agent|news-agent\", flow=~\"$flow\"}[$__rate_interval])))",
           "legendFormat": "{{flow}} · {{step}}"
         }
       ],
@@ -802,7 +802,7 @@
             "type": "prometheus",
             "uid": "roboshop-prometheus"
           },
-          "expr": "sum by (crew, status) (increase(seo_crew_runs_total{job=\"seo-agent\", crew=~\"$crew\"}[$__interval]))",
+          "expr": "sum by (crew, status) (increase(seo_crew_runs_total{job=~\"seo-agent|news-agent\", crew=~\"$crew\"}[$__interval]))",
           "legendFormat": "{{crew}} · {{status}}"
         }
       ],
@@ -859,7 +859,7 @@
             "type": "prometheus",
             "uid": "roboshop-prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (le, crew) (rate(seo_crew_duration_seconds_bucket{job=\"seo-agent\", crew=~\"$crew\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le, crew) (rate(seo_crew_duration_seconds_bucket{job=~\"seo-agent|news-agent\", crew=~\"$crew\"}[$__rate_interval])))",
           "legendFormat": "{{crew}}"
         }
       ],
@@ -913,7 +913,7 @@
             "type": "prometheus",
             "uid": "roboshop-prometheus"
           },
-          "expr": "sum by (crew) (increase(seo_crew_tokens_total{job=\"seo-agent\", crew=~\"$crew\"}[$__interval]))",
+          "expr": "sum by (crew) (increase(seo_crew_tokens_total{job=~\"seo-agent|news-agent\", crew=~\"$crew\"}[$__interval]))",
           "legendFormat": "tokens {{crew}}"
         },
         {
@@ -922,7 +922,7 @@
             "type": "prometheus",
             "uid": "roboshop-prometheus"
           },
-          "expr": "sum by (crew) (increase(seo_crew_cost_usd_total{job=\"seo-agent\", crew=~\"$crew\"}[$__interval]))",
+          "expr": "sum by (crew) (increase(seo_crew_cost_usd_total{job=~\"seo-agent|news-agent\", crew=~\"$crew\"}[$__interval]))",
           "legendFormat": "USD {{crew}}"
         }
       ],
@@ -996,7 +996,7 @@
             "type": "prometheus",
             "uid": "roboshop-prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (le, crew, agent) (rate(seo_crew_task_duration_seconds_bucket{job=\"seo-agent\", crew=~\"$crew\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le, crew, agent) (rate(seo_crew_task_duration_seconds_bucket{job=~\"seo-agent|news-agent\", crew=~\"$crew\"}[$__rate_interval])))",
           "legendFormat": "{{crew}} · {{agent}}"
         }
       ],
@@ -1050,7 +1050,7 @@
             "type": "prometheus",
             "uid": "roboshop-prometheus"
           },
-          "expr": "sum by (tool, status) (increase(seo_crew_tool_calls_total{job=\"seo-agent\", crew=~\"$crew\"}[$__interval]))",
+          "expr": "sum by (tool, status) (increase(seo_crew_tool_calls_total{job=~\"seo-agent|news-agent\", crew=~\"$crew\"}[$__interval]))",
           "legendFormat": "{{tool}} · {{status}}"
         }
       ],
@@ -1107,7 +1107,7 @@
             "type": "prometheus",
             "uid": "roboshop-prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (le, tool) (rate(seo_crew_tool_duration_seconds_bucket{job=\"seo-agent\", crew=~\"$crew\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le, tool) (rate(seo_crew_tool_duration_seconds_bucket{job=~\"seo-agent|news-agent\", crew=~\"$crew\"}[$__rate_interval])))",
           "legendFormat": "{{tool}}"
         }
       ],
@@ -1161,7 +1161,7 @@
             "type": "prometheus",
             "uid": "roboshop-prometheus"
           },
-          "expr": "sum by (purpose, outcome) (increase(seo_llm_calls_total{job=\"seo-agent\"}[$__interval]))",
+          "expr": "sum by (purpose, outcome) (increase(seo_llm_calls_total{job=~\"seo-agent|news-agent\"}[$__interval]))",
           "legendFormat": "{{purpose}} · {{outcome}}"
         }
       ],
