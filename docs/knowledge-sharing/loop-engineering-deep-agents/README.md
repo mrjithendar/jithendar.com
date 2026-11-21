@@ -43,14 +43,27 @@ python3 examples/loops.py        # writes examples/activity.json
 
 `publishedAt` is deliberately unset. FAQ is in the article body under "Frequently asked questions".
 
-## Cover image
+## Figures
 
-Prompt: "Clean technical illustration, dark navy background. Four concentric rounded loops drawn as glowing tracks,
-the innermost around a small chip icon, each outer loop a different accent colour (teal, amber, violet, white) with
-a small arrowhead showing direction. A checkmark sits on the second loop, a lightning bolt on the third and a small
-upward-stepping line on the fourth. Flat vector style, no text, no logos, 16:9, 1600x900."
+`diagrams/build_diagrams.py` writes the editable `.drawio` files. `diagrams/export.sh` has the draw.io desktop CLI
+export them to `public/images/loop-engineering-deep-agents/` (SVG for the article, 2x PNG for the featured image).
+Run both from the repository root:
 
-Alt text: "Four nested loops around a model chip, representing the agent, verification, event-driven and learning
-loops."
+```bash
+python3 docs/knowledge-sharing/loop-engineering-deep-agents/diagrams/build_diagrams.py
+bash docs/knowledge-sharing/loop-engineering-deep-agents/diagrams/export.sh
+```
 
-Save as `public/images/loop-engineering-deep-agents/cover.webp` (1600x900) and add `featuredImage` to the frontmatter.
+**The committed SVG and PNG files were not exported by draw.io.** The draw.io CLI was not available where they were
+made (2026-11-21), so `diagrams/render_svg.py` drew the same `.drawio` files as SVG and `rsvg-convert -z 2` made the
+PNGs. Run `export.sh` once to replace them; if the PNG size changes, update `featuredImage` width and height in the
+article (now 1920x1172). The `.drawio` files have not been opened in draw.io yet.
+
+`drawio_model.py` is a copy of the argocd-k3s-hetzner one. After editing a `.drawio` file by hand, run only `export.sh`.
+
+| Figure | Used in |
+|---|---|
+| `loop-engineering-four-loops` | featured image and "The four loops" |
+| `verification-loop` | "Loop 2: a grader that names each gap" |
+| `event-driven-loop` | "Loop 3: an event starts the loop you already have" |
+| `learning-loop` | "Loop 4: an analyst over saved reviews" |

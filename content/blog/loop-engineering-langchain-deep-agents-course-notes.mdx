@@ -11,6 +11,11 @@ category: ai-agents
 tags: [Loop Engineering, LangChain, Deep Agents, AI Agents, Agentic AI, LLM Evaluation, DeepLearning.AI, Python]
 contentType: tutorial
 status: review
+featuredImage:
+  src: /images/loop-engineering-deep-agents/loop-engineering-four-loops.png
+  alt: "Four nested loops around an agent: the agent loop of model and tools with a cap on turns, the verification loop with a grader that names each gap, the event-driven loop where a mention, ticket or schedule starts a run, and the learning loop where an analyst reads saved runs and proposes harness changes."
+  width: 1920
+  height: 1172
 related:
   - blog/multi-ai-agent-systems-with-crewai-course-notes
   - blog/langchain-vs-langgraph-sre-agent-moks
@@ -27,7 +32,7 @@ sources:
     url: https://docs.langchain.com/oss/python/deepagents/rubric
     publisher: LangChain
 ---
-<Todo>Drafted 2026-11-21. Before publishing: (1) add your final lab and quiz scores, and what you changed between the 0/100 submission and the next one (the lab section stops at the first attempt); (2) name the exact setting the course uses for the cap on model turns (the article only says "a maximum number of model turns"); (3) the quiz scenarios are paraphrased on purpose, so check that each one still matches what you saw; (4) add a cover image (prompt and alt text in docs/knowledge-sharing/loop-engineering-deep-agents/README.md); (5) the "What I want to try next" list is a suggestion, so replace it with your real plans; (6) add your own commentary, confirm the AI-assistance line against the AI use policy, then set status and publishedAt.</Todo>
+<Todo>Drafted 2026-11-21. Before publishing: (1) add your final lab and quiz scores, and what you changed between the 0/100 submission and the next one (the lab section stops at the first attempt); (2) name the exact setting the course uses for the cap on model turns (the article only says "a maximum number of model turns"); (3) the quiz scenarios are paraphrased on purpose, so check that each one still matches what you saw; (4) the four figures were drawn from the .drawio files by a fallback script, because the draw.io CLI was not available where this was written: run docs/knowledge-sharing/loop-engineering-deep-agents/diagrams/export.sh once to replace them with draw.io's own export, then check them on the page in light and dark mode; (5) the "What I want to try next" list is a suggestion, so replace it with your real plans; (6) add your own commentary, confirm the AI-assistance line against the AI use policy, then set status and publishedAt.</Todo>
 
 An agent can work in a demo and still disappoint in real use. It says "done" when the tests still fail, it retries a dead API until the budget runs out, or nobody opens the separate app it lives in. None of these are model problems. They are problems in what surrounds the model.
 
@@ -54,16 +59,7 @@ Loop engineering is about **agents that improve over time because of the loops a
 
 ## The four loops
 
-```mermaid
-flowchart TB
-  subgraph L4["4. Learning loop: traces from many runs change the harness"]
-    subgraph L3["3. Event-driven loop: a message, ticket or schedule starts a run"]
-      subgraph L2["2. Verification loop: a grader checks the output and names the gaps"]
-        L1["1. Agent loop: the model calls tools until it is done"]
-      end
-    end
-  end
-```
+![Four nested loops around an agent. Loop 1, the agent loop: a model picks the next tool call and reads the result, tools such as files, APIs and search run and return results, and a cap on model turns limits the loop. Loop 2, the verification loop: the output goes to a grader that gives a pass or fail per criterion and names each gap, and the gaps go back to the model as feedback. Loop 3, the event-driven loop: an event such as a chat mention, a ticket change or a schedule starts a run; an agent on a laptop needs a tunnel or a deployed endpoint to be reachable. Loop 4, the learning loop: saved runs with the grader's reviews go to an analyst that finds gaps recurring across many runs and proposes a harness change to instructions, tools or the grader rubric, which applies to the next runs.](/images/loop-engineering-deep-agents/loop-engineering-four-loops.svg)
 
 | Loop | What it adds | What it costs |
 | --- | --- | --- |
@@ -120,6 +116,8 @@ rubric grader: satisfied after 2 iteration(s); first feedback: ['Missing section
 
 With "needs improvement", the agent used all three attempts and never passed. With pass or fail per criterion and the gap named, it passed on the second attempt. Raising the retry limit on the vague grader would only have bought more identical failures.
 
+![The verification loop. A request with a rubric, a task and a checklist of pass or fail criteria, starts an agent run that writes a draft. A grader checks each criterion and can run tools such as the test suite. If every criterion passes the run ends as satisfied. If not, needs_revision sends the named gaps back to the agent, until the run ends as max_iterations_reached. Below, the same standard with different feedback, from the script in the article: the feedback needs improvement takes 3 attempts and never passes, while Missing section: assumptions passes on the second attempt.](/images/loop-engineering-deep-agents/verification-loop.svg)
+
 In Deep Agents this loop is a middleware. The snippet below is adapted from the [RubricMiddleware documentation](https://docs.langchain.com/oss/python/deepagents/rubric), with the rubric changed to the requirements review. It needs `deepagents>=0.6.5`, and the docs mark the middleware as beta. Unlike the plain-Python script, I did not run this one for the article.
 
 ```python
@@ -153,6 +151,8 @@ def on_ticket_changed(event, instructions):
 
 This is the whole event-driven loop in my script: a handler that turns an event into a run of the existing verification loop. Nothing inside is rebuilt and the grader stays.
 
+![The event-driven loop. A project tracker sends a webhook when a ticket changes, and a team chat sends an event when someone mentions the bot. Both reach a tunnel or endpoint that gives an agent on a laptop a public address. An event handler turns the event into a run of the existing verification loop, agent plus grader, which is not rebuilt. The result goes back to the thread or the ticket.](/images/loop-engineering-deep-agents/event-driven-loop.svg)
+
 Two practical points from the quiz belong here. First, an agent on a laptop has no address a project tracker can call, so a webhook needs a **tunnel** (ngrok and Cloudflare Tunnel are two examples) or a deployed endpoint. Second, this loop is what fixes adoption. A good agent that needs its own app, a paste in and a copy back gets used rarely. The same agent answering a mention in the team's chat tool gets used.
 
 ### Loop 4: an analyst over saved reviews
@@ -164,6 +164,8 @@ def analyst(saved_reviews, min_runs=3):
 ```
 
 The analyst reads the graders' saved reviews, keeps the gaps that recur in at least three of five runs, and proposes one instruction per gap. The learning loop then writes first drafts for the same five requirements with the original and the proposed instructions, compares them criterion by criterion, and saves the decision:
+
+![The learning loop. Saved reviews, the grader's results from earlier runs, go to an analyst that finds gaps recurring across runs and proposes instructions, one change per recurring gap. First drafts for the same 5 requirements are written with the original instructions, 5 of 15 checks in the script, and with the proposed instructions, 15 of 15 checks. Both are compared per criterion in a decision record that holds update or keep, the reason, the comparison and the outcome. The script adopts a proposal only if the total goes up and no criterion gets worse.](/images/loop-engineering-deep-agents/learning-loop.svg)
 
 ```text
 decision: update instructions
