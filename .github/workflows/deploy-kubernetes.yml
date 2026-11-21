@@ -69,7 +69,7 @@ jobs:
   plan:
     if: >-
       (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'closed' || github.event.pull_request.merged == true)))
-    runs-on: mk4
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -104,7 +104,7 @@ jobs:
         (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true &&
          github.event.pull_request.base.ref == github.event.repository.default_branch)
       )
-    runs-on: mk4
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     concurrency:
       group: deploy-kubernetes-apply
