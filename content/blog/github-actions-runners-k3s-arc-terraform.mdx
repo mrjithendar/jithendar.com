@@ -1,0 +1,802 @@
+---
+title: "Self-Hosted GitHub Actions Runners on k3s: ARC, Terraform, Docker-in-Docker and Every Issue We Hit"
+slug: github-actions-runners-k3s-arc-terraform
+description: "Every GitHub Actions job of our organization runs on mk4, our k3s cluster: ARC from Terraform, our own runner image, Docker-in-Docker and the failures we fixed."
+seoTitle: "GitHub Actions Runners on k3s with ARC and Terraform"
+seoDescription: "Actions Runner Controller on k3s, installed by Terraform: GitHub App, NetworkPolicy, custom runner image, privileged dind sidecar, and the real errors we fixed."
+author: jithendar-dharmapuri
+category: devops-sre
+tags: [GitHub Actions, Actions Runner Controller, ARC, Self-Hosted Runners, Kubernetes, k3s, Terraform, Helm, Docker-in-Docker, OPA Gatekeeper]
+contentType: tutorial
+status: review
+featuredImage:
+  src: /images/mk4-github-runners/mk4-runners-architecture.png
+  alt: "GitHub Actions runners on mk4. On the GitHub side, the organization mrjithendar has 10 repositories whose 52 jobs say runs-on: mk4, five public and five private; the runner group Default lets all of them, public ones included, use the scale set; a GitHub App with Self-hosted runners read and write permission; and the Actions service, which queues jobs for mk4 and gives each runner a just-in-time config. On mk4, a k3s v1.37.2+k3s1 cluster with arm64 workers w1, w2 and w3, namespace runners-system (Pod Security baseline) holds the ARC 0.15.1 controller arc-gha-rs-controller, which creates runner pods, and the mk4 listener, which signs in as the GitHub App and long-polls GitHub over HTTPS. Namespace runners (Pod Security privileged) holds the AutoscalingRunnerSet mk4 from release arc-runners with no minimum or maximum, the Secret github-app with the App ID, installation ID and private key, and one EphemeralRunner pod per job: an init container that copies the runner's externals, a privileged docker:29.9.2-dind native sidecar serving /var/run/docker.sock, and the runner container from ghcr.io/mrjithendar/mk4-runner:2.338.2-48743dc57f6a, which talks to the Actions service over HTTPS. NetworkPolicy runners allows no ingress, and egress only to CoreDNS and the public internet on any port; pods, Services, nodes and the Hetzner metadata service are refused."
+  width: 1922
+  height: 1670
+related:
+  - blog/opa-gatekeeper-kubernetes-policies-jithendar-com
+  - blog/github-actions-authenticate-minikube
+  - blog/moks-sre-github-actions-ci-cd-pipeline
+  - blog/argocd-k3s-hetzner-terraform-helm
+  - blog/dependabot-setup-five-repositories
+  - blog/four-ai-systems-one-cluster
+sources:
+  - title: "Actions Runner Controller (GitHub repository)"
+    url: https://github.com/actions/actions-runner-controller
+    publisher: GitHub
+  - title: "About Actions Runner Controller"
+    url: https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners-with-actions-runner-controller/about-actions-runner-controller
+    publisher: GitHub Docs
+  - title: "Deploying runner scale sets with Actions Runner Controller"
+    url: https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners-with-actions-runner-controller/deploying-runner-scale-sets-with-actions-runner-controller
+    publisher: GitHub Docs
+  - title: "Authenticating ARC to the GitHub API"
+    url: https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners-with-actions-runner-controller/authenticating-to-the-github-api
+    publisher: GitHub Docs
+  - title: "Kubernetes: Sidecar containers"
+    url: https://kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/
+    publisher: Kubernetes
+  - title: "Kubernetes: Pod Security Standards"
+    url: https://kubernetes.io/docs/concepts/security/pod-security-standards/
+    publisher: Kubernetes
+  - title: "Terraform Helm provider: helm_release"
+    url: https://registry.terraform.io/providers/hashicorp/helm/latest/docs/resources/release
+    publisher: HashiCorp
+  - title: "mrjithendar/k8s-deployments (Terraform, values and runner image for mk4)"
+    url: https://github.com/mrjithendar/k8s-deployments
+    publisher: GitHub
+---
+<Todo>Drafted 2026-11-21 from mrjithendar/k8s-deployments 381b585, the workflow runs named below, and read-only kubectl and helm on mk4 the same day (about 07:10 UTC). Before publishing: (1) the "Security" section says public repositories may use the privileged runners. The organization's fork pull request approval policy was "first_time_contributors" at the time of writing, which the k8s-deployments README advises against. Decide whether to change that setting (or untick public repositories) before this goes public, and update the section to match. (2) "Still open" lists the Build runner image tag check, the OIDC trust, the practice-programming sandbox tests and the runner limits. Fix or keep each one, then update that table and the timeline figure's last row. (3) Re-check the run counts if you publish much later. (4) Then set status to published with a publishedAt time.</Todo>
+
+Every GitHub Actions job in my organization, **mrjithendar**, now runs on **mk4**, my k3s cluster on Hetzner Cloud: 52 jobs in 10 repositories, from Terraform plans to Docker image builds. Each job gets a fresh pod that's deleted when the job ends. This article shows how that's built and how it's deployed. It also covers everything that broke on the way there, on a single day, 21 November 2026.
+
+The building blocks are GitHub's **Actions Runner Controller (ARC)** in its newer "runner scale set" mode, two Helm charts, one Terraform file, a GitHub App, our own runner image, and a Docker daemon in every runner pod. Every code block below is copied from Git and names its file. The error messages are copied from real workflow runs, and the [references](#git-references) at the end link every commit.
+
+:::callout{type="info" title="At a glance (21 November 2026)"}
+**Cluster:** mk4, k3s v1.37.2+k3s1, three arm64 workers (Hetzner CAX). **Controller:** ARC 0.15.1, Helm release `arc` in `runners-system`. **Scale set:** `mk4`, release `arc-runners` in `runners`, registered for `https://github.com/mrjithendar`. **Workflows use it with:** `runs-on: mk4`. **Runner image:** `ghcr.io/mrjithendar/mk4-runner:2.338.2-48743dc57f6a`. **Docker:** a privileged `docker:29.9.2-dind` sidecar per pod. **Installed by:** Terraform, `minikube-infrastructure/runners.tf`. **Helm revision of `arc-runners`:** 3.
+:::
+
+::toc
+
+## Why runners on the cluster, and why not the way we tried first
+
+GitHub-hosted runners are good, but they live outside the cluster. Every image build starts with an empty cache, and the arm64 ones are a separate pool. We already run a 3-worker arm64 cluster that sits mostly idle between deploys, so it was the obvious place for CI.
+
+We had tried self-hosted runners once before, and it went badly. On 29 October the runners were **systemd services on the old Minikube host**, the same machine that ran the cluster. The runner's README in the `aws-infra` repository still carries the warning:
+
+```markdown
+<!-- aws-infra: runner/README.md (top) -->
+> **Not used by CI since 2026-10-29.** `.github/workflows/ci-jithendar-com.yml` runs on GitHub-hosted runners
+> (`ubuntu-latest`, `ubuntu-24.04-arm`) ... Builds on the mk4 server competed with the cluster for memory and disk
+> and froze the host twice. Do not install these runners on the server that runs the cluster; ...
+```
+
+Long-lived runners on the node itself meant a heavy build could starve the kubelet, and leftovers from one job stayed around for the next. This time the runners are **pods**, scheduled like any other workload on the three workers. Each pod exists for one job only, and its network is fenced off from the rest of the cluster. Kubernetes can cap a pod's resources; we haven't chosen the numbers yet (see [Still open](#still-open)).
+
+## The architecture
+
+:::figure{caption="Figure 1. GitHub queues the job; ARC's listener sees it and the controller starts one pod for it. The pod reaches GitHub and the internet, nothing inside the cluster."}
+![GitHub Actions runners on mk4. On the GitHub side, 10 repositories with 52 jobs that say runs-on: mk4, the runner group Default with public repositories allowed, a GitHub App with Self-hosted runners read and write, and the Actions service that queues jobs for mk4 and hands each runner a just-in-time config. In namespace runners-system (Pod Security baseline), the listener signs in as the GitHub App, long-polls the Actions service over HTTPS and tells the controller arc-gha-rs-controller (ARC 0.15.1) how many runners to run; the controller creates the runner pods. In namespace runners (Pod Security privileged), the AutoscalingRunnerSet mk4 reads Secret github-app, and each EphemeralRunner pod has an init container init-dind-externals, a privileged docker:29.9.2-dind native sidecar serving /var/run/docker.sock, and the runner container from mk4-runner:2.338.2-48743dc57f6a, which sends steps, logs and results to the Actions service over HTTPS. NetworkPolicy runners lets the pod reach CoreDNS on port 53 and the public internet on any port (ghcr.io, Docker Hub, Harbor, PyPI, npm); pods, Services, nodes and the Hetzner metadata service are refused.](/images/mk4-github-runners/mk4-runners-architecture.svg)
+:::
+
+ARC in scale set mode has three moving parts:
+
+| Part | Where | What it does |
+|---|---|---|
+| **Controller** `arc-gha-rs-controller` | `runners-system`, release `arc` (chart `gha-runner-scale-set-controller`) | Watches `AutoscalingRunnerSet` objects and creates the listener and the runner pods |
+| **Listener** `mk4-…-listener` | `runners-system` | Signs in as the GitHub App and long-polls GitHub for jobs queued for scale set `mk4`. Tells the controller how many runners it needs |
+| **Scale set** `mk4` | `runners`, release `arc-runners` (chart `gha-runner-scale-set`) | The `AutoscalingRunnerSet`, its Secret and the runner pod template. One `EphemeralRunner` pod per job |
+
+The controller has its own namespace, as GitHub recommends. Its ServiceAccount can manage pods, Secrets and RBAC wherever a scale set lives, so it never shares a namespace with code from a workflow. On the cluster today:
+
+```text
+$ kubectl -n runners-system get pods -o wide        # columns trimmed
+NAME                                    READY   STATUS    NODE
+arc-gha-rs-controller-788ffdb87-5jh2n   1/1     Running   w3
+mk4-cd7f7986-listener                   1/1     Running   w3
+
+$ kubectl -n runners get autoscalingrunnerset
+NAME   MINIMUM RUNNERS   MAXIMUM RUNNERS   PHASE
+mk4                                        Running
+```
+
+Using it from a workflow is one line. The scale set's name is the whole label, with no `self-hosted` and no `linux`:
+
+```yaml
+# deploy/minikube/runners/README.md, "Using it"
+jobs:
+  test:
+    runs-on: mk4        # the scale set's name; no "self-hosted" label
+```
+
+## How one job runs
+
+:::figure{caption="Figure 2. Nothing waits idle: the pod is created for the job and deleted with it, image cache included."}
+![Six steps. 1, a job is queued: a push, pull request or manual run, the job says runs-on: mk4, GitHub queues it for scale set mk4. 2, the listener sees it: it long-polls as the GitHub App; with no minRunners nothing waits idle, so it asks the controller for one runner. 3, the controller makes a pod: an EphemeralRunner with a just-in-time config, pod mk4-runner-xxxxx in namespace runners on any arm64 worker. 4, Docker comes up first: init-dind-externals copies the runner's externals, dind starts as a native sidecar, and its startup probe runs docker info up to 24 times, 5 seconds apart. 5, the runner runs the job: it registers with its just-in-time config, waits up to 120 seconds for Docker, then runs the steps, services and docker build or run. 6, the pod is deleted: the runner exits after one job, the emptyDir volumes go with it so there is no image cache, and the next job gets a fresh pod. Measured: jithendar.com content.yml, run 44874905707 attempt 3, pod mk4-runner-z2k2l, started 06:55:28 and finished 06:56:12 UTC, 44 seconds.](/images/mk4-github-runners/mk4-runners-job-lifecycle.svg)
+:::
+
+Two settings shape this:
+
+- **`minRunners` and `maxRunners` are unset.** No runner sits idle, and nothing caps how many pods CI can start. That's deliberate for now: the values file leaves both for the owner to set once we know what CI costs the workers.
+- **Runners are ephemeral.** A runner registers with a one-time (just-in-time) configuration, takes exactly one job and exits. Nothing a job leaves behind, files or Docker images, survives into the next job. The cost is that every job starts with an empty image cache.
+
+## The Terraform: `runners.tf`
+
+mk4's add-ons (Istio, cert-manager, Gatekeeper, monitoring, Argo CD and now the runners) are all `helm_release`s in one Terraform root, `minikube-infrastructure/`. A workflow applies it on every merge to `master`. The runners are one more file in that root.
+
+:::figure{caption="Figure 3. Two namespaces, a Secret, a NetworkPolicy and two Helm releases. The scale set waits for its NetworkPolicy and for Gatekeeper to admit privileged pods in its namespace."}
+![What runners.tf creates. Inputs: the GitHub environment mk4 holds secrets RUNNERS_GITHUB_APP_ID, RUNNERS_GITHUB_APP_INSTALLATION_ID and RUNNERS_GITHUB_APP_PRIVATE_KEY, which create-mk-infrastructure passes as TF_VAR_github_runners_app_* (or a local apply exports the same variables), and vars/mk4.tfvars sets github_runners_config_url to https://github.com/mrjithendar. Inside runners.tf: two namespaces, runners-system with Pod Security baseline and runners with Pod Security privileged; kubernetes_secret_v1 runners_github_app with a precondition that all three values are set; kubernetes_network_policy_v1 runners allowing DNS and public egress only; helm_release arc_controller (release arc, controller chart 0.15.1); and helm_release arc_runners (release arc-runners, scale-set chart 0.15.1) built from values.yaml plus a yamlencode block with the config URL, the Secret, the scale set name and the controller ServiceAccount. arc_runners depends on arc_controller, the NetworkPolicy, and helm_release gatekeeper_constraints, which excludes namespace runners from the privileged container rule. On the right, build-runner-image runs on a GitHub-hosted ubuntu-24.04-arm runner, smoke-tests the tools and pushes ghcr.io/mrjithendar/mk4-runner:2.338.2-48743dc57f6a on master; the workflow checks that runners/values.yaml names that tag, and values.yaml also carries the dind sidecar layout without containerMode. terraform test runs github_runners, github_runners_without_app_fails and github_runners_bad_config_url_fails.](/images/mk4-github-runners/mk4-runners-terraform.svg)
+:::
+
+### Versions and names
+
+```hcl
+# minikube-infrastructure/runners.tf
+locals {
+  # Controller and scale set charts must be on the same version. Helm never upgrades the controller's CRDs: a new
+  # version is an uninstall and reinstall (deploy/minikube/runners/README.md, "Upgrading ARC").
+  arc_chart_version     = "0.15.1"
+  arc_chart_repository  = "oci://ghcr.io/actions/actions-runner-controller-charts"
+  runners_scale_set     = "mk4"                   # the runs-on label
+  runners_controller_sa = "arc-gha-rs-controller" # chart gha-runner-scale-set-controller: <release>-gha-rs-controller
+}
+```
+
+Both charts come from GitHub's OCI registry and must stay on the same version. The CRDs are the trap: Helm installs a chart's CRDs on first install and never upgrades them. So a new ARC version is a planned uninstall and reinstall, not a one-line bump.
+
+### Two namespaces, two Pod Security levels
+
+```hcl
+# minikube-infrastructure/runners.tf
+resource "kubernetes_namespace_v1" "runners_system" {
+  metadata {
+    name = "runners-system"
+    labels = {
+      "app.kubernetes.io/part-of"          = "github-runners"
+      "pod-security.kubernetes.io/enforce" = "baseline"
+    }
+  }
+}
+
+resource "kubernetes_namespace_v1" "runners" {
+  metadata {
+    name = "runners"
+    labels = {
+      "app.kubernetes.io/part-of"          = "github-runners"
+      "pod-security.kubernetes.io/enforce" = "privileged"
+    }
+  }
+}
+```
+
+`runners` started at `baseline` too. It became `privileged` for the Docker daemon ([issue 6](#6-no-docker-daemon)). Neither namespace is in the Istio mesh: nothing on mk4 calls a runner, and a runner calls nothing on mk4.
+
+### The GitHub App's Secret, and a precondition
+
+```hcl
+# minikube-infrastructure/runners.tf
+# The scale set's githubConfigSecret. Runner pods run as ServiceAccount mk4-gha-rs-no-permission, which
+# cannot read it.
+resource "kubernetes_secret_v1" "runners_github_app" {
+  metadata {
+    name      = "github-app"
+    namespace = kubernetes_namespace_v1.runners.metadata[0].name
+  }
+  data = {
+    github_app_id              = var.github_runners_app_id
+    github_app_installation_id = var.github_runners_app_installation_id
+    github_app_private_key     = var.github_runners_app_private_key
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.github_runners_app_id != "" && var.github_runners_app_installation_id != "" && nonsensitive(var.github_runners_app_private_key != "")
+      error_message = "The runners' GitHub App is not configured: set secrets RUNNERS_GITHUB_APP_ID, RUNNERS_GITHUB_APP_INSTALLATION_ID and RUNNERS_GITHUB_APP_PRIVATE_KEY of environment mk4 (locally: export TF_VAR_github_runners_app_*). ..."
+    }
+  }
+}
+```
+
+The three variables default to `""`, so `terraform validate` and the tests run without real credentials. A plan against mk4, though, stops here with a message that says exactly which secrets to set. The private key variable is `sensitive = true`, and its description says it must never go in a tfvars file. Only one value is committed:
+
+```hcl
+# minikube-infrastructure/vars/mk4.tfvars
+# GitHub Actions runners (runners.tf): one scale set for every repository of the organization mrjithendar
+github_runners_config_url = "https://github.com/mrjithendar"
+```
+
+A validation on that variable accepts `https://github.com/<organization>` or `https://github.com/<owner>/<repository>`, so the same file can register a scale set for a single repository.
+
+### Internet only: the NetworkPolicy
+
+A job runs whatever its workflow says, plus every action, package and image it pulls. So runner pods get the internet and nothing else:
+
+```hcl
+# minikube-infrastructure/runners.tf
+# Jobs run whatever their workflow (and every action and package it pulls) says, so runner pods get the internet and
+# nothing else: DNS through CoreDNS, then public addresses only, any port (git, apt over http, registries...). No pod,
+# Service or node on mk4, and not the Hetzner metadata service (169.254.169.254). Nothing may connect to them.
+resource "kubernetes_network_policy_v1" "runners" {
+  metadata {
+    name      = "runners"
+    namespace = kubernetes_namespace_v1.runners.metadata[0].name
+  }
+  spec {
+    pod_selector {}
+    policy_types = ["Ingress", "Egress"]
+
+    egress {
+      to {
+        namespace_selector {
+          match_labels = { "kubernetes.io/metadata.name" = "kube-system" }
+        }
+        pod_selector {
+          match_labels = { "k8s-app" = "kube-dns" }
+        }
+      }
+      ports {
+        port     = "53"
+        protocol = "UDP"
+      }
+      ports {
+        port     = "53"
+        protocol = "TCP"
+      }
+    }
+
+    egress {
+      to {
+        ip_block {
+          cidr   = "0.0.0.0/0"
+          except = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16"]
+        }
+      }
+    }
+  }
+}
+```
+
+No `ingress` block means no ingress at all. The `except` list covers mk4's private network (10.0.0.0/16), the pod and Service ranges, and the cloud metadata service, which on many clouds hands out credentials to anyone who asks.
+
+### The two Helm releases
+
+```hcl
+# minikube-infrastructure/runners.tf
+resource "helm_release" "arc_controller" {
+  name       = "arc"
+  namespace  = kubernetes_namespace_v1.runners_system.metadata[0].name
+  repository = local.arc_chart_repository
+  chart      = "gha-runner-scale-set-controller"
+  version    = local.arc_chart_version
+  values     = [file("${local.minikube}/runners/controller.yaml")]
+
+  wait    = true
+  timeout = var.helm_timeout
+}
+
+# Helm waits for nothing here (the chart renders an AutoscalingRunnerSet, not pods): the deploy workflow checks the
+# listener pod afterwards, which only starts once GitHub has accepted the app's credentials.
+resource "helm_release" "arc_runners" {
+  name       = "arc-runners"
+  namespace  = kubernetes_namespace_v1.runners.metadata[0].name
+  repository = local.arc_chart_repository
+  chart      = "gha-runner-scale-set"
+  version    = local.arc_chart_version
+  values = [
+    file("${local.minikube}/runners/values.yaml"),
+    yamlencode({
+      githubConfigUrl    = var.github_runners_config_url
+      githubConfigSecret = kubernetes_secret_v1.runners_github_app.metadata[0].name
+      runnerScaleSetName = local.runners_scale_set
+      # Named, so the chart does not search the cluster for the controller while rendering.
+      controllerServiceAccount = {
+        namespace = helm_release.arc_controller.namespace
+        name      = local.runners_controller_sa
+      }
+    }),
+  ]
+
+  wait    = true
+  timeout = var.helm_timeout
+
+  # The AutoscalingRunnerSet CRD comes with the controller; no runner pod starts before its NetworkPolicy, or before
+  # Gatekeeper admits its privileged dind sidecar in this namespace.
+  depends_on = [helm_release.arc_controller, kubernetes_network_policy_v1.runners, helm_release.gatekeeper_constraints]
+}
+```
+
+Two values files feed `arc_runners`. Everything about the *pod* lives in `values.yaml`, which you can read and review like any manifest. Everything that wires the scale set to the rest of Terraform goes in a `yamlencode` block, so names are never typed twice. Naming `controllerServiceAccount` explicitly matters: without it, the chart looks up the controller in the live cluster while rendering, which makes `terraform plan` depend on cluster state.
+
+The controller's own values file is three lines:
+
+```yaml
+# deploy/minikube/runners/controller.yaml
+flags:
+  # The chart's default is debug: every reconcile of every runner would land in Loki.
+  logLevel: info
+```
+
+### Tests
+
+The root has `terraform test` files with mocked providers. Three runs cover the runners:
+
+```hcl
+# minikube-infrastructure/tests/releases.tftest.hcl (excerpt)
+run "github_runners" {
+  # ...
+  assert {
+    condition = (
+      can(regex("^docker:[0-9.]+-dind$", yamldecode(helm_release.arc_runners.values[0]).template.spec.initContainers[1].image)) &&
+      yamldecode(helm_release.arc_runners.values[0]).template.spec.initContainers[1].securityContext.privileged &&
+      yamldecode(helm_release.arc_runners.values[0]).template.spec.initContainers[1].restartPolicy == "Always" &&
+      kubernetes_namespace_v1.runners.metadata[0].labels["pod-security.kubernetes.io/enforce"] == "privileged" &&
+      kubernetes_namespace_v1.runners_system.metadata[0].labels["pod-security.kubernetes.io/enforce"] == "baseline" &&
+      contains(yamldecode(file("${local.minikube}/gatekeeper/constraints/values.yaml")).privilegedContainers.excludedNamespaces, "runners")
+    )
+    error_message = "Each runner pod has a pinned, privileged dind sidecar; only namespace runners admits it (Pod Security privileged, Gatekeeper exclusion), the controller's namespace stays baseline."
+  }
+}
+
+run "github_runners_without_app_fails" {
+  # ...
+  variables {
+    github_runners_app_private_key = ""
+  }
+  expect_failures = [kubernetes_secret_v1.runners_github_app]
+}
+
+run "github_runners_bad_config_url_fails" {
+  # ...
+  variables {
+    github_runners_config_url = "github.com/mrjithendar"
+  }
+  expect_failures = [var.github_runners_config_url]
+}
+```
+
+The first run checks the shape that matters for security: the image tags are pinned, only the dind sidecar is privileged, and only one namespace admits privileged pods. The other two prove that the guard rails actually fail.
+
+### The deploy workflow
+
+`create-mk-infrastructure.yml` applies the root on every push to `master` that touches `minikube-infrastructure/**` or `deploy/minikube/runners/**`. The App's credentials are secrets of the GitHub **environment** `mk4`, so only the `master` deploy job can read them:
+
+```yaml
+# .github/workflows/create-mk-infrastructure.yml (excerpt)
+jobs:
+  terraform:
+    if: github.ref == 'refs/heads/master' && vars.MINIKUBE_TERRAFORM_APPLY == 'true'
+    runs-on: mk4
+    environment: mk4
+    env:
+      # The GitHub App the runner controller signs in as (minikube-infrastructure/runners.tf): secrets of environment
+      # mk4, so only master's deploy job sees the private key (deploy/minikube/runners/README.md, "Credentials").
+      TF_VAR_github_runners_app_id: ${{ secrets.RUNNERS_GITHUB_APP_ID }}
+      TF_VAR_github_runners_app_installation_id: ${{ secrets.RUNNERS_GITHUB_APP_INSTALLATION_ID }}
+      TF_VAR_github_runners_app_private_key: ${{ secrets.RUNNERS_GITHUB_APP_PRIVATE_KEY }}
+```
+
+Helm reports success as soon as the `AutoscalingRunnerSet` object exists, which tells you nothing about whether GitHub accepted the App. So after the apply, the job waits for the listener pod:
+
+```bash
+# .github/workflows/create-mk-infrastructure.yml, step "Verify releases" (end)
+# Helm only waits for the controller. The scale set's listener starts once GitHub has accepted the app's
+# credentials and registered scale set mk4 (deploy/minikube/runners/README.md, "Checks").
+listener='app.kubernetes.io/component=runner-scale-set-listener,actions.github.com/scale-set-name=mk4'
+for attempt in $(seq 1 18); do
+  phase=$(kubectl --request-timeout=20s -n runners-system get pods -l "$listener" -o jsonpath='{.items[*].status.phase}' 2>/dev/null || true)
+  [[ "$phase" == Running ]] && break
+  echo "runner scale set listener: '${phase:-no pod}' (attempt $attempt of 18), retrying in 10 s"
+  sleep 10
+done
+if [[ "$phase" != Running ]]; then
+  echo "::error::The listener of runner scale set mk4 is not running after 3 minutes: GitHub may have refused the app's credentials"
+  kubectl --request-timeout=20s -n runners-system logs deploy/arc-gha-rs-controller --tail=40 | grep -iE 'error|fail' || true
+  exit 1
+fi
+```
+
+Note the first line of that job: `runs-on: mk4`. The workflow that deploys the runners now runs on them. That's fine for day-to-day changes. But a broken runner image could block its own fix, which is why the image is built elsewhere ([The runner image](#the-runner-image)).
+
+## Credentials: a GitHub App, not a token
+
+ARC can sign in with a personal access token or a GitHub App. We use an App: it belongs to the organization, not to a person, and its permission is narrow. It needs exactly one organization permission, **Self-hosted runners: Read and write**. The steps from the runners README:
+
+1. Create the App under the organization's settings: Homepage URL `https://github.com/actions/actions-runner-controller`, webhook **off**, permission **Organization → Self-hosted runners: Read and write**, installable **only on this account**.
+2. Note the **App ID** and generate a **private key** (a `.pem` file).
+3. **Install** it on the organization. The page you land on ends in `/installations/<installation ID>`.
+4. Store all three as secrets of the environment `mk4`.
+
+Step 4 plus a first apply from a laptop, as we actually ran it (IDs replaced):
+
+```bash
+# gh-app.sh (k8s-deployments, IDs replaced)
+R=mrjithendar/k8s-deployments
+KEY=$(ls -t ~/Downloads/<app>.*.private-key.pem | head -1)
+gh secret set RUNNERS_GITHUB_APP_ID              --repo $R --env mk4 --body <App ID>
+gh secret set RUNNERS_GITHUB_APP_INSTALLATION_ID --repo $R --env mk4 --body <installation ID>
+gh secret set RUNNERS_GITHUB_APP_PRIVATE_KEY     --repo $R --env mk4 < "$KEY"
+
+cd ~/Desktop/Work/k8s-deployments
+git pull
+export TF_VAR_github_runners_app_id=<App ID>
+export TF_VAR_github_runners_app_installation_id=<installation ID>
+export TF_VAR_github_runners_app_private_key="$(cat "$KEY")"
+terraform -chdir=minikube-infrastructure apply -var-file=vars/mk4.tfvars -target=helm_release.arc_runners
+```
+
+`-target=helm_release.arc_runners` applies only the runners and what they depend on (the controller, both namespaces, the Secret, the NetworkPolicy and the Gatekeeper constraints), leaving the rest of the root alone. Why we needed a laptop apply at all is [issue 3](#3-ci-could-not-apply-the-oidc-trust-after-the-organization-rename).
+
+## The Helm values: a Docker daemon in every pod
+
+ARC's scale set chart has a `containerMode: dind` switch that renders a Docker-in-Docker layout for you. We don't use it, because it pulls an unpinned `docker:dind`. Instead the same layout is written out in our values, with every image pinned:
+
+```yaml
+# deploy/minikube/runners/values.yaml (comments trimmed)
+# minRunners:
+# maxRunners:
+
+template:
+  spec:
+    initContainers:
+      # The runner's externals (its Node.js for JavaScript actions) copied where the Docker daemon sees them, for
+      # container actions and container: jobs.
+      - name: init-dind-externals
+        image: ghcr.io/mrjithendar/mk4-runner:2.338.2-48743dc57f6a
+        command: ["cp"]
+        args: ["-r", "/home/runner/externals/.", "/home/runner/tmpDir/"]
+        volumeMounts:
+          - name: dind-externals
+            mountPath: /home/runner/tmpDir
+      # A native sidecar (restartPolicy: Always): starts, and answers docker info, before the runner; stops after it.
+      - name: dind
+        image: docker:29.9.2-dind # the runner image's Docker CLI version
+        args: ["dockerd", "--host=unix:///var/run/docker.sock", "--group=$(DOCKER_GROUP_GID)"]
+        env:
+          - name: DOCKER_GROUP_GID
+            value: "123" # group docker in the runner image; the runner user is in it
+        securityContext:
+          privileged: true
+        restartPolicy: Always
+        startupProbe:
+          exec:
+            command: ["docker", "info"]
+          initialDelaySeconds: 0
+          failureThreshold: 24
+          periodSeconds: 5
+        volumeMounts:
+          # Same paths as in the runner, so docker run -v <path> finds the job's files: the workspace, and /tmp
+          # (scripts bind-mount mktemp -d folders, e.g. jithendar.com check-content.sh).
+          - name: work
+            mountPath: /home/runner/_work
+          - name: tmp
+            mountPath: /tmp
+          - name: dind-sock
+            mountPath: /var/run
+          - name: dind-externals
+            mountPath: /home/runner/externals
+          # Images and containers on the node's disk (an emptyDir: overlay2 cannot run on the container's overlay).
+          # Gone with the pod: every job starts with an empty image cache.
+          - name: dind-storage
+            mountPath: /var/lib/docker
+    containers:
+      - name: runner
+        image: ghcr.io/mrjithendar/mk4-runner:2.338.2-48743dc57f6a
+        command: ["/home/runner/run.sh"]
+        env:
+          - name: DOCKER_HOST
+            value: unix:///var/run/docker.sock
+          - name: RUNNER_WAIT_FOR_DOCKER_IN_SECONDS
+            value: "120"
+        volumeMounts:
+          - name: work
+            mountPath: /home/runner/_work
+          - name: tmp
+            mountPath: /tmp
+          - name: dind-sock
+            mountPath: /var/run
+    volumes:
+      - name: work
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+      - name: dind-sock
+        emptyDir: {}
+      - name: dind-externals
+        emptyDir: {}
+      - name: dind-storage
+        emptyDir: {}
+```
+
+Each part of that file exists because something went wrong without it. [Issue 7](#7-getting-docker-in-docker-right) goes through them one by one.
+
+## The runner image
+
+GitHub's `ghcr.io/actions/actions-runner` image is deliberately small: Ubuntu 24.04 with `git`, `curl`, `jq`, `unzip`, `sudo` and the Docker CLI. Jobs written for `ubuntu-latest` expect far more. We surveyed all 52 jobs for tools they call without installing them first, and added exactly those:
+
+```dockerfile
+# deploy/minikube/runners/image/Dockerfile (excerpt)
+FROM ghcr.io/actions/actions-runner:2.338.2
+
+# mk4's nodes are arm64 only; the checksums below are the linux/arm64 builds.
+ARG GH_VERSION=2.105.0
+ARG GH_SHA256=b1278c75107423d818f1937fd92cafc9e5e9b606631568f68d7fb816f5885a02
+ARG KUBECTL_VERSION=v1.37.2
+ARG KUBECTL_SHA256=fcc16f63186659d9722014b7e02d5fdd2d4e669cb8c0ab66365d7d3b8ba03509
+ARG HELM_VERSION=v4.3.2
+ARG HELM_SHA256=df31cb61680ef728f82c770e5280dd565617bee6b039d37e85c677288be4bbb0
+
+USER root
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      git-lfs \
+      python3 python3-dev python3-pip python3-venv \
+      build-essential \
+      libgomp1 \
+      shellcheck \
+      openssh-client \
+      zstd \
+ && rm -rf /var/lib/apt/lists/* \
+ && git lfs install --system \
+ && printf '[global]\nbreak-system-packages = true\n' > /etc/pip.conf
+
+RUN cd /tmp \
+ && curl -fsSLo gh.tar.gz "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_arm64.tar.gz" \
+ && echo "${GH_SHA256}  gh.tar.gz" | sha256sum -c - \
+ && tar -xzf gh.tar.gz \
+ && install -m 0755 "gh_${GH_VERSION}_linux_arm64/bin/gh" /usr/local/bin/gh \
+ # ... kubectl and helm the same way: download, check SHA-256, install
+ && rm -rf /tmp/*
+
+ENV LANG=C.UTF-8 \
+    PATH=/home/runner/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+USER runner
+```
+
+| Added | Who needs it |
+|---|---|
+| `git-lfs` | `actions/checkout` with `lfs: true` (jithendar.com's content workflow) |
+| `python3` with `-dev`, `-pip`, `-venv`, and pip's `break-system-packages` | jobs that call `python3` or `pip install` without `actions/setup-python`, as GitHub's Ubuntu images allow |
+| `build-essential` | native npm and pip modules |
+| `libgomp1` | LightGBM's OpenMP runtime (moks-sre-agent) |
+| `shellcheck` | five repositories lint their scripts with it |
+| `openssh-client` | k8s-deployments' disk clean-up workflow |
+| `zstd` | `actions/cache` compresses with it when present |
+| `gh`, `kubectl`, `helm` | release binaries, each checked against a pinned SHA-256 |
+
+Languages still come from the `setup-*` actions (`setup-node`, `setup-python`, `setup-terraform`…), exactly as on GitHub's runners. The image only has to cover what a workflow uses *without* asking.
+
+### Built off-cluster, tagged by its own hash
+
+`build-runner-image.yml` builds the image on a **GitHub-hosted** arm64 runner, never on mk4. If the runner image ever broke, a build that needed that same image would be stuck. The tag is the runner version plus the first 12 hex characters of the Dockerfile's SHA-256, and the workflow refuses a change where `values.yaml` doesn't name that exact tag:
+
+```bash
+# .github/workflows/build-runner-image.yml, step "Image tag"
+dockerfile=deploy/minikube/runners/image/Dockerfile
+runner=$(sed -nE 's#^FROM ghcr\.io/actions/actions-runner:([0-9.]+)$#\1#p' "$dockerfile")
+[[ -n "$runner" ]] || { echo "::error file=$dockerfile::FROM must be ghcr.io/actions/actions-runner:<version>"; exit 1; }
+want="ghcr.io/mrjithendar/mk4-runner:${runner}-$(sha256sum "$dockerfile" | cut -c1-12)"
+have=$(sed -nE 's#^ *image: (ghcr\.io/mrjithendar/mk4-runner:[^ ]+)$#\1#p' deploy/minikube/runners/values.yaml)
+[[ "$have" == "$want" ]] || { echo "::error file=deploy/minikube/runners/values.yaml::the runner image must be $want (the Dockerfile changed), not ${have:-missing}"; exit 1; }
+```
+
+What gets pushed is exactly what Terraform deploys, and a changed Dockerfile can never reuse a tag that nodes already have cached. The push uses the workflow's own `GITHUB_TOKEN` (`packages: write`), so no registry password is stored anywhere. The package is public on ghcr.io, which means mk4's nodes pull it without an `imagePullSecret`. That's fine because the image holds tools, not secrets. Before pushing, the workflow runs every added tool as the `runner` user (`git lfs version`, `gh --version`, `kubectl version --client`, `pip install pyyaml`…). Dependabot watches the Dockerfile's `FROM`, because GitHub stops sending jobs to runner versions that are too old. Look closely at that `have=` line: it has a bug, [issue 9](#9-the-tag-check-that-compares-a-tag-with-itself).
+
+## Moving every workflow to mk4
+
+With the scale set running, moving a repository is a one-word change per job. We did all ten repositories at once: one commit per repository, pushed straight to `master`. In each clone:
+
+```bash
+# every job's runs-on, whatever it was (ubuntu-latest, ubuntu-24.04, ubuntu-24.04-arm), becomes mk4
+perl -pi -e 's/^(\s*runs-on:\s*)\S.*$/${1}mk4/' .github/workflows/*.yml
+```
+
+52 jobs moved, plus the jobs that call reusable workflows, since those inherit the called file's `runs-on`. One job needed more than a word. moks-sre-agent's `terminal` job ran a matrix over both CPU types. On an arm64-only cluster, both entries would have been the same job twice:
+
+```diff
+# moks-sre-agent: .github/workflows/ci.yml (8e54ac4)
+-  # The diagnostic image on both architectures, its vulnerability scan, and real isolation checks on
++  # The diagnostic image (arm64, the mk4 runners), its vulnerability scan, and real isolation checks on
+   terminal:
+     if: github.event_name == 'pull_request' || github.event_name == 'push'
+-    strategy:
+-      fail-fast: false
+-      matrix:
+-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+-    runs-on: ${{ matrix.runner }}
++    runs-on: mk4
+```
+
+Comments that had become false went in the same commits, such as "Runs on GitHub-hosted runners, never on the mk4 server". The organization's runner group needed one setting too ([issue 4](#4-public-repositories-would-have-queued-forever)).
+
+## Issues we hit, and how we fixed them
+
+All of this happened on 21 November 2026, in about two hours. The timeline:
+
+:::figure{caption="Figure 4. Five failure points between the first merge and a green run. Times are UTC."}
+![Timeline of 21 November 2026 in UTC. 29 October, before: runners as systemd services on the old Minikube host froze it twice, and CI went back to GitHub-hosted runners. 05:12, failure 1: PR 24 (a9cd274) merged ARC 0.15.1, but the deploy stopped at Check CI settings because TF_VAR_github_runners_app_* were not set; fix: create the GitHub App and set three secrets. 06:02, failure 2: CI cannot apply because it could not assume the AWS role with OIDC, broken by the organization rename; fix for now: terraform apply -target=helm_release.arc_runners from a laptop, and the listener was running at 06:02. 06:14: c64ca5d and nine sibling commits move all 52 jobs in 10 repositories to runs-on: mk4, and the runner group Default allows public repositories; in the next hour 29 jobs ran on mk4, 7 passed and 22 failed. 06:18, failure 3: jithendar.com content attempt 1 fails with Unable to locate executable file: git-lfs. 06:29: 18b905c adds our own image ghcr.io/mrjithendar/mk4-runner, built on a GitHub-hosted arm64 runner; Helm revision 2 at 06:35. 06:38, failure 4: attempt 2 fails with failed to connect to the docker API at unix:///var/run/docker.sock; 24 of the 52 jobs need a Docker daemon. 06:45: c06ac72 adds a privileged dind sidecar to every runner pod and Gatekeeper excludes namespace runners; Helm revision 3 at 06:47. 06:55: attempt 3 passes in 44 seconds; at 07:02 moks-cms hygiene with docker run passes and at 07:03 roboshop's services container mongo:8.0 starts. Still open, failure 5: the Build runner image workflow fails on c06ac72 because values.yaml now names mk4-runner twice; also open: the OIDC trust, practice-programming's sandbox tests, runner limits and fork pull request approval.](/images/mk4-github-runners/mk4-runners-timeline.svg)
+:::
+
+One workflow run tells most of the story by itself. jithendar.com's content workflow, run 44874905707, ran on the same commit three times:
+
+| Attempt | Time (UTC) | Pod | Runner image | Result |
+|---|---|---|---|---|
+| 1 | 06:18 | `mk4-runner-wb4p4` | GitHub's `actions-runner:2.338.2` | `Unable to locate executable file: git-lfs` |
+| 2 | 06:38 | `mk4-runner-pmp4w` | `mk4-runner:2.338.2-48743dc57f6a`, no Docker daemon | `failed to connect to the docker API at unix:///var/run/docker.sock` |
+| 3 | 06:55 | `mk4-runner-z2k2l` | same image, plus the dind sidecar | passed in 44 s |
+
+### 1. Runners on the host froze the server
+
+**Symptom (29 October):** the old Minikube host froze, twice, during CI.
+**Cause:** the runners were systemd services on the node that ran the cluster, so builds competed with the kubelet and every pod for memory and disk.
+**Fix:** runners are now pods, scheduled across the workers and deleted after each job. Resource limits are the next step ([Still open](#still-open)).
+
+### 2. The deploy stopped at "Check CI settings"
+
+**Symptom:** the first deploy after PR #24 merged failed within its first minute:
+
+```text
+##[error]Not set: TF_VAR_github_runners_app_id TF_VAR_github_runners_app_installation_id TF_VAR_github_runners_app_private_key. Run scripts/setup-minikube-terraform-ci.sh (... TF_VAR_github_runners_app_*: secrets RUNNERS_GITHUB_APP_ID, RUNNERS_GITHUB_APP_INSTALLATION_ID, RUNNERS_GITHUB_APP_PRIVATE_KEY of environment mk4, deploy/minikube/runners/README.md)
+```
+
+**Cause:** expected. The PR shipped the code, and the GitHub App didn't exist yet.
+**Fix:** we created the App and set the three secrets ([Credentials](#credentials-a-github-app-not-a-token)). The check is there to fail before Terraform touches anything, and it named every missing value.
+
+### 3. CI could not apply: the OIDC trust after the organization rename
+
+**Symptom:** with the secrets set, every deploy run got one step further, then failed on mk4's own runners:
+
+```text
+##[error]Could not assume role with OIDC: Not authorized to perform sts:AssumeRoleWithWebIdentity
+```
+
+**Cause:** Terraform state lives in S3, and the workflow reaches it through an AWS role trusted via GitHub's OIDC. The organization had just been renamed. GitHub's OIDC token now carries a subject like `repo:mrjithendar@257155124/k8s-deployments@583559700:…`, and the role's trust policy only matched `repo:mrjithendar/*` and the repository's old name. Moving to self-hosted runners doesn't change OIDC at all: the token comes from GitHub, not from the runner.
+**Fix (for now):** apply from a laptop, `terraform apply -var-file=vars/mk4.tfvars -target=helm_release.arc_runners`. All three Helm revisions of `arc-runners` (06:02, 06:35 and 06:47 UTC) came from there: every CI deploy that day stopped at the AWS step. The real fix is a trust-policy change in AWS, and it's still open.
+
+### 4. Public repositories would have queued forever
+
+**Symptom:** caught before it happened. The organization's `Default` runner group showed `"allows_public_repositories": false`, and five of the ten repositories are public. Their jobs would have waited for a runner that's never offered to them.
+**Fix:** we turned the setting on through the API:
+
+```bash
+gh api -X PATCH orgs/mrjithendar/actions/runner-groups/1 -F allows_public_repositories=true
+```
+
+That has a security cost, covered in [Security](#security-what-we-gave-up).
+
+### 5. "Unable to locate executable file: git-lfs"
+
+**Symptom:** the first wave on mk4. 29 jobs ran there in the following hour: 7 passed and 22 failed. The first error was in checkout itself:
+
+```text
+##[error]Unable to locate executable file: git-lfs. Please verify either the file path exists or the file can be found within a directory specified by the PATH environment variable. ...
+```
+
+Others failed on `shellcheck`, `gh` and friends.
+**Cause:** `runs-on: ubuntu-latest` quietly gives you a large, preinstalled toolbox. ARC's runner image doesn't.
+**Fix:** our own image ([The runner image](#the-runner-image)), from a survey of what all 52 jobs actually call (18b905c). From attempt 2 on, the same run got past checkout, which now logs `git-lfs/3.4.1 (GitHub; linux arm64; go 1.22.2)`.
+
+### 6. No Docker daemon
+
+**Symptom:** attempt 2, and every job that touches Docker:
+
+```text
+failed to connect to the docker API at unix:///var/run/docker.sock; check if the path is correct and if the daemon is running: dial unix /var/run/docker.sock: connect: no such file or directory
+```
+
+Jobs with `services:` failed before their first step, while the runner was asking Docker for its version:
+
+```text
+##[error]Exit code 1 returned from process: file name '/usr/bin/docker', arguments 'version --format '{{.Server.APIVersion}}''.
+```
+
+and container actions such as checkov failed with `Docker pull failed with exit code 1`.
+**Cause:** 24 of the 52 jobs need a Docker daemon: `docker build` and `docker run`, the `docker/*` actions, `helm/kind-action`, container actions, and `services:`. The first version of the scale set had none on purpose. Docker-in-Docker needs a privileged container, and mk4's Gatekeeper denies privileged containers in every namespace.
+**Fix (c06ac72):** a privileged Docker daemon beside the runner, with the exception made as small as we could. Gatekeeper's `privilegedContainers` constraint excludes the one namespace `runners`:
+
+```yaml
+# deploy/minikube/gatekeeper/constraints/values.yaml (excerpt)
+privilegedContainers:
+  enforcementAction: deny
+  # runners: each GitHub Actions runner pod's Docker daemon (dind sidecar, runners/values.yaml) must be privileged.
+  # A job there can take over its node; deploy/minikube/runners/README.md, "Docker".
+  excludedNamespaces: [runners]
+```
+
+The other constraints still apply there: no host network or ports, no host PID or IPC, and no `hostPath` volumes. The namespace's Pod Security label moved from `baseline` to `privileged`, while `runners-system` stays `baseline`. In Terraform, `arc_runners` now `depends_on` `helm_release.gatekeeper_constraints`, so the scale set can't come up before the exception exists. Attempt 3 passed: `latest: Pulling from jithendar/moks-cms`, the content check ran in a container, and the job finished in 44 seconds.
+
+Two more Docker workflows, started by hand afterwards, confirmed it. moks-cms's repository checks (`docker run` with the Prometheus image, then shellcheck) passed in 15 seconds. roboshop-ai-app's showcase checks started a `services:` container `mongo:8.0` ("Initialize containers": success) and ran its suites against it. That run then failed in the test step itself (1 failure and 2 errors in 140 tests). It was the workflow's first run ever, and we haven't looked into it yet.
+
+### 7. Getting Docker-in-Docker right
+
+The sidecar took more than `privileged: true`. Each of these is a line in `values.yaml` above:
+
+- **`/var/lib/docker` on an `emptyDir`.** Docker's overlay2 storage driver can't run on top of the container's own overlay filesystem. An `emptyDir` sits on the node's real disk. The price is that images disappear with the pod.
+- **Same paths in both containers.** `docker run -v /some/path:...` is resolved by the *daemon*, in the daemon's filesystem. So the workspace `/home/runner/_work` and `/tmp` are shared volumes, mounted at the same paths in the runner and in dind. `/tmp` is easy to forget: jithendar.com's `check-content.sh` bind-mounts a `mktemp -d` folder.
+- **The socket's group.** dockerd creates the socket with group `123`, which is `docker` in the runner image, so the non-root `runner` user can use it.
+- **Start order.** dind is a *native sidecar*: an init container with `restartPolicy: Always`. Kubernetes starts it before the runner and only moves on once its `startupProbe` (`docker info`) passes. On top of that, the runner waits up to `RUNNER_WAIT_FOR_DOCKER_IN_SECONDS=120`. When the job ends, the sidecar is stopped after the runner, and the pod can finish.
+- **The runner's externals.** Container actions and `container:` jobs run the runner's bundled Node.js *inside* a container started by dind, so the daemon must see those files. `init-dind-externals` copies them into a shared volume before anything else starts.
+- **Versions pinned.** `docker:29.9.2-dind` matches the Docker CLI in the runner image. The runner image is pinned by tag, and the init container uses the same image, which the tests check.
+
+### 8. A two-architecture matrix on a one-architecture cluster
+
+**Symptom:** none yet, which is the point. moks-sre-agent's `terminal` job tested the image on `ubuntu-24.04` (x64) and `ubuntu-24.04-arm`. With `runs-on: ${{ matrix.runner }}` replaced by `mk4`, both entries would run the same arm64 job twice.
+**Fix:** drop the matrix ([diff above](#moving-every-workflow-to-mk4)). The trade-off is real: nothing tests that image on x64 any more. The multi-arch `terminal-image` build (`--platform linux/arm64,linux/amd64`) still produces both.
+
+### 9. The tag check that compares a tag with itself
+
+**Symptom:** since c06ac72, `Build runner image` fails with an error that looks impossible:
+
+```text
+##[error]the runner image must be ghcr.io/mrjithendar/mk4-runner:2.338.2-48743dc57f6a (the Dockerfile changed), not ghcr.io/mrjithendar/mk4-runner:2.338.2-48743dc57f6a
+```
+
+**Cause:** the `have=` line in [the tag check](#built-off-cluster-tagged-by-its-own-hash) greps `values.yaml` for every `image: ghcr.io/mrjithendar/mk4-runner:…` line. Before the dind change there was one. Now the init container uses the same image, so `have` holds the tag **twice, on two lines**, and never equals `want`. The error message prints both, and the log viewer shows only the first:
+
+```text
+$ sed -nE 's#^ *image: (ghcr\.io/mrjithendar/mk4-runner:[^ ]+)$#\1#p' deploy/minikube/runners/values.yaml | cat -n
+     1	ghcr.io/mrjithendar/mk4-runner:2.338.2-48743dc57f6a
+     2	ghcr.io/mrjithendar/mk4-runner:2.338.2-48743dc57f6a
+```
+
+**Fix:** not merged yet. Comparing unique values (`sort -u`), or failing when the lines differ from each other, would both do. Nothing is broken on the cluster: the image was already built and pushed at 18b905c, and Terraform deploys what `values.yaml` names. But until it's fixed, every change to `values.yaml` shows a red build.
+
+## Security: what we gave up
+
+Be honest about this part. The runners README says it plainly:
+
+```markdown
+<!-- deploy/minikube/runners/README.md, "Docker" -->
+**What that means:** a privileged container is root on its node. Any job (its workflow, or any action, package or
+image it pulls) can read the node's disk, including other pods' volumes and Secrets, and the k3s credentials, and
+from there take over the cluster. The NetworkPolicy does not stop that. It is only as safe as everything those jobs
+run.
+```
+
+So what still protects mk4 comes down to *who can start a job*:
+
+- **Private repositories:** only people with write access to the organization's repositories. Fork pull requests from outside can't run workflows on private repositories here: `run_workflows_from_fork_pull_requests` is `false`.
+- **Public repositories:** anyone can open a pull request from a fork, and a fork's pull request runs *its own* version of the workflow file. So the guard is GitHub's approval setting for fork pull requests. The README's advice is to require approval for every outside contributor before such a workflow runs, or to keep public repositories off the runner group.
+- **The NetworkPolicy** still matters, just less than it seems. It stops a job from calling Postgres, Valkey or the Kubernetes API over the network. It can't stop a privileged container from reaching the same things through the node itself.
+
+If any of that is too much risk for your cluster, the alternatives are known. You can keep Docker work on GitHub-hosted runners, as our first version did. You can use rootless BuildKit or Kaniko for image builds and ARC's `kubernetes` container mode for `container:` jobs. Or you can put the runners on separate, disposable nodes that run nothing else.
+
+## Still open
+
+| Item | State on 21 November 2026 | Where |
+|---|---|---|
+| Tag check reads two image lines | `Build runner image` red since c06ac72 | [issue 9](#9-the-tag-check-that-compares-a-tag-with-itself) |
+| OIDC trust after the org rename | CI deploys of k8s-deployments and aws-infra fail at "AWS credentials"; runners applied from a laptop | [issue 3](#3-ci-could-not-apply-the-oidc-trust-after-the-organization-rename) |
+| practice-programming executor tests | failed on mk4 before the image and dind existed (`runner produced no result line`); not re-run since | its sandbox runner printed no result inside the pod; needs a look |
+| Runner limits | no `minRunners`, `maxRunners`, requests or limits; CI can take as much of the workers as it asks for | `deploy/minikube/runners/values.yaml` |
+| Upgrading ARC | a remove-and-reinstall of both releases and the CRDs, not a version bump | runners README, "Upgrading ARC" |
+
+## Checks
+
+The commands we use to see the runners, all read-only:
+
+```bash
+kubectl -n runners-system get pods                    # arc-gha-rs-controller-…, and mk4-…-listener Running
+kubectl -n runners get autoscalingrunnersets,ephemeralrunners,pods
+kubectl -n runners-system logs deploy/arc-gha-rs-controller | grep -i error
+helm -n runners history arc-runners                   # one revision per apply that changed the scale set
+```
+
+No listener pod almost always means GitHub refused the App's credentials, and the controller's log says why. On GitHub, the scale set appears under the organization's **Settings → Actions → Runners** as `mk4`. Every job's "Set up job" log names the pod it ran on (`mk4-runner-xxxxx`).
+
+## Git references
+
+| Commit | Repository | What |
+|---|---|---|
+| [a9cd274](https://github.com/mrjithendar/k8s-deployments/commit/a9cd274dfbae54752136c578da12bc277c6489f0) ([PR #24](https://github.com/mrjithendar/k8s-deployments/pull/24)) | k8s-deployments | ARC 0.15.1 from Terraform: namespaces, App Secret, NetworkPolicy, both releases, tests, listener check |
+| [c64ca5d](https://github.com/mrjithendar/k8s-deployments/commit/c64ca5d) | k8s-deployments | its four workflows to `runs-on: mk4` (one of ten such commits) |
+| [8e54ac4](https://github.com/mrjithendar/moks-sre-agent/commit/8e54ac4) | moks-sre-agent | `runs-on: mk4`, the `terminal` matrix dropped |
+| [3d2c3d2](https://github.com/mrjithendar/aws-infra/commit/3d2c3d2), [9a898bd](https://github.com/mrjithendar/aws-vpc/commit/9a898bd), [c6409d1](https://github.com/mrjithendar/roboshop-ai-app/commit/c6409d1) | aws-infra, aws-vpc, roboshop-ai-app | the same move (the private repositories got the same commit) |
+| [18b905c](https://github.com/mrjithendar/k8s-deployments/commit/18b905c86cde940be72183baaf18ac1e235773df) | k8s-deployments | the `mk4-runner` image and `build-runner-image.yml` |
+| [c06ac72](https://github.com/mrjithendar/k8s-deployments/commit/c06ac729044aee1357787386fe25ece127194100) | k8s-deployments | the privileged dind sidecar, Gatekeeper exclusion, Pod Security `privileged` |
+| [381b585](https://github.com/mrjithendar/k8s-deployments/commit/381b585da93d0aa7db38433970dcd9ea7b5c9979) | k8s-deployments | `gh-app.sh`, the secrets and the laptop apply |
+
+The files themselves: [`minikube-infrastructure/runners.tf`](https://github.com/mrjithendar/k8s-deployments/blob/381b585da93d0aa7db38433970dcd9ea7b5c9979/minikube-infrastructure/runners.tf), [`deploy/minikube/runners/`](https://github.com/mrjithendar/k8s-deployments/tree/381b585da93d0aa7db38433970dcd9ea7b5c9979/deploy/minikube/runners) (values, controller values, image, README) and [`.github/workflows/build-runner-image.yml`](https://github.com/mrjithendar/k8s-deployments/blob/381b585da93d0aa7db38433970dcd9ea7b5c9979/.github/workflows/build-runner-image.yml).
