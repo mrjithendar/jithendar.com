@@ -1,0 +1,66 @@
+# Timeline evidence, 23 November 2026 (all times UTC). Collected read-only on mk4 and from the GitHub API,
+# 08:39–09:15. Origin IPs, visitor IPs, Cloudflare zone and account IDs are deliberately left out.
+
+## Pull requests
+mrjithendar/moks-cms#192        merged 2026-11-23T08:19:58Z  (merge commit ccd070a: Reader Revenue Manager loader)
+mrjithendar/jithendar.com#17    merged 2026-11-23T08:21:08Z  (site.json: readerRevenue.productId and lang)
+
+## moks-cms CI (builds and pushes moks-cms:latest on merge)
+run 45137763032  pull_request (closed, merged)  2026-11-23T08:20:01Z → 08:28:28Z  success
+
+## jithendar.com deploy-kubernetes.yml, run 45137926193 (pull_request closed, #17)
+attempt 1   plan    08:21:16 → 08:21:23
+            deploy  08:21:28 → 08:22:46
+              Apply to mk4   08:21:36 → 08:22:20
+              Smoke test     08:22:20 → 08:22:43  (scripts/smoke.sh via a port-forward to a pod: SMOKE_VIA)
+attempt 2   re-run by the owner, run_started_at 08:29:36
+            deploy  08:29:43 → 08:30:55
+              Apply to mk4   08:29:50 → 08:30:36
+              Smoke test     08:30:36 → 08:30:53
+
+## ReplicaSets of deployment jithendar/jithendar-com
+# name                        created                revision  restartedAt annotation    ConfigMap
+jithendar-com-58ccd5b77f      2026-11-23T05:55:15Z   126       2026-11-23T05:55:15Z      jithendar-com-site-6hkkk28cb7
+jithendar-com-54c6c6bd6f      2026-11-23T08:21:56Z   127       2026-11-23T05:55:15Z      jithendar-com-site-hkkdkbtt99   (apply: new ConfigMap)
+jithendar-com-99f4c9d89       2026-11-23T08:22:01Z   128       2026-11-23T08:22:01Z      jithendar-com-site-hkkdkbtt99   (rollout restart, old image)
+jithendar-com-557d8cfddf      2026-11-23T08:30:11Z   129       2026-11-23T08:30:11Z      jithendar-com-site-hkkdkbtt99   (rollout restart, image ccd070a)
+
+## Deployment managed fields (who last changed what)
+kubectl-client-side-apply  Update  2026-11-23T08:21:56Z
+kubectl-rollout            Update  2026-11-23T08:30:11Z
+k3s                        Update  2026-11-23T08:41:42Z  status
+
+## Deployment settings that matter here
+strategy        RollingUpdate maxSurge 1, maxUnavailable 0; replicas 2
+startupProbe    GET /api/health  period 2 s, timeout 1 s, failureThreshold 30
+readinessProbe  GET /api/health  period 10 s, timeout 3 s, failureThreshold 3
+livenessProbe   GET /api/health  period 20 s, timeout 3 s, failureThreshold 3
+web container   requests 250m / 512Mi, limits 2 CPU / 1536Mi
+
+## Events (namespace jithendar, filtered to jithendar-com)
+08:30:22  Killing           jithendar-com-99f4c9d89-q57pl   Stopping container web / istio-proxy
+08:30:24  Unhealthy         jithendar-com-557d8cfddf-xhqrj  Startup probe failed: dial tcp :15021 connection refused (sidecar not up yet)
+08:30:34  Unhealthy         jithendar-com-557d8cfddf-wkxft  Liveness probe failed: context deadline exceeded
+08:30:34  Unhealthy         jithendar-com-557d8cfddf-xhqrj  Startup probe failed: context deadline exceeded
+08:30:36  Killing           jithendar-com-99f4c9d89-vhb4p   Stopping container web / istio-proxy
+08:30:45  Unhealthy (x2)    jithendar-com-557d8cfddf-wkxft  Readiness probe failed: context deadline exceeded
+08:30:46  Unhealthy         jithendar-com-557d8cfddf-xhqrj  Liveness probe failed: context deadline exceeded
+08:30:59  Unhealthy (x2)    jithendar-com-557d8cfddf-xhqrj  Readiness probe failed: context deadline exceeded
+08:41:31  Killing           jithendar-com-557d8cfddf-wkxft  Stopping container istio-proxy / web
+08:41:34  Killing           jithendar-com-557d8cfddf-xhqrj  Stopping container web / istio-proxy
+          (no probe-failure reason and no new ReplicaSet: a pod delete, not a rollout and not a liveness kill)
+08:41:40  Unhealthy         jithendar-com-557d8cfddf-lsq8m  Startup probe failed: context deadline exceeded
+08:41:41  Unhealthy         jithendar-com-557d8cfddf-scqh5  Startup probe failed: context deadline exceeded
+08:41:55  Unhealthy         jithendar-com-557d8cfddf-scqh5  Liveness probe failed: context deadline exceeded
+08:41:58  Unhealthy         jithendar-com-557d8cfddf-lsq8m  Liveness probe failed: context deadline exceeded
+08:42:04  Unhealthy (x2)    jithendar-com-557d8cfddf-lsq8m  Readiness probe failed: context deadline exceeded
+08:42:05  Unhealthy (x2)    jithendar-com-557d8cfddf-scqh5  Readiness probe failed: context deadline exceeded
+
+## The site's own log (container web, JSON lines; fields shortened)
+08:42:33.697  pages_warmed  reason=startup  pages=91  failed=0  ms=51999   (lsq8m)
+08:42:35.462  pages_warmed  reason=startup  pages=91  failed=0  ms=53669   (scqh5)
+08:54:21      http_request GET route=/ userAgent=dbg2-17962 → http_request_completed status=200 durationMs=3
+              (the tagged request was sent through Cloudflare; the client gave up after 70 s with no response)
+09:02:43–09:03:28  POST /admin/cache (several)   → 09:03:40 / 09:03:45 pages_warmed reason="cache cleared" ms≈7300
+09:06:07           POST /admin/cache             → 09:06:24 pages_warmed reason="cache cleared" ms=7088
+09:07:22      GET / (curl through Cloudflare) → 200

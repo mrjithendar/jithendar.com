@@ -1,0 +1,238 @@
+---
+title: "Postmortem: Only the Home Page Went Down (a Cloudflare 520 After a Kubernetes Deploy)"
+slug: cloudflare-520-home-page-postmortem-jithendar-com
+description: "For at least 28 minutes jithendar.com/ returned Cloudflare 520s while every other page worked. What I checked, how I restored it, and the follow-ups."
+seoTitle: "Cloudflare 520 on One URL: A Kubernetes Deploy Postmortem"
+seoDescription: "Postmortem: after a deploy, one Cloudflare cache entry broke the home page. The curl and kubectl checks that found it, the purge that fixed it, the follow-ups."
+author: jithendar-dharmapuri
+category: devops-sre
+tags: [Postmortem, Incident Response, Cloudflare, CDN, Caching, Kubernetes, Istio, Next.js, SRE]
+contentType: analysis
+status: review
+featuredImage:
+  src: /images/home-page-520/home-page-520-path.png
+  alt: "The request path for jithendar.com/ and what each check showed. Top row: a browser sends GET / and gets 520, 502 or no answer; Cloudflare's cache in Singapore, whose rule caches HTML by URL, has a broken entry for the key / (marked as the failure point) while every other key is fine; Cloudflare fetches from the Istio gateway in the mk4 cluster, which passes to the istio-proxy sidecar and the web container running Next.js with its ISR page cache, two pods that warm up 91 pages. Below, three groups of checks. Through Cloudflare: GET / fails, HEAD /, GET /?a=1, GET /?, /blog and /privacy-policy return 200, and after the purge GET / returns 200 and a cache HIT. At the origin without Cloudflare: GET / returns 200, 174 KB in about a second, over IPv4 and IPv6, HTTP/1.1 and HTTP/2, with every encoding. At the pod: a port-forward returns 200 in 1.3 seconds, and the request log shows Cloudflare's tagged GET / answered 200 in 3 milliseconds while the client got no answer. At the bottom: the fix was to purge https://jithendar.com/ from Cloudflare's cache in Admin, Cache, with no code, pod or gateway change."
+  width: 1922
+  height: 1202
+related:
+  - blog/caching-isr-ssg-image-optimisation-nextjs
+  - blog/logging-tracing-observability-jithendar-com
+  - blog/how-i-built-jithendar-com
+sources:
+  - title: "Error 520"
+    url: https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-520/
+    publisher: Cloudflare
+  - title: "Purge by single-file"
+    url: https://developers.cloudflare.com/cache/how-to/purge-cache/purge-by-single-file/
+    publisher: Cloudflare
+  - title: "Cache Rules"
+    url: https://developers.cloudflare.com/cache/how-to/cache-rules/
+    publisher: Cloudflare
+  - title: "Configure Liveness, Readiness and Startup Probes"
+    url: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+    publisher: Kubernetes
+  - title: "Postmortem Culture: Learning from Failure"
+    url: https://sre.google/sre-book/postmortem-culture/
+    publisher: Google SRE
+---
+
+<Todo>Drafted 2026-11-23 from read-only checks on mk4, GitHub Actions run data and the site's request log. The raw evidence is in docs/knowledge-sharing/home-page-520 (timeline.txt, checks.txt). Before publishing: (1) Open Cloudflare Analytics for 08:15–09:10 UTC: Traffic (status codes over time) and Origin Analytics (origin status next to edge status). Find when the 520s and 502s on / started, which data centres served them, and whether the origin status was 200. Then fill in "Impact" and the grey "not checked" bar in the timeline figure. (2) Confirm who deleted both pods at 08:41:31 and say so in the timeline. No event records it. (3) Mark each follow-up done as it lands. (4) Decide whether to say this investigation was done with an AI assistant (see the AI use policy). (5) Then set status to published with a publishedAt time.</Todo>
+
+On 23 November 2026, `https://jithendar.com/` stopped working for at least 28 minutes. Visitors got Cloudflare's error 520 page, a 502, or nothing at all. Every other page on the site loaded normally. The pods were healthy, the gateway was healthy, and the home page itself rendered in a few milliseconds. The broken piece was a single entry in Cloudflare's cache: the one for the home page URL. Purging that one URL fixed it.
+
+This is the postmortem. It covers what changed, what I checked and in which order, how I restored the page, what the root cause was (and wasn't), and what I'm changing so the next deploy can't do this quietly.
+
+## Summary
+
+| | |
+|---|---|
+| **What broke** | `GET https://jithendar.com/` through Cloudflare returned a 520, a 502, or no response. |
+| **What kept working** | Every other URL; the same page with a query string (`/?a=1`); `HEAD /`; the origin and the pods. |
+| **Duration** | At least 28 minutes. First seen at 08:39:39 UTC, fixed at 09:07:21 UTC (14:09 to 14:37 IST). It may have started as early as 08:22. |
+| **Detected by** | Me, opening the site. No alert fired, because nothing checks the public URL. |
+| **Trigger** | A deploy: two merged pull requests and three rollouts in nine minutes. The new pods failed their probes while warming up. |
+| **Root cause** | Cloudflare's cache entry for the home page URL broke during the deploy. Cloudflare kept failing that URL even when the origin answered 200. |
+| **Fix** | Purge `https://jithendar.com/` from Cloudflare's cache (Admin → Cache). |
+| **Code at fault** | None found. The change being deployed is on every page, and every other page worked. |
+
+![The request path for jithendar.com/ and what each check showed. Top row: a browser sends GET / and gets 520, 502 or no answer; Cloudflare's cache in Singapore, whose rule caches HTML by URL, has a broken entry for the key / (marked as the failure point) while every other key is fine; Cloudflare fetches from the Istio gateway in the mk4 cluster, which passes to the istio-proxy sidecar and the web container running Next.js with its ISR page cache, two pods that warm up 91 pages. Below, three groups of checks. Through Cloudflare: GET / fails, HEAD /, GET /?a=1, GET /?, /blog and /privacy-policy return 200, and after the purge GET / returns 200 and a cache HIT. At the origin without Cloudflare: GET / returns 200, 174 KB in about a second, over IPv4 and IPv6, HTTP/1.1 and HTTP/2, with every encoding. At the pod: a port-forward returns 200 in 1.3 seconds, and the request log shows Cloudflare's tagged GET / answered 200 in 3 milliseconds while the client got no answer. At the bottom: the fix was to purge https://jithendar.com/ from Cloudflare's cache in Admin, Cache, with no code, pod or gateway change.](/images/home-page-520/home-page-520-path.svg)
+
+## What changed that morning
+
+I was adding Google's Reader Revenue Manager code to the site. That is the small script that lets Publisher Center show prompts such as a rewarded ad or a survey. The change came in two parts in two repositories:
+
+- **moks-cms #192**: a loader for the script, configured per site. Merging it builds a new `moks-cms:latest` image.
+- **jithendar.com #17**: one new key in `site.json` with the site's product ID. The site's `site.json` is deployed as a ConfigMap, so merging it runs the deploy workflow, which applies the manifests and restarts the site.
+
+I merged them 70 seconds apart, at 08:19:58 and 08:21:08 UTC. The deploy for #17 started at once: it applied the new ConfigMap at 08:21:56 and restarted the Deployment at 08:22:01. But the moks-cms image was still building (08:20:01 to 08:28:28), so the restarted pods ran the old image with the new config. At 08:29:36 I re-ran the deploy to pick up the image, and it restarted the Deployment again at 08:30:11.
+
+That made **three rollouts in nine minutes** (revisions 127, 128 and 129). Each deploy finished with a green smoke test, but the smoke test reaches the site through a `kubectl port-forward` to one pod. It never goes through Cloudflare.
+
+Each new pod also spends close to a minute **warming up**: it renders the site's 91 public pages into its page cache before it is useful. During that window the health endpoint answers too slowly, and the startup, liveness and readiness probes all time out with `context deadline exceeded`. The rollout settings (`maxSurge: 1`, `maxUnavailable: 0`, two replicas) kept the site up through all of this. Even so, the pods behind Cloudflare were being replaced, and failing probes, for about a minute at a time.
+
+## Timeline
+
+![A timeline from 08:15 to 09:10 UTC on 23 November 2026 in three lanes. Changes and deploys: moks-cms 192 merged at 08:19:58, its image built from 08:20 to 08:28, jithendar.com 17 merged at 08:21:08, and the deploy re-run at 08:29:36. Pods: the first deploy applies the new ConfigMap at 08:21:56 and restarts at 08:22:01 on the old image; the new pods' probes time out from 08:30:24 to 08:30:59; both pods are deleted at 08:41:31 and the new ones warm up for 52 to 54 seconds while failing probes. GET / through Cloudflare: not checked from 08:22 to 08:39; failing with 520, 502 or no answer from 08:39:39 to 09:07:21, at least 28 minutes; the 520 page in the browser at 08:53:44; a tagged request reaching a pod and getting 200 in 3 milliseconds at 08:54:21 while the client got nothing; purges from Admin, Cache between 09:02 and 09:06; working again at 09:07:21 with a cache HIT. A numbered list below repeats the twelve events.](/images/home-page-520/home-page-520-timeline.svg)
+
+| Time (UTC) | Event |
+|---|---|
+| 08:19:58 | moks-cms #192 merged; the image build runs 08:20:01–08:28:28 |
+| 08:21:08 | jithendar.com #17 merged |
+| 08:21:56 | Deploy applies the new ConfigMap; restart at 08:22:01 on the **old** image; smoke test passes 08:22:43 |
+| 08:29:36 | Deploy re-run to pick up the new image; restart at 08:30:11; smoke test passes 08:30:53 |
+| 08:30:24–08:30:59 | New pods' startup, liveness and readiness probes time out while they warm up |
+| 08:39:39 | First failed `GET /` through Cloudflare; `/blog` answers 200 |
+| 08:41:31 | Both pods deleted; the new pods warm up for 52–54 s, failing probes meanwhile |
+| 08:53:44 | Cloudflare's 520 page in the browser (Singapore edge) |
+| 08:54:21 | A tagged `GET /` through Cloudflare reaches a pod and gets 200 in 3 ms; the client gets nothing |
+| 09:02–09:06 | Purges from Admin → Cache |
+| 09:07:21 | `GET /` through Cloudflare: 200, then served from Cloudflare's cache (`HIT`) |
+
+## How I narrowed it down
+
+The first report was simply "jithendar.com not accessible". It took five questions to get from there to one cache key. I answered each one with a single command, and each answer ruled out one layer.
+
+![Five questions in order, each with its answer and conclusion. One: is the whole site down? No, /blog and /privacy-policy answer 200 through Cloudflare, so it is not an outage of the site. Two: does a pod serve /? Yes, a port-forward to the pod returns 200 and 174 KB in 1.3 seconds, so the app and its ISR cache are fine. Three: does the origin serve /? Yes, curl with --resolve past Cloudflare returns 200 on IPv4, IPv6, HTTP/1.1, HTTP/2 and any encoding, so Istio and TLS are fine. Four: is it the page or the URL? The URL, because /?a=1, /? and HEAD / all work through Cloudflare, so only the key / is affected. Five: does Cloudflare's GET / arrive? Yes, a tagged request got 200 from the pod in 3 milliseconds, so the answer stops at Cloudflare. Conclusion, marked as the failure point: Cloudflare's entry for https://jithendar.com/ is broken and the origin is not. Fix: purge that URL in Admin, Cache; at 09:07:21 GET / answers 200, then HIT.](/images/home-page-520/home-page-520-narrowing.svg)
+
+### 1. Is the whole site down?
+
+```bash
+for p in / /blog /privacy-policy; do
+  curl -s -o /dev/null --max-time 20 -w "$p %{http_code} %{time_total}s\n" "https://jithendar.com$p"
+done
+```
+
+`/` returned nothing in 20 seconds. `/blog` and `/privacy-policy` returned 200 in under a second. So this was not an outage of the site, and probably not of the cluster either.
+
+### 2. Are the pods healthy, and does a pod serve `/`?
+
+```bash
+kubectl -n jithendar get pods -o wide
+kubectl -n jithendar get events --sort-by=.lastTimestamp | grep jithendar-com
+kubectl -n jithendar port-forward pod/<pod> 18080:3000 &
+curl -s -o /dev/null -w '%{http_code} %{time_total}s %{size_download}B\n' http://127.0.0.1:18080/
+```
+
+Both pods were `Running` and `2/2`. The events showed probe timeouts during the 08:30 rollout. Straight from a pod, `/` returned 200 with the full 174 KB page in 1.3 seconds. The response headers for `/` and `/blog` were identical apart from `ETag` and `Content-Length`. Both were served from the ISR cache (`x-nextjs-cache: HIT`).
+
+### 3. Does the origin answer without Cloudflare?
+
+`curl --resolve` sends the request for `jithendar.com` to an address you choose. Here that was the Istio ingress gateway's public IP, so Cloudflare is skipped while TLS and the `Host` header stay the same:
+
+```bash
+# ORIGIN_IP: the ingress gateway's public address (not Cloudflare's)
+curl -s -o /dev/null --resolve "jithendar.com:443:$ORIGIN_IP" \
+  -w '%{http_code} %{time_total}s %{size_download}B\n' https://jithendar.com/
+```
+
+It returned 200 every time, over IPv4 and IPv6, with `--http1.1` and `--http2`, and with `Accept-Encoding` set to identity, gzip, br or zstd. In ten rounds side by side, the origin returned 200 ten times. In the same rounds, `/` through Cloudflare failed ten times and `/blog` through Cloudflare worked ten times.
+
+### 4. Is it the page or the URL?
+
+This was the question that settled it. Cloudflare caches by URL, so the same page under a different URL is a different cache entry:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' 'https://jithendar.com/?a=1'
+curl -s -o /dev/null -w '%{http_code}\n' 'https://jithendar.com/?'
+curl -sI https://jithendar.com/ | grep -i -E '^(HTTP|cf-cache-status)'
+```
+
+`/?a=1` and `/?` returned 200. `HEAD /` returned 200 with `cf-cache-status: DYNAMIC`, because Cloudflare doesn't cache HEAD. Meanwhile `GET /` kept failing whatever I changed about the request: IPv4 or IPv6, HTTP/1.1, a `Range` header, `Accept-Encoding`, or `Cache-Control: no-cache`. Through Cloudflare, the page's `Cache-Control` also gains `max-age=3600`. That shows the zone's cache rule applies to HTML.
+
+So the page was fine, the origin was fine, and one cache key was not.
+
+### 5. Does Cloudflare's request reach the pod?
+
+Cloudflare forwards the `User-Agent`, and the site logs it on every request. A unique one turns a request into something you can find:
+
+```bash
+tag="dbg-$RANDOM"
+curl -s -o /dev/null --max-time 70 -A "$tag" -w '%{http_code}\n' https://jithendar.com/
+for p in $(kubectl -n jithendar get pods -o name | grep jithendar-com); do
+  kubectl -n jithendar logs "$p" -c web --since=5m | grep "$tag"
+done
+```
+
+The tagged request at 08:54:21 reached a pod, and the pod answered 200 in **3 ms**. curl got no response for 70 seconds. An earlier tagged request got Cloudflare's own 502 page after 50 seconds and never appeared in the log. The ingress gateway logged no resets or errors in that window. Cloudflare's documentation for [error 520](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-520/) describes this pairing: an origin status of 200 with an edge status of 520.
+
+## How I restored it
+
+The site's admin has a cache page that can purge a URL at Cloudflare through Cloudflare's API. Between 09:02 and 09:06 the site's own caches and Cloudflare were purged from **Admin → Cache**. In the Cloudflare dashboard, the same action is **Caching → Configuration → Purge Cache → Custom Purge** with the URL `https://jithendar.com/`.
+
+At 09:07:21 `GET /` through Cloudflare returned 200 five times in a row. The next response came from Cloudflare's cache (`cf-cache-status: HIT`). There was no rollback, no code change and no pod restart.
+
+Two things would not have helped:
+
+- **Restarting the site.** Both pods were deleted at 08:41. The new ones served `/` correctly after their warm-up, and Cloudflare kept failing anyway.
+- **Rolling back the change.** The origin was never the problem, and a rollback would have meant another rollout.
+
+## Root cause
+
+**What I know:**
+
+- The failure was tied to one cache key at Cloudflare: `https://jithendar.com/`. The same page under other keys worked.
+- Requests Cloudflare doesn't cache (`HEAD`) worked.
+- The origin served `/` with 200, including to Cloudflare's own request.
+- Purging that one key fixed it immediately, with nothing else changed.
+
+**What I infer:** the entry went bad between 08:22 and 08:39, while the pods behind it were restarted three times and spent about a minute each time failing probes. A fetch of `/` that Cloudflare started in that window most likely ended badly: it was cut off, or it was too slow. After that, Cloudflare left the key in a state where later requests failed, even ones the origin answered in 3 ms. Cloudflare's docs read an origin 200 with an edge 520 as malformed headers or an early closed connection. The headers for `/` match those for `/blog` and `/?a=1` (apart from `ETag` and length), and those URLs worked. That is why I put the problem in the key's state, not in the response.
+
+**What I can't see:** Cloudflare's side of it. Origin Analytics will show the origin and edge status for that window, and I will add it here.
+
+In one sentence: a deploy that restarted the site three times in nine minutes left Cloudflare's cache entry for the home page broken, and nothing in the pipeline looked at the site through Cloudflare, so the entry stayed broken until I noticed.
+
+### Was it the code change?
+
+I found no sign of it:
+
+- The new script is on every page, and every other page worked.
+- The origin served `/` with the script on it.
+- The purge fixed `/` without any change.
+- After the purge, the same page with the script was cached and served normally.
+
+The change mattered only because it caused the deploy, and the deploy was the trigger.
+
+## What let it happen
+
+![Two columns joined by arrows. Left, what let it happen: three rollouts in nine minutes, because two merges came 70 seconds apart and the image arrived 6 minutes after the config change; probes fail during warm-up, 52 to 54 seconds rendering 91 pages while startup, liveness and readiness time out; the smoke test skips Cloudflare, a port-forward to one pod that passed at 08:22:43 and 08:30:53; nothing watches the public URL, I found it by opening the site and the start time is still unknown; Cloudflare caches HTML by URL, so one bad entry breaks that URL for everyone and deploys never purge. Right, the follow-ups, all open: deploy once per change set by merging the site config after the image is pushed or letting the deploy wait for it; keep warm-up off the probe path with a startup probe that allows the warm-up and readiness only after it finishes; smoke-test through Cloudflare, GET / and a few key URLs on the public host after every deploy; an outside check with an alert that probes / and /blog through Cloudflare and alerts on 5xx or no answer; purge Cloudflare after a deploy, since the site has the token and the purge code, when a rollout ends.](/images/home-page-520/home-page-520-followups.svg)
+
+1. **Three rollouts in nine minutes.** The site config and the image it needs arrived six minutes apart, so the site was deployed twice: once on the old image, once on the new one. Each deploy is an apply plus a restart.
+2. **Pods fail probes while warming up.** For 52 to 54 seconds after a start, the health endpoint answers too slowly and the probes time out. Nothing ties readiness to the end of the warm-up, so whether a pod takes traffic during that minute depends on probe timing.
+3. **The smoke test skips Cloudflare.** It checks a pod through a port-forward, which is exactly the part that was fine. It passed both times.
+4. **Nothing watches the public URL.** No check runs from outside through Cloudflare, so I learned about the problem by opening the site. That is also why the start time is still unknown.
+5. **Cloudflare caches HTML by URL, and deploys never purge it.** One bad entry breaks that URL for everyone the data centre serves. The site already purges Cloudflare when an article is published, but not after a deploy.
+
+## What went well, and what didn't
+
+**Went well:**
+
+- **The fix took one click.** The site already had Cloudflare purging wired into Admin → Cache.
+- **The rest of the site stayed up.** Two replicas and `maxUnavailable: 0` kept every other page working through three rollouts and a pod delete.
+- **Each check removed exactly one layer.** Pod, origin, URL, then Cloudflare.
+
+**Didn't go well:**
+
+- **A person found it, not a check.**
+- **The deploy reported success twice,** using a test that can't see what visitors see.
+- **Deleting the pods changed nothing.** It cost another minute of warm-up and probe failures.
+- **The start of the incident is unknown,** so the 28 minutes is a lower bound.
+
+## Follow-ups
+
+| # | Follow-up | Addresses | Status |
+|---|---|---|---|
+| 1 | Smoke-test `/` and a few key URLs on the public host, through Cloudflare, at the end of every deploy | 3 | Open |
+| 2 | An outside check of `/` and `/blog` through Cloudflare, with an alert on 5xx or no answer | 4 | Open |
+| 3 | Purge Cloudflare (at least `/` and the listing pages) when a rollout finishes | 5 | Open |
+| 4 | A startup probe that allows the warm-up, and readiness only after the warm-up has finished | 2 | Open |
+| 5 | Deploy once per change set: merge the site config after its image exists, or let the deploy wait for the image | 1 | Open |
+
+Follow-ups 1 and 3 would have caught or fixed this one within the deploy itself. Follow-up 2 would have caught it whatever caused it.
+
+## Key takeaways
+
+1. **When one URL fails and its neighbours work, check the URL before the servers.** Request the same page under a different cache key (`?a=1`, or `HEAD`). If that works, the cache layer is the suspect, not the app.
+2. **Test the path your visitors take.** A smoke test through a port-forward tests a pod. It says nothing about the CDN, the gateway or DNS.
+3. **Tag a request to follow it.** A unique `User-Agent` shows whether the CDN's request reached your app and what the app answered.
+4. **A CDN that caches HTML is part of every deploy.** Purge it when the origin changes under it, and watch it from outside.
+5. **Restarting the origin can't fix the cache in front of it.** Find the layer before you act on one.
