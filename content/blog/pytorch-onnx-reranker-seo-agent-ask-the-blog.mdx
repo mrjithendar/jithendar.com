@@ -1,0 +1,432 @@
+---
+title: "How I Added PyTorch to My SEO Agent Without Shipping PyTorch"
+slug: pytorch-onnx-reranker-seo-agent-ask-the-blog
+description: "PyTorch exports and checks a cross-encoder reranker for the jithendar.com SEO agent; ONNX Runtime runs it. The design, the gate, and what the eval measured."
+seoTitle: "PyTorch to ONNX: Adding a Cross-Encoder Reranker to a RAG Agent"
+seoDescription: "Use PyTorch to export and verify a cross-encoder, ship it as int8 ONNX, and gate it in production search: code, settings, image size and eval results."
+author: jithendar-dharmapuri
+category: ai-engineering
+tags: [PyTorch, ONNX, ONNX Runtime, RAG, Reranking, Cross-Encoder, uv, AI Engineering, LLMOps]
+contentType: tutorial
+status: review
+featuredImage:
+  src: /images/seo-agent-pytorch/seo-agent-pytorch-where.png
+  alt: "Three columns. Left, model work outside the service: the Hugging Face repository for cross-encoder/ms-marco-MiniLM-L6-v2 at revision 233902d sends weights to scripts/reranker_model.py, which downloads, exports PyTorch to ONNX and verifies ONNX against PyTorch, run from uv sync --group train with torch 2.15.0 from the CPU-only index, transformers and onnx; verify found the int8 file picks the same best passage for 93 of 95 questions. Middle, CI and the image build: ci.yml installs only the dev group, pip-audit reads the no-dev export and a test checks there is no torch in the image; the build stage downloads the int8 ONNX at the pinned revision and checks its sha256; the seo-agent:latest image holds bge-small and the reranker, no torch and no CUDA, 1.8 percent larger. Right, mk4: Admin Settings Retrieval holds the reranker switch, off, three limits at 0 meaning no limit, and the thread count; the seo-agent pod with a 1 CPU limit runs ONNX Runtime with bge-small and the RerankGate with the int8 cross-encoder, next to PostgreSQL with pgvector, 68 articles and 3,179 chunks."
+  width: 1922
+  height: 1126
+related:
+  - blog/pytorch-rag-reranking-moks-sre-agent
+  - blog/rag-eval-yaml-question-set-ask-the-blog
+  - blog/rag-evaluation-ask-the-blog-jithendar-com
+sources:
+  - title: "moks-seo-agent pull request #31: cross-encoder reranker behind a live switch"
+    url: https://github.com/mrjithendar/moks-seo-agent/pull/31
+    publisher: GitHub
+  - title: "cross-encoder/ms-marco-MiniLM-L6-v2 model card"
+    url: https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2
+    publisher: Hugging Face
+  - title: "torch.onnx documentation"
+    url: https://docs.pytorch.org/docs/stable/onnx.html
+    publisher: PyTorch
+  - title: "Quantize ONNX models"
+    url: https://onnxruntime.ai/docs/performance/model-optimizations/quantization.html
+    publisher: ONNX Runtime
+  - title: "Using uv with PyTorch"
+    url: https://docs.astral.sh/uv/guides/integration/pytorch/
+    publisher: Astral
+  - title: "Managing dependencies: dependency groups"
+    url: https://docs.astral.sh/uv/concepts/projects/dependencies/#dependency-groups
+    publisher: Astral
+---
+
+<Todo>Drafted 2026-11-23 from mrjithendar/moks-seo-agent b69c3f5 (the merge of PR #31), local measurements on an M3 Pro, two rag-eval.yml runs on GitHub's ARM runner, and read-only checks on mk4 (details in docs/knowledge-sharing/seo-agent-pytorch/README.md). Before publishing: (1) the reranker is still switched off on mk4, so its latency there is not measured; if you switch it on, add the p95 of seo_rag_rerank_seconds to "Is it worth switching on?" and to the results figure. (2) Decide ASK_BLOG_MIN_SCORE (0.66 or 0.59): the verdict for Ask the Blog depends on it. (3) moks-cms docs/seo/RAG.md "Reranker" still says the reranker cannot pass the eval; update it. (4) If you change this article, re-run the contamination check in the README. (5) Then set status to published with a publishedAt time.</Todo>
+
+Ask the Blog is the assistant on jithendar.com that answers from my articles and cites the section it used. It runs in the **seo-agent**, a Python service next to the CMS, which also runs the SEO crews and the site's MCP server. When I asked myself how to bring PyTorch into it, the answer turned out to be: everywhere except the running service.
+
+This article walks through what I built in [pull request #31](https://github.com/mrjithendar/moks-seo-agent/pull/31), merged on 22 November 2026. PyTorch downloads, exports and checks a cross-encoder reranker. ONNX Runtime runs the result inside the seo-agent, behind a gate and a settings switch. I'll cover the dependency setup, the export and verification script, how the reranker fits into search, the gate that keeps search working when the model doesn't, and what the evaluation measured, including the part that didn't go the way I hoped.
+
+Everything here is from commit `b69c3f5` of [moks-seo-agent](https://github.com/mrjithendar/moks-seo-agent), measurements on my laptop (an M3 Pro), two runs on GitHub's ARM runners, and read-only checks on mk4, the k3s cluster that runs the site, on 23 November.
+
+## The short version
+
+- **PyTorch is a dependency group that nothing installs by accident.** `train` holds torch 2.15.0 from PyTorch's CPU-only index, transformers and onnx. CI and the Docker image never install it, and a test checks that.
+- **The image ships an ONNX file, not a framework.** The model is `cross-encoder/ms-marco-MiniLM-L6-v2` at revision `233902d`, the same one my SRE agent MOKS runs with PyTorch. The seo-agent ships its 23 MB int8 ONNX export, pinned by SHA-256. The image grew by 1.8 %.
+- **One script does the PyTorch work.** `scripts/reranker_model.py` downloads the weights, exports them to ONNX, and compares an ONNX file with PyTorch on 959 real question and passage pairs. The fp32 export matches PyTorch to 0.00002. The int8 file picks the same best passage for 93 of 95 questions.
+- **Search never fails because of the reranker.** A gate hands back the original order whenever the model is off, missing, busy, too slow or wrong. You switch it on and off live in Admin, and its limits start at 0, which means no limit, until I set them.
+- **The gain depends on where you measure it.** On the 95-question eval set, Recall@3 goes from 90.5 % to 95.2 % with no similarity floor. Ask the Blog applies its 0.66 floor first, and there the gain is only 85.7 % to 88.1 %, under my own +3 point rule.
+- **The laptop numbers didn't survive Linux.** The p95 search time was 349 ms on the laptop with 4 threads. On GitHub's Linux ARM runner with 1 thread, the closest stand-in for the pod's 1 CPU limit, it was 2.9 seconds. The image with the model is running on mk4, and the reranker stays switched off.
+
+## Why not just install torch in the service
+
+The seo-agent's Dockerfile starts with a promise: "Multi-stage, non-root, CPU-only: no torch, no CUDA; ONNX Runtime runs the embeddings." The embedding model, `bge-small-en-v1.5`, is an ONNX file baked into the image at a pinned revision. CI also has an image-size gate. It compares every image with a committed baseline, 481 MB compressed, and fails the build above +15 %, which leaves about 72 MB of room.
+
+A reranker's job at query time is one forward pass per candidate passage. ONNX Runtime does that forward pass, and it was already in the image. So torch had no reason to be in the runtime at all. PyTorch is the right tool for the steps around the model instead: getting the weights, exporting them, checking the export and, later, fine-tuning.
+
+My SRE agent went the other way. [MOKS runs the same model with PyTorch](/blog/pytorch-rag-reranking-moks-sre-agent) in its own FastAPI service with the CPU build of torch. That makes sense when the reranker is a separate deployment with its own image and resources. In the seo-agent the reranker runs inside the same process as search. The repository even had an ONNX reranker class from an earlier version, switched off because the old 55-question eval set had nothing left to gain (Recall@3 was already 100 %). The new 95-question set has room: its hard questions score 78.4 %. So I finished that path and gave PyTorch the jobs it is good at.
+
+![Three columns. Left, model work outside the service: the Hugging Face repository for cross-encoder/ms-marco-MiniLM-L6-v2 at revision 233902d sends weights to scripts/reranker_model.py, which downloads, exports PyTorch to ONNX and verifies ONNX against PyTorch, run from uv sync --group train with torch 2.15.0 from the CPU-only index, transformers 5.22.2 and onnx 1.23.2, on a laptop or a manual run only; verify found that the int8 file picks the same best passage for 93 of 95 questions. Middle, CI and the image build: ci.yml on every pull request installs only the dev group, pip-audit reads the no-dev export, and a test checks that torch is not in the image; when image inputs change or a pull request is merged, the build stage installs no dependency groups, downloads the int8 ONNX at the pinned revision and checks its sha256 or fails; the seo-agent:latest image holds bge-small and the reranker, with no torch and no CUDA, 1.8 percent larger. Right, mk4, which pulls latest: Admin Settings Retrieval holds Rerank passages, off and live, three limits at 0 meaning no limit, and CPU threads 2 on restart, read on every search by the seo-agent pod, which has a 1 CPU limit and runs ONNX Runtime with bge-small for query embeddings and the RerankGate with the int8 cross-encoder, exporting seo_rag_rerank metrics; the pod reads and writes PostgreSQL with pgvector, 68 articles and 3,179 chunks, including the live eval table.](/images/seo-agent-pytorch/seo-agent-pytorch-where.svg)
+
+## PyTorch as a dependency group nobody installs by accident
+
+The seo-agent uses [uv](https://docs.astral.sh/uv/) with exact pins and a lock file. uv's dependency groups are lists of packages that belong to the project but are not part of what it installs at run time. `dev` is the default group, and it holds pytest, ruff and mypy. I added a second group:
+
+```toml
+# pyproject.toml (excerpt)
+[dependency-groups]
+dev = [
+  "pytest==9.2.0",
+  # …
+]
+# PyTorch, for model work outside the service only (scripts/reranker_model.py): export a model to ONNX and check the
+# ONNX file against the PyTorch model it came from. Not a default group, so `uv sync` (CI) and the image
+# (`uv sync --no-dev`) never install it, and the pip-audit export (`--no-dev`) leaves it out: the service runs every
+# model on ONNX Runtime. `uv sync --group train` installs it.
+train = [
+  "torch==2.15.0",
+  "onnx==1.23.2",
+  "transformers==5.22.2",
+]
+
+# torch comes from PyTorch's CPU-only index (a plain PyPI torch on Linux is the CUDA build, gigabytes bigger).
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+```
+
+Three details matter:
+
+- **`explicit = true`** means only packages that name the index use it. torch comes from PyTorch's CPU wheels, and every other package still comes from PyPI.
+- **The lock is universal.** `uv.lock` records torch for every platform: `2.15.0` on macOS, where the CPU index serves the plain build, and `2.15.0+cpu` everywhere else. The project's two-week rule (`exclude-newer = "2 weeks"`) applies to these packages too, and it resolved to the same torch version MOKS pins.
+- **Nothing installs the group unless asked.** `uv sync` in CI installs the default groups, which is only `dev`. The Dockerfile runs `uv sync --frozen --no-dev --no-install-project`, which installs no group at all. The dependency audit exports `--no-dev`, which leaves `train` out too.
+
+The last point is easy to break later with one innocent `--all-groups`, so it is a test:
+
+```python
+# tests/test_reranker.py (excerpt, shortened)
+def test_the_model_is_baked_pinned_and_pytorch_stays_out_of_the_image_and_ci() -> None:
+    docker = (ROOT / "Dockerfile").read_text()
+    assert "uv sync --frozen --no-dev --no-install-project" in docker  # installs no dependency group
+    assert "torch" not in docker.split("FROM python:${PYTHON_VERSION}-slim\n", 1)[1].lower()  # the runtime stage
+    py = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    deps = " ".join(py["project"]["dependencies"]).lower()
+    assert "torch" not in deps and "transformers" not in deps
+    assert "default-groups" not in py["tool"]["uv"]  # only `dev` is installed by `uv sync` (CI)
+    assert py["tool"]["uv"]["sources"]["torch"] == [{"index": "pytorch-cpu"}]
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    assert "--group train" not in ci and "--all-groups" not in ci
+```
+
+On a laptop, `uv sync --group train` installs the group. The scripts that need it run with `uv run --group train python …`.
+
+## The model, and why the image ships the int8 file
+
+I picked the same model and revision as MOKS, so I didn't have to evaluate a new model from scratch:
+
+| Property | Value |
+|---|---|
+| Model | `cross-encoder/ms-marco-MiniLM-L6-v2`, revision `233902d` |
+| Architecture | a 6-layer BERT encoder, hidden size 384, with a one-logit classification head |
+| Input | the question and one passage together, up to 512 tokens |
+| Output | one relevance score (a logit) per pair; higher means a better answer |
+| Training data | MS MARCO passage ranking (web search queries, English) |
+| License | Apache-2.0, per the [model card](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2) |
+
+A cross-encoder differs from the embedding model in one way that decides everything here. bge-small turns each text into a vector on its own, so the passages are embedded once, at indexing time. A cross-encoder reads the question and the passage *together*, so nothing can be precomputed. That's why it only sees the short list that vector search already found.
+
+At that revision the model repository publishes the PyTorch weights (`model.safetensors`) and a set of ONNX exports: fp32, four graph-optimised variants, and int8 files quantised for different CPUs. I measured the two candidates against the size gate:
+
+| File | Size | gzip | Share of the 72 MB allowance |
+|---|---|---|---|
+| `onnx/model.onnx` (fp32) | 91.0 MB | 83.2 MB | 116 %: the gate fails |
+| `onnx/model_qint8_arm64.onnx` (int8) | 23.2 MB | 18.1 MB | 25 % |
+
+The int8 file was the only one that fits. The real image on the pull request came out at 489.6 MB compressed against the 480.9 MB baseline, so +1.8 %. The evaluation below shows that int8 loses nothing measurable on Recall@3. One more thing turned up while checking the files: the reranker's `tokenizer.json` is byte for byte the same as bge-small's, because both use the same uncased BERT vocabulary. The Dockerfile checks it against the same checksum:
+
+```dockerfile
+# Dockerfile (build stage, excerpt)
+ARG RERANKER_REPO=cross-encoder/ms-marco-MiniLM-L6-v2
+ARG RERANKER_REV=233902d25c440f23af6f7d6e94d2946bac0bee0a
+ARG RERANKER_FILE=onnx/model_qint8_arm64.onnx
+ARG RERANKER_SHA256=3573b6b9593cb2f75987a31815d409ca3dd8808629118fd20451bb1a5d90cec7
+RUN mkdir -p /models/ms-marco-MiniLM-L6-v2 \
+ && python -c "import urllib.request as u; u.urlretrieve('https://huggingface.co/${RERANKER_REPO}/resolve/${RERANKER_REV}/${RERANKER_FILE}', '/models/ms-marco-MiniLM-L6-v2/model.onnx'); u.urlretrieve('https://huggingface.co/${RERANKER_REPO}/resolve/${RERANKER_REV}/tokenizer.json', '/models/ms-marco-MiniLM-L6-v2/tokenizer.json')" \
+ && echo "${RERANKER_SHA256}  /models/ms-marco-MiniLM-L6-v2/model.onnx" | sha256sum -c - \
+ && echo "${TOKENIZER_SHA256}  /models/ms-marco-MiniLM-L6-v2/tokenizer.json" | sha256sum -c -
+```
+
+The runtime stage sets `RAG_RERANKER_DIR=/models/ms-marco-MiniLM-L6-v2`. Pods never download anything at start-up, and a changed file fails the build instead of shipping.
+
+## The PyTorch script: download, export, verify
+
+[`scripts/reranker_model.py`](https://github.com/mrjithendar/moks-seo-agent/blob/b69c3f584ad27126939b051deff80bfed26f0d21/scripts/reranker_model.py) is the only code that imports torch. The scripts folder is in `.dockerignore`, so it never reaches the image either.
+
+```bash
+uv sync --group train
+uv run --group train python scripts/reranker_model.py download --out /tmp/rr/src
+uv run --group train python scripts/reranker_model.py export --src /tmp/rr/src --out /tmp/rr/fp32 --int8 /tmp/rr/int8
+uv run --group train python scripts/reranker_model.py verify --src /tmp/rr/src --onnx-dir /tmp/rr/int8 \
+    --model-dir /models/bge-small-en-v1.5
+```
+
+### download
+
+`download` fetches `config.json`, `model.safetensors` and the tokenizer files at the pinned revision, and nothing else. The loader only ever reads safetensors (`use_safetensors=True`) with `trust_remote_code=False`. A pickled checkpoint can run code when it's loaded, and safetensors can't.
+
+### export
+
+This is the step that makes the script useful beyond this one model. Hugging Face already publishes ONNX files for it, but a fine-tuned model won't have any.
+
+```python
+# scripts/reranker_model.py (excerpt, shortened)
+def export(src: Path, out: Path, int8: Path | None) -> None:
+    import torch
+
+    model, tok = load_torch(src)  # safetensors only, trust_remote_code=False, attn_implementation="eager"
+
+    class Logits(torch.nn.Module):
+        def __init__(self, m: Any):
+            super().__init__()
+            self.m = m
+
+        def forward(self, input_ids: Any, attention_mask: Any, token_type_ids: Any) -> Any:
+            return self.m(input_ids=input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids).logits
+
+    sample = tok(["what is a cross-encoder"], ["A cross-encoder reads the question and the passage together."], return_tensors="pt", padding=True)
+    args = tuple(sample[n] for n in INPUTS)
+    axes = {n: {0: "batch", 1: "sequence"} for n in INPUTS} | {"logits": {0: "batch"}}
+    torch.onnx.export(Logits(model).eval(), args, str(out / "model.onnx"), input_names=list(INPUTS), output_names=["logits"],
+                      dynamic_axes=axes, opset_version=17, dynamo=False)
+    shutil.copy(src / "tokenizer.json", out / "tokenizer.json")
+    if int8 is not None:
+        from onnxruntime.quantization import QuantType, quantize_dynamic
+
+        quantize_dynamic(str(out / "model.onnx"), str(int8 / "model.onnx"), weight_type=QuantType.QInt8)
+        shutil.copy(src / "tokenizer.json", int8 / "tokenizer.json")
+```
+
+What each choice does:
+
+- **The `Logits` wrapper** gives the exporter a module with three fixed tensor inputs and one tensor output. The Hugging Face model's own `forward` takes many optional keyword arguments and returns an object.
+- **`attn_implementation="eager"`** traces plain matrix operations instead of a fused attention kernel.
+- **`dynamic_axes`** keeps the batch size and sequence length free, so one file handles any number of passages of any length up to 512 tokens.
+- **`dynamo=False`** uses the TorchScript exporter. Since PyTorch 2.9 the default is the newer `torch.export`-based exporter, and 2.15 prints a deprecation warning for the old one. It still produced an exact file here (see verify). The first run failed with `Module onnx is not installed!`: the exporter writes through the `onnx` package, which is why `onnx` is in the `train` group.
+- **The int8 copy** uses ONNX Runtime's [dynamic quantization](https://onnxruntime.ai/docs/performance/model-optimizations/quantization.html), which stores the weights as int8 and quantises activations on the fly.
+
+The export takes about a second and writes a 91 MB fp32 file and a 23 MB int8 file. The trace also prints a `TracerWarning` from transformers' masking code: a branch for padding against a key-value cache is frozen at trace time. A cross-encoder has no cache, so that branch never runs. I didn't take that on trust: the next step checks it.
+
+### verify
+
+`verify` answers one question: does this ONNX file, run the way the service runs it, score passages the way the PyTorch model does?
+
+- It builds real inputs. For each of the 95 questions in the eval set, it takes the candidates the service would rerank: bge-small's top 20, at most 3 per article, written as the service writes them (`title › heading path`, then the passage). That gives 959 pairs, about 10 per question.
+- It scores every pair twice. The reference is transformers' tokenizer plus the PyTorch model. The candidate goes through the service's own `CrossEncoderReranker.scores()`: the `tokenizers` library, `tokenizer.json`, ONNX Runtime. A tokenizer mismatch would show up here as well as a bad export.
+- It reports the largest and mean difference in logits, the Kendall τ between the two orders, and how often the best passage and the top-3 set agree. It doesn't judge unless you give it a threshold (`--max-abs-diff`).
+
+![Checking an ONNX file against PyTorch. Inputs: the 95 eval questions from app/data/rag_eval.yaml, their candidates (bge-small top 20, at most 3 per article) and the resulting 959 question and passage pairs, written by passage_text as title, heading and text. Two lanes. The PyTorch reference from the train group uses the transformers AutoTokenizer, truncating pairs to 512 tokens and padding per batch, and BertForSequenceClassification loaded from model.safetensors at revision 233902d with eager attention. The service's own code path uses CrossEncoderReranker.scores with the tokenizers library, tokenizer.json and the same 512 tokens, and ONNX Runtime on the CPU with 2 threads, running the ONNX file under test. Both produce logits, compared question by question: maximum and mean absolute difference, Kendall tau of the two orders, the same best passage and the same top-3 set. Results on 22 November 2026: the Hugging Face fp32 export differs by at most 0.00002, tau 1.000, same best passage for 95 of 95; our PyTorch export at most 0.00001, tau 1.000, 95 of 95; the Hugging Face int8 file, the one baked into the image, mean 0.16 and maximum 0.85, tau 0.939, 93 of 95; ONNX Runtime's int8 quantization of our export, not shipped, mean 0.18 and maximum 1.12, tau 0.941, 89 of 95.](/images/seo-agent-pytorch/seo-agent-pytorch-verify.svg)
+
+| ONNX file | Largest logit gap | Mean logit gap | Kendall τ | Same best passage | Same top 3 |
+|---|---|---|---|---|---|
+| Hugging Face fp32 | 0.00002 | 0.0000 | 1.000 | 95 / 95 | 95 / 95 |
+| My PyTorch export, fp32 | 0.00001 | 0.0000 | 1.000 | 95 / 95 | 95 / 95 |
+| **Hugging Face int8 (in the image)** | 0.85 | 0.16 | 0.939 | 93 / 95 | 82 / 95 |
+| ONNX Runtime int8 of my export | 1.12 | 0.18 | 0.941 | 89 / 95 | 83 / 95 |
+
+The export path is exact: the TorchScript warning changed nothing. Both int8 files move scores by a fraction of a logit, which is ordinary quantisation noise. They mostly swap passages that were close anyway. Hugging Face's int8 file agrees with PyTorch on the best passage more often than my own quantisation (93 against 89), so the image ships theirs. That was a measurement, not a preference for the official file. The script also prints timings, but PyTorch on macOS uses Apple's Accelerate library, so those numbers say nothing about Linux.
+
+## Putting the reranker into search
+
+Every search in the seo-agent goes through one function. Ask the Blog, the crews' `vector_search` tool and the MCP `search_articles` tool all call `PgVectorIndex.search()`. It embeds the question with bge-small and takes the 20 nearest chunks from pgvector (`RAG_CANDIDATES`). It then drops anything below the caller's similarity floor (`min_score`; only Ask the Blog sets one) and keeps at most 3 chunks per article. With the reranker switched on, one more step reorders what is left:
+
+```python
+# app/index.py (excerpt)
+async def ranked_hits(fused: list[Candidate], cfg: RetrievalConfig, k: int, query: str, reranker: Any = None) -> list[Hit]:
+    """The final top k: the fused order, diversified, or with the reranker switched on its order for the first
+    `reranker.window(N)` of the diversified top N and the fused order after them. Shared by PgVectorIndex and the eval's
+    LocalIndex, so the evaluation measures what production runs. Whatever the reranker's outcome, the hits are the
+    ones the fused order would give from the same pool (it reorders, it never adds or drops a passage)."""
+    if reranker is None or not reranker.enabled:
+        return [to_hit(x) for x in diversify(fused, k, cfg.max_per_article)]
+    pool = [to_hit(x) for x in diversify(fused, max(cfg.candidates, k), cfg.max_per_article)]
+    n = reranker.window(cfg.candidates)
+    head, outcome = await reranker.rerank(query, pool[:n])
+    metrics.RAG_RERANK.labels(outcome).inc()
+    return (head + pool[n:])[:k]
+```
+
+Four decisions are packed into those lines:
+
+- **It reorders and never filters.** The model sees passages that already passed the floor, and `Hit.score` stays the cosine similarity. Ask the Blog's floor, the MCP `score` field and the grader that follows all keep their meaning.
+- **The window is a setting.** `RAG_RERANKER_CANDIDATES` limits how many of the candidates the model reads (0 means all of them). The rest follow in their original order, so a search always returns k hits.
+- **One function serves production and the eval.** The evaluation's in-memory index calls the same `ranked_hits`, so the numbers below measure the code that runs in the pod.
+- **Not every caller wants it.** The news desk searches the blog for each new story to flag "update an existing article instead" when the closest article has a cosine of 0.86 or more. It wants the *nearest* passage, not the best answer, so it calls `search(…, rerank=False)`.
+
+![One search with the reranker switched on. Top row, left to right: a question from Ask the Blog, the crews' vector_search or MCP search; embed with bge-small ONNX and its query prefix; pgvector top 20 by cosine, RAG_CANDIDATES; the floor, min_score, which only Ask the Blog sets, 0.66 today, while the crews and MCP have none; then at most 3 chunks per article, leaving about 10 candidates. Down to the RerankGate, which checks whether it is switched on, the model is loaded and it is below the limit, then the int8 cross-encoder on ONNX Runtime reads the first N candidates; assemble puts the reranked head first and the rest in fused order; the top k, k = 6, keep Hit.score as cosine and go on to the grader and an answer with citations. A red dashed fallback goes from the gate straight to assemble: off, unavailable, busy, timeout or error give the fused order unchanged. The news desk's duplicate check calls search with rerank=False because it reads cosine. Below: the model reads the question plus title and heading path plus the passage, the first 2,000 characters, truncated to 512 tokens, giving one relevance logit; measured on the 95 eval questions, Recall@3 with no floor rises from 90.5 to 95.2 percent on an M3 Pro, with the 0.66 floor first from 85.7 to 88.1 percent; p95 search time goes from 10 to 349 milliseconds on the M3 Pro with 4 threads, and from 50 to 2,875 milliseconds on a Linux ARM runner with 1 thread.](/images/seo-agent-pytorch/seo-agent-pytorch-search.svg)
+
+## A gate that never fails a search
+
+An optional model in the request path needs to fail quietly. [`RerankGate`](https://github.com/mrjithendar/moks-seo-agent/blob/b69c3f584ad27126939b051deff80bfed26f0d21/app/reranker.py#L85-L172) decides, for each search, whether the reranker runs. If it doesn't, the gate says why:
+
+```python
+# app/reranker.py (excerpt)
+    async def rerank(self, query: str, hits: list[Any]) -> tuple[list[Any], str]:
+        """(all of `hits` in the model's order, "applied"), or (`hits` unchanged, why not: off | unavailable | busy |
+        timeout | error)."""
+        if not self.enabled:
+            return hits, "off"
+        if not hits:
+            return hits, "applied"
+        model = await self.load()
+        if model is None:
+            return hits, "unavailable"
+        limit = int(getattr(self.settings, "rag_reranker_max_concurrent", 0) or 0)
+        if limit > 0 and self.running >= limit:
+            return hits, "busy"
+        self.running += 1
+        started = time.monotonic()
+        task = asyncio.ensure_future(model.rerank(query, hits, len(hits)))
+        task.add_done_callback(lambda t: self._done(t, started))
+        timeout_ms = int(getattr(self.settings, "rag_reranker_timeout_ms", 0) or 0)
+        try:
+            out = await asyncio.wait_for(asyncio.shield(task), timeout_ms / 1000 if timeout_ms > 0 else None)
+        except TimeoutError:
+            return hits, "timeout"
+        except Exception:
+            return hits, "error"
+        if sorted(map(id, out)) != sorted(map(id, hits)):  # the same passages, only reordered
+            return hits, "error"
+        return list(out), "applied"
+```
+
+- **It reads its settings on every search.** The gate holds the service's shared `Settings` object, which the admin store updates in place. A switch or a limit saved in Admin applies to the next search, with no restart.
+- **The model loads on first use, in a thread.** It also loads at start-up if the switch is already on. A failed load is remembered until the next restart instead of being retried on every question. The error type goes into the readiness answer as a note, without making the pod unready.
+- **Every exit returns the passages it was given.** That's the fused order, so the worst case is the search I had before.
+- **The answer is checked.** A model that returned a different set of passages would be a bug, so it counts as an error.
+
+The subtle part is when a slot is freed. ONNX Runtime runs the forward pass in native code, through `asyncio.to_thread`, and Python can't stop a thread in the middle of a native call. When the deadline passes, the search stops waiting, but the computation goes on and still holds a CPU. If the slot were released when the search gave up, every timeout would admit new work on top of work that is still running. On a pod with one CPU, each search would get slower than the last, causing more timeouts. MOKS taught me this one: its reranker service ties a slot to the computation for the same reason. Here the task's done-callback releases the slot, and `asyncio.shield` keeps the task running when the wait times out.
+
+![On the left, the checks one search goes through in app/reranker.py and app/index.py. Switched on and model folder set: if not, the gate is not called and the search keeps the fused order. Model loaded, where the first use loads it in a thread and a failed load is kept until restart: if not, unavailable. Below the reranks-at-once limit, RAG_RERANKER_MAX_CONCURRENT with 0 meaning none: if not, busy. Then the rerank starts and running goes up by one, as a task around asyncio.to_thread whose done-callback frees the slot. Back within the time limit, RAG_RERANKER_TIMEOUT_MS with 0 meaning none, where asyncio.shield lets the work go on: if not, timeout. Same passages, only reordered: if not, error. Otherwise applied, the model's order. Every failure keeps the fused order. On the right, a timeline from the test with one slot and a 20 millisecond time limit: search A waits 20 milliseconds, times out and returns the fused order; the native rerank call keeps running past that point, and the slot stays held with running equal to 1 until the call ends, then becomes free; search B arrives while the slot is held and is busy, skipping the model; search C arrives after the slot is free and is applied. A note says that freeing the slot when the search stops waiting would let new work start while the old call still holds the pod's one CPU, so the slot follows the computation.](/images/seo-agent-pytorch/seo-agent-pytorch-gate.svg)
+
+The test for that timeline holds the fake model on an `asyncio.Event`, sets the time limit to 20 ms and the at-once limit to 1, then checks each outcome in turn:
+
+```python
+# tests/test_reranker.py (excerpt, shortened)
+async def test_past_the_deadline_search_goes_on_and_the_slot_waits_for_the_work() -> None:
+    hold = asyncio.Event()
+    model = Reverse(hold=hold)
+    gate, _ = _gate(model, rag_reranker_timeout_ms=20, rag_reranker_max_concurrent=1)
+    out = await ranked_hits(fuse(_cands(10), CFG), CFG, 4, "q", gate)
+    assert [h.anchor for h in out] == ["s0", "s1", "s2", "s3"]  # timeout: the fused order
+    assert gate.running == 1  # the work still runs, so it keeps its slot
+    out = await ranked_hits(fuse(_cands(10), CFG), CFG, 4, "q", gate)
+    assert [h.anchor for h in out] == ["s0", "s1", "s2", "s3"]  # busy: the model is skipped
+    hold.set()
+    await asyncio.sleep(0.01)
+    assert gate.running == 0
+    out = await ranked_hits(fuse(_cands(10), CFG), CFG, 4, "q", gate)
+    assert out[0].anchor == "s7"  # applied: the model's order
+```
+
+Two Prometheus metrics describe it in production: `seo_rag_rerank_total{outcome}` counts the searches that went to the gate, by outcome. `seo_rag_rerank_seconds` is the model's own time per search, observed when the computation ends, so work that outlived its search's deadline is counted too.
+
+## Settings, not constants
+
+The seo-agent has an admin settings registry. Each field names an environment variable, the `Settings` attribute it feeds, and whether a change applies live or after a restart. The web app renders the groups from the agent's API. The reranker added five fields to the **Retrieval** group:
+
+| Field | Variable | Applies | Starts at |
+|---|---|---|---|
+| Rerank passages | `RAG_RERANKER_ENABLED` | live | off |
+| Passages the reranker reads | `RAG_RERANKER_CANDIDATES` | live | 0 = all |
+| Reranker time limit | `RAG_RERANKER_TIMEOUT_MS` | live | 0 = no limit |
+| Reranks at once | `RAG_RERANKER_MAX_CONCURRENT` | live | 0 = no limit |
+| Reranker CPU threads | `RAG_RERANKER_THREADS` | restart | 2 |
+
+The limits start empty on purpose. A time limit or a concurrency cap is a decision about how this site should trade answers against latency, and I want to make that decision in the Settings page with numbers in front of me. A value buried in code isn't something I can see or change. The thread count is the one restart field, because it is copied into the ONNX Runtime session when the model loads. `RAG_RERANKER_DIR` is deliberately not a setting: it is a path, the image sets it, and an admin page shouldn't be able to point the service at another file.
+
+The switch keeps its environment-variable name, `RAG_RERANKER_ENABLED`. So the Kubernetes ConfigMap's `"false"` keeps working, and a value saved in Admin takes precedence over it. Because the web app draws the group from the agent's registry, no CMS change was needed for the new fields to appear.
+
+## What the evaluation says
+
+The eval set is the 95-question `rag_eval.yaml` I described in [Inside rag_eval.yaml](/blog/rag-eval-yaml-question-set-ask-the-blog), run over the frozen copy of the blog that lives in the repository: 45 articles, 2,117 chunks. I added a `token-vector-rerank` configuration to `scripts/rag_eval.py`. It is the production retrieval (vector search, at most 3 per article) plus the reranker through the real gate. The p95 below is the whole search: query embedding, vector search and reranking.
+
+### Accuracy and speed, no floor
+
+| Reranker | Passages it reads | Threads | Recall@3 | MRR | p95 search |
+|---|---|---|---|---|---|
+| none (production today) | | | 90.5 % | 0.865 | 10 ms |
+| int8 | all (about 10) | 2 | 95.2 % | 0.899 | 559 ms |
+| int8 | all | 4 | 95.2 % | 0.899 | 349 ms |
+| int8 | 10 | 4 | 92.9 % | 0.894 | 211 ms |
+| int8 | 6 | 4 | 91.7 % | 0.894 | 108 ms |
+| fp32 | all | 2 | 95.2 % | 0.907 | 1,195 ms |
+
+Measured on an M3 Pro. "All" is every candidate left after the 3-per-article cap: up to 20, about 10 on average. A few observations:
+
+- **int8 costs nothing measurable.** It matches fp32 on Recall@3 (95.2 %) and gives up a little MRR (0.899 against 0.907), at half the time.
+- **Threads matter a lot.** Going from 2 threads to 4 takes the p95 from 559 ms to 349 ms.
+- **A smaller window is cheaper but gains less.** Reranking only the first 6 or 10 candidates is much faster, but most of the gain is in the deeper candidates.
+- **The sample is small.** +4.7 points of Recall@3 is 4 more questions answered out of 84 that have an answer. That's a reason to try it and watch, not proof.
+
+### The same run on Linux ARM
+
+A laptop is not the pod. mk4 runs on ARM, and the seo-agent pod is limited to one CPU. So I ran the same configurations with the repository's manual `rag-eval.yml` workflow on GitHub's `ubuntu-24.04-arm` runner, once with 1 reranker thread and once with 2:
+
+| Reranker | Threads | Recall@3 | MRR | p95 search |
+|---|---|---|---|---|
+| none | | 90.5 % | 0.865 | 50 ms |
+| int8, all candidates | 2 | 94.0 % | 0.898 | 1,685 ms |
+| int8, all candidates | 1 | 94.0 % | 0.898 | 2,875 ms |
+
+Two things changed:
+
+- **It is much slower.** With 2 threads, the reranked search takes three times as long as on the laptop (1,685 ms against 559 ms), and even the search without the reranker takes five times as long (50 ms against 10). With one thread, the p95 is almost 3 seconds, seven times my 400 ms limit.
+- **Recall@3 is 94.0 % instead of 95.2 %.** On Linux, one question's expected article drops out of the top 3 but stays in the top 6. Recall@1 and Recall@6 are the same as on the Mac. The int8 file is the same, so the likely cause is ONNX Runtime using different int8 kernels on the two platforms. I haven't checked which.
+
+### The floor runs first
+
+That table has no similarity floor, which is how the crews' `vector_search` and MCP search run. Ask the Blog is different. It drops passages below `ASK_BLOG_MIN_SCORE` *before* the reranker sees them, and the reranker can only reorder what passes. So I ran the eval again in the order production runs:
+
+| Floor applied first | Without the reranker | With it (int8, all candidates) | Gain |
+|---|---|---|---|
+| none, or 0.59 | 90.5 % | 95.2 % | +4.7 |
+| **0.66 (Ask the Blog today)** | 85.7 % | 88.1 % | **+2.4** |
+
+At 0.66, the floor removes some of the right passages before the reranker gets a chance. Those are the paraphrased questions whose best matching section sits between 0.59 and 0.66. The gain drops below the +3 points my activation rule asks for. At 0.59, the floor the [eval-set article](/blog/rag-eval-yaml-question-set-ask-the-blog) calibrated on all 95 questions, nothing the eval needs is removed, and the full gain comes back. For Ask the Blog, then, the reranker only passes its accuracy rule together with a lower floor. A lower floor has a cost of its own: at 0.59, 10 of the 11 no-answer questions reach the grader instead of 8.
+
+![Two charts. Top: p95 of the whole search over 95 questions with no floor, as bars, with p95 and Recall@3 in a column on the right, and a red line at 400 milliseconds, the activation rule's limit. On the M3 Pro: no reranker, 10 ms, 90.5 percent; int8, all candidates, 4 threads, 349 ms, 95.2 percent, under the line; int8, all, 2 threads, 559 ms, 95.2 percent; int8, 10 candidates, 4 threads, 211 ms, 92.9 percent; int8, 6 candidates, 4 threads, 108 ms, 91.7 percent; fp32, all, 2 threads, 1,195 ms, 95.2 percent. On GitHub's Linux ARM runner: no reranker, 50 ms, 90.5 percent; int8, all, 2 threads, 1,685 ms, 94.0 percent; int8, all, 1 thread, 2,875 ms, 94.0 percent, far past the line. Bottom: Recall@3 with and without the reranker, int8 with every candidate, where the floor runs first. With no floor or a floor of 0.59: 90.5 percent without and 95.2 percent with, plus 4.7, which passes the plus 3 rule. With the 0.66 floor first, as Ask the Blog runs today: 85.7 percent without and 88.1 percent with, plus 2.4, under the plus 3 rule. Bars start at 80 percent; the floor comparison was measured on the M3 Pro.](/images/seo-agent-pytorch/seo-agent-pytorch-results.svg)
+
+## Shipping it
+
+The pull request went through the seo-agent's usual single CI job. It ran ruff, mypy, the test suite (with a pgvector PostgreSQL), the eval smoke run and pip-audit. Because `Dockerfile`, `pyproject.toml` and `uv.lock` changed, it also built the image, checked its size (489,598,087 bytes compressed, baseline 480,937,987) and smoke-tested both ports. I merged it on 22 November at 08:43 UTC. The merge run built the image again from the merge commit and pushed `seo-agent:latest`. Nothing deploys it automatically: the site pulls `:latest` when the seo-agent restarts.
+
+On mk4 on 23 November, the seo-agent pod started at 02:40 UTC on the new image:
+
+- `/models/ms-marco-MiniLM-L6-v2` holds the 23,200,716-byte `model.onnx` and the tokenizer. `RAG_RERANKER_DIR` points at it, and `RAG_RERANKER_ENABLED` is `false`.
+- No reranker setting has been saved in Admin, and `seo_rag_rerank_total` has no samples. The reranker hasn't run once.
+- The two most recent live evaluations ran before this image, against the live index (68 articles, 3,179 chunks) without a reranker: Recall@3 88.1 % on 21 November and 84.5 % on 22 November. From now on, each run records a `reranker` field, so a jump in that number can be traced to the switch.
+
+## Is it worth switching on?
+
+Not as it stands, and that's a fine outcome for a feature that ships switched off. What I know and don't know:
+
+- **The crews' search and MCP search would gain the most**, because they have no floor: +4.7 points on the Mac, +3.5 on Linux ARM. They are also less sensitive to latency than a reader waiting for an answer.
+- **Ask the Blog gains +2.4 at today's floor.** Lowering the floor to 0.59 is a separate decision with its own trade-off, and it should be made on its own merits.
+- **CPU is the real blocker.** mk4's workers are Hetzner CAX21 nodes (4 Arm Neoverse-N1 cores each), and the seo-agent pod is limited to one CPU. Extra threads can run on other cores, but the pod only gets one CPU's worth of time per scheduling period, so the laptop's 4-thread number doesn't transfer. On the Linux ARM runner with one thread, the p95 was 2.9 seconds. I haven't measured mk4 itself, but I have no reason to expect it to be faster.
+- **Ways to make it cheaper**, each with a cost: rerank fewer candidates (6 instead of all took a third of the time on the laptop, for a quarter of the gain), give the pod more CPU, or try a smaller or distilled cross-encoder through the same export and verify script.
+- **If I switch it on**, I'll set the time limit and the at-once limit first, then the switch, and watch `seo_rag_rerank_seconds` and the outcome counts. Rolling back is the same switch, and it applies to the next search.
+
+## What PyTorch is for next
+
+The `train` group and the export and verify script were built for more than this one model. The weak spot the eval set found is paraphrases: questions that say the same thing in different words, where bge-small scores 68.4 % Recall@3. The natural next step is to fine-tune bge-small on question and section pairs from my own articles with sentence-transformers, in the same group, then export and verify it the same way. The one rule that would matter: training pairs must never come from `rag_eval.yaml`, or the eval would only measure memory. I haven't done that yet.
+
+## Key takeaways
+
+1. **Put PyTorch where models are made, not necessarily where they run.** A CPU service that already has ONNX Runtime can run a PyTorch-trained model without the framework. PyTorch then does what only it can do: export, check and later fine-tune.
+2. **Make the dependency boundary a test.** A dependency group that "nobody installs" stays that way only if something fails when someone does.
+3. **Verify an export through the production code path.** Comparing logits through the service's own tokenizer and runtime tests the whole chain, not just the graph.
+4. **Choose the quantised file by measurement.** Two int8 files of the same model disagreed with PyTorch on 2 and 6 of 95 questions. I shipped the one that measured better.
+5. **Evaluate in the order production runs, on hardware like production's.** Without the floor the reranker looked like +4.7 points; with it, +2.4. On the laptop it took 349 ms; on a Linux ARM core, 2.9 seconds.
+6. **Ship optional models behind a gate.** That means a live switch, a fallback for every failure, and limits the owner sets. Tie each concurrency slot to the computation, not to the request that is waiting for it.
