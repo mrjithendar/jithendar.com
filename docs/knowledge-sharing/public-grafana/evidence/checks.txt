@@ -1,0 +1,38 @@
+Read-only checks, 24 November 2026 (times UTC), from a laptop with kubectl on mk4 and from the public internet.
+No server addresses, tokens or Cloudflare ids are recorded here; keep it that way.
+
+Anonymous visitor (no credentials, kubectl port-forward to svc/grafana, so the gateway and Cloudflare are skipped)
+  GET  /grafana/api/access-control/user/permissions   28 actions; data source actions: datasources:query, datasources:read
+                                                       (no datasources:explore, no dashboards:write)
+  GET  /grafana/api/frontend/settings                  data sources: prometheus roboshop-prometheus, loki roboshop-loki (no Jaeger)
+  POST /grafana/api/ds/query  count(up), roboshop-prometheus   200 with a value: a Viewer can run a query no dashboard has
+  GET  /grafana/api/search                             16 dashboards: General 1 (Live infrastructure), Platform 9, MOKS 6
+  GET  /grafana/api/dashboards/home                    redirect to the dashboard live-infrastructure
+  Grafana log while org 2 still had another name:      "Failed to find organization" name=Public ... failed to get org by name: Public
+                                                       (every anonymous request was sent to /grafana/login until the rename)
+
+From the internet
+  curl https://jithendar.com/grafana/api/health        403, cf-mitigated: challenge   (curl cannot pass Cloudflare's Managed Challenge)
+  curl https://jithendar.com/                          200
+  curl --resolve jithendar.com:443:<load balancer> https://jithendar.com/grafana/api/health   403 (AuthorizationPolicy cloudflare-public)
+  curl --resolve jithendar.com:443:<load balancer> https://jithendar.com/                     200
+  Before the challenge rule existed: /grafana/, /grafana/login, /grafana/api/health, /grafana/api/search all answered
+  cache-control: no-store and cf-cache-status: BYPASS.
+
+Cluster
+  Grafana pod containers: grafana 13.2.4 (distroless), grafana-sc-dashboard (k8s-sidecar 2.14.1)
+  Namespace grafana-dashboards: 23 ConfigMaps labelled app.kubernetes.io/managed-by=mrjithendar-monitoring
+    (16 public, 7 private), first applied 12:56:23 by field manager mrjithendar-monitoring
+  Prometheus label names: 347; none holds visitor addresses, emails or user ids (route holds page route templates,
+    client_addr and addr hold addresses inside the cluster).
+
+Merges
+  k8s-deployments #30 (public read, origin lock) merged 10:37:41; vars commit with the org id applied 10:54
+  monitoring #1 (dashboards, deploy workflow) merged 12:49:26
+  k8s-deployments #31 (sidecar, providers, namespace, RBAC) merged 12:51:36
+
+Dashboard review (monitoring: scripts/audit_live.py, before the fixes, 6-hour window)
+  637 queries. First run: 378 "missing metric", almost all label names inside by (...) read as metric names (parser bug).
+  After fixing the parser: 469 OK, 87 empty, 80 reading a metric Prometheus has never stored, 1 error.
+  Real problems among them: RoboShop not deployed (namespace roboshop-ai empty), 4 panels on cache_bus_* metrics the
+  site no longer exports, one LogQL query over Loki's 500-series limit. Most "missing" counters had simply never fired.

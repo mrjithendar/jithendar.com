@@ -1,0 +1,254 @@
+---
+title: "A Public Grafana You Can Learn From: Live k3s Dashboards Behind a Cloudflare Check"
+slug: public-grafana-read-only-dashboards-k3s-cloudflare
+description: "The Grafana behind jithendar.com is open to everyone, read-only. How it's built: an anonymous org, Cloudflare's human check, a gateway rule that closes the side door, and dashboards deployed from one Git repository. Plus how to use it to learn PromQL and LogQL."
+seoTitle: "Public Read-Only Grafana: Anonymous Access, Cloudflare and Dashboards as Code"
+seoDescription: "How we opened a live Grafana to everyone on k3s: an anonymous Viewer org, a Cloudflare Managed Challenge, an Istio origin lock, dashboards from Git via the sidecar, and exercises for learners."
+author: jithendar-dharmapuri
+category: devops-sre
+tags: [Grafana, Observability, Prometheus, Loki, PromQL, Cloudflare, Istio, Kubernetes, Terraform, GitOps]
+contentType: tutorial
+status: review
+featuredImage:
+  src: /images/public-grafana/public-grafana-landing.png
+  alt: "The Live infrastructure dashboard in Grafana. A heading reads The live cluster behind jithendar.com, with a short text: real metrics, not a demo, mk4 is a small k3s cluster on Hetzner with four arm64 nodes, read-only, no sign-in, refreshed every minute, and links to the Kubernetes cluster, Istio mesh, Istio control plane, PostgreSQL, Valkey, GitHub Actions runners, embeddings, observability stack and MOKS dashboards. Below, a Cluster row shows 4 nodes, 14 CPU cores, 26.4 GiB of memory, 67 running pods, 5.2 % CPU used and 41.3 % memory used. A Traffic and telemetry row shows 3.48 requests per second, a 100 % success rate, a 222 ms p95 latency, a 99.5 % mTLS share, 72.5 thousand active series and 2 thousand samples per second. Two charts show CPU and memory by node over the last 24 hours."
+  width: 1600
+  height: 1045
+related:
+  - blog/logging-tracing-observability-jithendar-com
+  - blog/github-actions-runners-k3s-arc-terraform
+  - blog/argocd-k3s-hetzner-terraform-helm
+sources:
+  - title: "Configure anonymous access"
+    url: https://grafana.com/docs/grafana/latest/setup-grafana/configure-security/configure-authentication/grafana/#anonymous-authentication
+    publisher: Grafana Labs
+  - title: "Externally shared dashboards"
+    url: https://grafana.com/docs/grafana/latest/dashboards/share-dashboards-panels/shared-dashboards/
+    publisher: Grafana Labs
+  - title: "Provision Grafana"
+    url: https://grafana.com/docs/grafana/latest/administration/provisioning/
+    publisher: Grafana Labs
+  - title: "Inspect a panel"
+    url: https://grafana.com/docs/grafana/latest/panels-visualizations/panel-inspector/
+    publisher: Grafana Labs
+  - title: "Create a custom rule in the dashboard"
+    url: https://developers.cloudflare.com/waf/custom-rules/create-dashboard/
+    publisher: Cloudflare
+  - title: "Challenge pages"
+    url: https://developers.cloudflare.com/cloudflare-challenges/challenge-types/challenge-pages/
+    publisher: Cloudflare
+  - title: "Authorization policy (remoteIpBlocks)"
+    url: https://istio.io/latest/docs/reference/config/security/authorization-policy/
+    publisher: Istio
+  - title: "k8s-sidecar"
+    url: https://github.com/kiwigrid/k8s-sidecar
+    publisher: kiwigrid
+---
+
+<Todo>Drafted 2026-11-24 from mrjithendar/k8s-deployments (#30, #31), mrjithendar/monitoring (#1) and read-only checks the same day (details in docs/knowledge-sharing/public-grafana). Before publishing: (1) In a private window, open a panel's menu → Inspect → Query and Panel JSON and confirm they work for an anonymous visitor. The headless screenshots couldn't open the drawer from a URL, and the "Use it to learn" section relies on it. (2) Loki is in the public org (decided 24 November), so the site's request logs, with client addresses, can be queried by anyone who passes the check. The article mentions the general risk under "What a Viewer can query". Decide whether to say more, update the privacy page, drop client addresses from the logs in Alloy, or take Loki out of the public org, then update that section and the request-path figure. (3) Check in a browser whether an anonymous visitor can open the Metrics and Logs Drilldown apps. The anonymous role has plugins.app:access, and those apps would make browsing the logs very easy. If they open, say so under "What a Viewer can query", or turn them off for anonymous visitors. Also confirm that the Cloudflare rule you deployed matches the expression shown. (4) Link previews: crawlers can't pass the challenge (see "Linking to it" in k8s-deployments docs/grafana-public.md). Decide whether to let verified bots through before sharing the post. (5) Then set status to published with a publishedAt time.</Todo>
+
+Most Grafana you see in tutorials shows demo data. The Grafana behind this site is now open to everyone, read-only: the live metrics and logs of **mk4**, the small k3s cluster on Hetzner that runs jithendar.com and its side projects. Start here: [Live infrastructure](https://jithendar.com/grafana/d/live-infrastructure). Cloudflare asks you to confirm you're human once, and there's no sign-in.
+
+This post covers how it's built, what it exposes, what went wrong on the way, and how to use it to learn Grafana.
+
+The short version:
+
+- **Anonymous visitors are Viewers in their own Grafana org**, called Public. They see 16 dashboards: a landing page, 9 about the platform (Kubernetes, Istio, PostgreSQL, Valkey, GitHub Actions runners, embeddings, the monitoring stack) and 6 about MOKS, the SRE agent. The site's own 7 dashboards stay in the main org, behind the sign-in.
+- **A Viewer can query every data source in their org,** not only the queries on the dashboards. So the org, not the dashboard list, decides what's public: Prometheus and Loki, but not Jaeger.
+- **Cloudflare asks every visitor to prove they're human** (a WAF custom rule with a Managed Challenge). **The Istio gateway refuses `/grafana`** to anyone who doesn't come through Cloudflare, so the check can't be skipped by connecting to the server directly.
+- **Every dashboard lives in one Git repository,** [mrjithendar/monitoring](https://github.com/mrjithendar/monitoring). A workflow turns each one into a ConfigMap, and Grafana's sidecar loads it into the right org and folder within a minute, without a restart.
+- **Before going public, I ran all 637 dashboard queries against the live data.** That found a whole application that isn't running, four panels on metrics the site no longer exports, and a log query Loki refused.
+
+![The Platform · Istio mesh dashboard as an anonymous visitor sees it. The top bar shows the breadcrumb Dashboards › Platform › Platform · Istio mesh, a search box and a Sign in link. Under the Namespace and Workload filters, both set to All, a row of links reads Live infrastructure, Platform dashboards, jithendar.com and Kiali. The Overview row shows 3.55 requests per second, a 100 % success rate, a 222 ms p95 and a 610 ms p99 latency, a 99.5 % mTLS share, 11 workloads receiving traffic, 37 proxies scraped and 0 not scraped. Charts below show requests per second and success rate by workload.](/images/public-grafana/public-grafana-istio-mesh.png)
+
+## Use it to learn Grafana
+
+Reading other people's dashboards is one of the fastest ways to learn PromQL and LogQL. Here the data is real, the queries are written for production, and nothing you click can break anything. An anonymous visitor can:
+
+- **Open every public dashboard,** change its time range and refresh rate, and pick values in its variables (the dropdowns at the top).
+- **Inspect any panel.** In the panel menu, **Inspect → Query** shows the exact request Grafana sent and the response, and **Inspect → Data** shows the numbers behind the chart (with a CSV download). **Inspect → Panel JSON** shows the whole panel definition.
+- **Read the dashboard's source.** Each dashboard is one JSON file in [mrjithendar/monitoring](https://github.com/mrjithendar/monitoring), named after the uid at the end of its URL. `/grafana/d/platform-redis` is `dashboards/public/Platform/platform-redis.json`.
+
+A visitor can't use Explore, edit or save a dashboard, create alerts, or see the main org. I checked their permission list in Grafana itself. It has `datasources:query` and `datasources:read`, and nothing that writes.
+
+Five panels worth opening, each with one idea:
+
+**1. A rate of a counter, divided by capacity.** Platform · Kubernetes cluster → **CPU used**:
+
+```promql
+sum(rate(container_cpu_usage_seconds_total{job="kubernetes-cadvisor", container!="",container!="POD"}[5m]))
+  / sum(machine_cpu_cores{job="kubernetes-cadvisor"})
+```
+
+`container_cpu_usage_seconds_total` only ever grows, so `rate()` turns it into cores in use. `container!=""` drops cAdvisor's per-pod and per-node totals, which would otherwise count the same CPU twice. Every query names its scrape `job`, so series that another cluster writes into this Prometheus can never mix in.
+
+**2. A percentile from a histogram.** Platform · Istio mesh → **p95 latency**:
+
+```promql
+histogram_quantile(0.95, sum by (le) (rate(istio_request_duration_milliseconds_bucket{job="envoy-stats", reporter="destination", destination_workload_namespace=~"$namespace", destination_workload=~"$workload"}[5m])))
+```
+
+The `sum by (le)` keeps the bucket boundaries and adds up everything else. Drop `le` and `histogram_quantile` has nothing to work with. Change the Namespace dropdown and watch `$namespace` change in Inspect → Query.
+
+**3. How much happened in the time range on screen.** Platform · GitHub runners → **Jobs finished**:
+
+```promql
+round(sum(increase(gha_completed_jobs_total{job="arc", repository=~"$repository"}[$__range]))) or vector(0)
+```
+
+`$__range` is the dashboard's time range, so the number follows the time picker. `or vector(0)` shows 0 instead of "No data" when no job finished, because Prometheus only stores a labelled counter after it first goes up.
+
+**4. The first-sample problem.** Platform · Embeddings (bge-m3) → **Requests**. `increase()` only counts the change between samples it can see. A series that first appears inside the window starts at some value, and that value is lost, so a new caller's first requests would vanish. The query adds the first value of each new series to `increase()`:
+
+```promql
+increase(x[$__range])
+  + (min_over_time(x[$__range]) unless x offset $__range)
+```
+
+Here `x` stands for the Istio request counter with its selectors. Open the panel's Inspect → Query to see the full version, which also counts requests that never reached the pod.
+
+**5. Logs next to metrics.** MOKS · Overview → **Warnings and errors** is a Loki panel:
+
+```logql
+{namespace="$namespace", container=~"api|worker|crewai|executor|terminal|reranker|embedder", level=~"warn|error"}
+```
+
+`$namespace` is a constant variable (`moks-sre`), and the data source itself is a variable (`$logs`). That lets one JSON file work against any Loki. The rest of the dashboard is Prometheus.
+
+There's one more to look at: **Platform · Observability stack**. It's the monitoring monitoring itself: Prometheus series and samples per second, Loki lines received, and Alloy's dropped entries.
+
+## How it's built
+
+![Who reaches the public Grafana, and what each layer checks. A visitor's browser passes Cloudflare's WAF custom rule (host jithendar.com or www and path starting with /grafana, action Managed Challenge) once and gets a cf_clearance cookie; a script or crawler can't solve it and gets 403 with cf-mitigated: challenge. Cloudflare's cache passes Grafana's no-store responses through uncached. Passed requests reach the Hetzner load balancer, which sends the real peer with the PROXY protocol, then the Istio ingress gateway, where the policy cloudflare-public allows /grafana only from Cloudflare's address ranges (remoteIpBlocks) and answers 403 otherwise. A request sent straight to the server with Host jithendar.com skips Cloudflare and is refused there. Grafana 13.2 puts anonymous visitors in the org Public as Viewers; signing in leads to the main org; there is no Explore and no editing. Prometheus and Loki serve both orgs; Jaeger serves the main org only. A note: on 24 November 2026 the org Public holds 16 dashboards and the main org the 7 Jithendar.com dashboards; a Viewer may query every data source of its org, so the org decides what is public.](/images/public-grafana/public-grafana-request-path.svg)
+
+### Why not Grafana's shared dashboards
+
+Grafana has a feature made for this: "Share externally" (previously "public dashboards") gives one dashboard a public link and runs only the queries saved in it. That's safer than anonymous access, because visitors can't write their own queries. But its documented limits include "Variables and queries including variables are not supported", and 15 of our 24 dashboards use variables: every MOKS dashboard and most Platform ones. Rewriting them all without variables would have made them worse to read, so we used anonymous access instead and treated the data sources as the boundary.
+
+### An org of its own, read-only
+
+Anonymous access in Grafana is three settings, which Terraform adds only when `grafana_public` is set (`minikube-infrastructure/grafana.tf` in [k8s-deployments](https://github.com/mrjithendar/k8s-deployments)):
+
+```yaml
+# grafana.ini, as the Helm values render it
+auth.anonymous:
+  enabled: true
+  org_name: Public   # visitors land in this org…
+  org_role: Viewer   # …and can only read
+  hide_version: true
+```
+
+The org has to exist first. Grafana's file provisioning expects the `orgId` you give it to exist already, so I created it once with one API call (`POST /grafana/api/orgs`) and put the id it returned in the Terraform variables. The same Terraform gives that org its own copies of the data sources, with the same uids, so dashboards work in either org unchanged.
+
+### What a Viewer can query
+
+This is the part most "make Grafana public" guides skip. Grafana's `/api/ds/query` endpoint runs any query against any data source the user's org has. A Viewer doesn't need Explore for that: one request without credentials ran `count(up)` against Prometheus and got an answer. The anonymous permission list has 28 actions, all of them read, list or query. Hiding a dashboard hides a page, not the data behind it.
+
+So each data source is a yes-or-no decision:
+
+| Data source | Org Public | Why |
+|---|---|---|
+| Prometheus | yes | Infrastructure metrics. I checked all 347 label names on 24 November: no visitor addresses, emails or user ids. Addresses inside the cluster and node names are there. |
+| Loki | yes | The application logs, for the MOKS log panels. Look at what your own logs contain before you copy this: request logs usually carry client addresses. |
+| Jaeger | no | Only the site's private dashboards read traces. The public copy of Loki also drops its "View trace" links into Jaeger. |
+
+### The human check, at Cloudflare
+
+jithendar.com is already proxied by Cloudflare (the orange cloud). One WAF custom rule (Security rules → Create rule → Custom rules) puts a Managed Challenge in front of Grafana. The expression from our runbook:
+
+```text
+(http.host in {"jithendar.com" "www.jithendar.com"} and starts_with(http.request.uri.path, "/grafana"))
+→ Managed Challenge
+```
+
+A browser solves it once and gets a `cf_clearance` cookie. A script gets `403` with the header `cf-mitigated: challenge`. How long a pass lasts is the zone-wide **Challenge Passage** setting. When it runs out on an open dashboard, the background refreshes fail until the page is reloaded, because a challenge can't be solved inside an XHR request.
+
+Be clear about what this buys: it stops bots and casual scraping, not a person. Someone who passes once can script requests with their cookie until it expires. That's why the data source table above matters more than the challenge.
+
+Caching needed no work. Grafana sends `Cache-Control: no-store` on its pages and API responses, and Cloudflare passed them through as `BYPASS`, so a signed-in page can never be served to someone else.
+
+### Closing the side door at the gateway
+
+A Cloudflare rule only applies to traffic that passes through Cloudflare. Anyone who knows the server's address can send `Host: jithendar.com` straight to it. So the Istio ingress gateway refuses `/grafana` unless the connection comes from one of Cloudflare's published address ranges. Here it is from `deploy/minikube/istio/edge/templates/cloudflare-public.yaml`, rendered and shortened:
+
+```yaml
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: cloudflare-public
+spec:
+  action: DENY
+  rules:
+    - from:
+        - source:
+            notRemoteIpBlocks: [173.245.48.0/20, 103.21.244.0/22, …]   # Cloudflare's ranges
+      to:
+        - operation:
+            paths: ["/grafana", "/grafana/*"]
+```
+
+The detail that matters is `notRemoteIpBlocks`, not `notIpBlocks`. In Istio, `ipBlocks` is the direct peer, which here is always Hetzner's load balancer. `remoteIpBlocks` is the client address the load balancer passes on with the PROXY protocol. Four days earlier, a rule written with `ipBlocks` had refused every request Cloudflare sent, and every page of this site answered "RBAC: access denied" for a few minutes. The test for this chart now checks the field.
+
+Checked from outside: straight to the server, `/grafana/api/health` answers `403` while `/` still answers `200`.
+
+## Dashboards as code: one repository, one workflow
+
+Until 24 November the dashboards were spread over three repositories, and one set was copied by hand between two of them. They now all live in [mrjithendar/monitoring](https://github.com/mrjithendar/monitoring), and a dashboard's directory decides where it appears:
+
+| Path | Grafana |
+|---|---|
+| `dashboards/public/live-infrastructure.json` | org Public, the landing page |
+| `dashboards/public/Platform/` (9), `dashboards/public/MOKS/` (6) | org Public, one folder each |
+| `dashboards/private/Jithendar.com/` (7) | main org, signed in only |
+| `dashboards/inactive/RoboShop/` | not deployed |
+
+![How a dashboard in Git becomes a dashboard in Grafana. In the repository mrjithendar/monitoring, dashboards/ holds one file per dashboard named after its uid: public/live-infrastructure.json, public/Platform (9), public/MOKS (6), private/Jithendar.com (7) and inactive/RoboShop, which isn't deployed. check.yml runs on every pull request (uids, grid, data sources per org, links, and tests against k8s-deployments); after a merge, deploy.yml runs as the ServiceAccount github-dashboards-deployer and applies one ConfigMap per dashboard, deleting those removed from Git. In the namespace grafana-dashboards each ConfigMap, dashboard-uid, carries the label grafana_dashboard=1 and an annotation grafana_folder such as public/Platform or private/Jithendar.com; the deploy ServiceAccount may manage ConfigMaps there and nothing else, and the Role grafana-sidecar lets Grafana get, list and watch ConfigMaps there only. In the Grafana pod, k8s-sidecar watches them and writes each to /tmp/dashboards/annotation/uid.json. The provider public reads the public directory into the org Public, and the provider private reads the private directory into the main org, each with folders from directories. A note: the providers poll every 30 seconds, so a merged change shows within a minute, and the Grafana chart's own RBAC is off because, with a sidecar enabled, its ClusterRole would let Grafana read every Secret and ConfigMap in the cluster.](/images/public-grafana/public-grafana-dashboards-as-code.svg)
+
+The pieces:
+
+- **Each dashboard becomes one ConfigMap** in its own namespace, with the label `grafana_dashboard=1` and the annotation `grafana_folder: public/Platform` (or `private/Jithendar.com`). `deploy.yml` applies them server-side, which avoids storing every dashboard twice in a `last-applied` annotation. It then deletes the ConfigMaps whose file was removed from Git.
+- **Grafana's dashboard sidecar** ([k8s-sidecar](https://github.com/kiwigrid/k8s-sidecar), part of the Grafana Helm chart) watches that namespace and writes each dashboard to `/tmp/dashboards/<annotation>/<uid>.json`.
+- **Two file providers** read those directories: `public` into the org Public and `private` into the main org, with `foldersFromFilesStructure`, so each subdirectory becomes a Grafana folder.
+- **The deploy's identity can do almost nothing.** The workflow's ServiceAccount may only manage ConfigMaps in that namespace. Its token Secret is created by a one-time setup script, not by Terraform, so the token never lands in the Terraform state.
+- **Grafana itself gets less than the chart would give it.** With a sidecar on, the chart's default ClusterRole would let Grafana read every Secret and ConfigMap in the cluster, which is a poor fit for a Grafana that anyone can reach. The chart's RBAC is switched off, and a Role allows `get`, `list` and `watch` on ConfigMaps in that one namespace.
+
+The repository's checks run on every pull request:
+- uid equals file name;
+- no overlapping panels;
+- each dashboard uses only the data sources its org has, so no Jaeger in public;
+- every variable it uses is defined;
+- no link points at a dashboard in the other org.
+
+The workflow also checks out k8s-deployments next to it, to confirm that Prometheus's scrape filters keep every Istio and GitHub runner series the dashboards read.
+
+### Reviewing 24 dashboards against live data
+
+Static checks can't tell whether a panel shows anything. So the repository has `scripts/audit_live.py`: over port-forwards to Prometheus and Loki, it runs every query of every dashboard over the last six hours. It reports the queries that error, the ones reading a metric Prometheus has never stored, and the ones that return nothing.
+
+The first run said 378 of 637 queries read missing metrics. Almost all were label names inside `by (...)` that my parser had taken for metric names, which is a reminder to check the checker. After that fix: 469 OK, 87 empty, 80 reading a metric that doesn't exist, and 1 error. Most of the "missing" ones are counters that have never fired: no failed injections, no rejected jobs. The real problems were:
+
+- **RoboShop isn't running on mk4.** Its namespace has no workloads, so its services and logs dashboards could show nothing. They're kept in `inactive/` and not deployed.
+- **Two "RoboShop" dashboards weren't about RoboShop.** They were cluster-wide: CPU, memory and pods for every namespace, and the health of Prometheus, Loki and Alloy. They became **Platform · Kubernetes cluster** and **Platform · Observability stack**, with every query pinned to its scrape job and the old "Minikube" wording gone.
+- **Four panels read `cache_bus_*` metrics the site no longer exports.** Its cache bus reports problems in its logs now. The panels are removed.
+- **One log query hit Loki's limit of 500 series per query.** It counted requests by route, and URL scanners' 404s alone produce more distinct routes than that. It now counts answered requests only (`status < 400 | keep route`).
+
+Every public dashboard also got the same header: read-only, one crosshair across all panels, a folder tag, and links to the landing page, its folder and this site.
+
+## What went wrong on the way
+
+- **The org name has to match exactly.** Grafana finds the anonymous org by name. Ours was created with a slightly different name, so every visit was sent to the login page. The log said `failed to get org by name: Public`, and renaming the org fixed it at once.
+- **"No dashboards" on the home page.** Grafana's default home lists only starred and recently viewed dashboards, and an anonymous visitor has neither. The fix was a landing page set as the default home (`default_home_dashboard_path`).
+- **Two provisioning files with one name.** The Grafana chart stores data sources and dashboard providers in one ConfigMap, keyed by file name. Both of my new files were called `public.yaml`, so one silently replaced the other. Rendering the real chart before merging caught it.
+- **The admin password in the Secret wasn't Grafana's.** The chart's admin Secret is used only when Grafana first creates its database, and the live password had since changed. The sidecar's "reload dashboards" call needs that password, so it's off. The providers poll every 30 seconds instead.
+
+## Linking to it, and copying it
+
+The dashboard URLs are meant to stay put. Each uid is a file name in the repository, and changing it would break links in posts like this one. Link the landing page, [jithendar.com/grafana/d/live-infrastructure](https://jithendar.com/grafana/d/live-infrastructure), or any dashboard's `/grafana/d/<uid>`.
+
+To build the same thing, the parts are all public:
+- the Terraform and Helm values in [k8s-deployments](https://github.com/mrjithendar/k8s-deployments): `minikube-infrastructure/grafana.tf`, `deploy/minikube/observability/grafana/values.yaml`, and the runbook `docs/grafana-public.md`;
+- the dashboards, checks and deploy workflow in [monitoring](https://github.com/mrjithendar/monitoring).
+
+Two things to decide before you start:
+- which data sources you're willing to make fully public;
+- whether a human check is enough, or the dashboards need a real login.

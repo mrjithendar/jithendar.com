@@ -1,0 +1,141 @@
+<mxfile host="app.diagrams.net" agent="lancedb-r2/build_diagrams.py" version="32.6.10" type="device">
+  <diagram id="public-grafana-request-path" name="public-grafana-request-path">
+    <mxGraphModel dx="1000" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="980" pageHeight="545" background="#ffffff" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="page" value="" vertex="1" parent="1" style="rounded=0;fillColor=#ffffff;strokeColor=none;locked=1;">
+          <mxGeometry x="0" y="0" width="980" height="545" as="geometry" />
+        </mxCell>
+        <mxCell id="z-out" value="Internet" style="rounded=1;arcSize=3;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=left;spacingRight=10;verticalAlign=top;spacingLeft=10;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontStyle=1;fontColor=#475569;whiteSpace=wrap;html=1;container=0;" parent="1" vertex="1">
+          <mxGeometry x="20" y="50" width="205" height="375" as="geometry" />
+        </mxCell>
+        <mxCell id="z-cf" value="Cloudflare (proxied DNS)" style="rounded=1;arcSize=3;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#94a3b8;align=left;spacingRight=10;verticalAlign=top;spacingLeft=10;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontStyle=1;fontColor=#475569;whiteSpace=wrap;html=1;container=0;" parent="1" vertex="1">
+          <mxGeometry x="240" y="50" width="220" height="375" as="geometry" />
+        </mxCell>
+        <mxCell id="z-mk4" value="mk4: k3s on Hetzner, 4 arm64 nodes" style="rounded=1;arcSize=3;dashed=1;dashPattern=6 4;fillColor=#f8fafc;strokeColor=#1d4ed8;align=left;spacingRight=10;verticalAlign=top;spacingLeft=10;spacingTop=4;spacingBottom=4;fontFamily=Helvetica;fontSize=12;fontStyle=1;fontColor=#1d4ed8;whiteSpace=wrap;html=1;container=0;" parent="1" vertex="1">
+          <mxGeometry x="480" y="50" width="480" height="375" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#475569;strokeWidth=1.5;endArrow=block;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontColor=#0f172a;labelBackgroundColor=#ffffff;jumpStyle=gap;jumpSize=6;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.3;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" edge="1" source="visitor" target="rule">
+          <mxGeometry x="0.0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="403" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#b91c1c;strokeWidth=1.5;endArrow=block;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontColor=#0f172a;labelBackgroundColor=#ffffff;jumpStyle=gap;jumpSize=6;dashed=1;dashPattern=3 3;exitX=1;exitY=0.3;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.75;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" edge="1" source="script" target="rule">
+          <mxGeometry x="0.0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="passed" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#475569;strokeWidth=1.5;endArrow=block;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontColor=#0f172a;labelBackgroundColor=#ffffff;jumpStyle=gap;jumpSize=6;exitX=1;exitY=0.3;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" edge="1" source="rule" target="lb">
+          <mxGeometry x="0.0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="skips Cloudflare" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#b91c1c;strokeWidth=1.5;endArrow=block;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontColor=#0f172a;labelBackgroundColor=#ffffff;jumpStyle=gap;jumpSize=6;dashed=1;dashPattern=3 3;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.85;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" edge="1" source="direct" target="gw">
+          <mxGeometry x="0.0" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="472" y="346" />
+              <mxPoint x="472" y="280" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#475569;strokeWidth=1.5;endArrow=block;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontColor=#0f172a;labelBackgroundColor=#ffffff;jumpStyle=gap;jumpSize=6;exitX=0.5;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" edge="1" source="lb" target="gw">
+          <mxGeometry x="0.0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#475569;strokeWidth=1.5;endArrow=block;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontColor=#0f172a;labelBackgroundColor=#ffffff;jumpStyle=gap;jumpSize=6;exitX=1;exitY=0.3;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.7;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" edge="1" source="gw" target="grafana">
+          <mxGeometry x="0.0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#475569;strokeWidth=1.5;endArrow=block;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontColor=#0f172a;labelBackgroundColor=#ffffff;jumpStyle=gap;jumpSize=6;exitX=0.23;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" edge="1" source="grafana" target="prom">
+          <mxGeometry x="0.0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#475569;strokeWidth=1.5;endArrow=block;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontColor=#0f172a;labelBackgroundColor=#ffffff;jumpStyle=gap;jumpSize=6;exitX=0.77;exitY=1;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" edge="1" source="grafana" target="loki">
+          <mxGeometry x="0.0" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="heading" value="&lt;b&gt;Who reaches the public Grafana, and what each layer checks&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontFamily=Helvetica;fontSize=15;fontColor=#0f172a;spacing=0;" parent="1" vertex="1">
+          <mxGeometry x="20" y="12" width="940" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="visitor" value="&lt;b style=&quot;font-size:13px&quot;&gt;Visitor&amp;#x27;s browser&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;passes the check once:&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;cf_clearance cookie&lt;/span&gt;" style="whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#334155;strokeWidth=1.5;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;spacing=4;spacingLeft=2;rounded=1;arcSize=10;" parent="1" vertex="1">
+          <mxGeometry x="30" y="85" width="186" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="script" value="&lt;b style=&quot;font-size:13px&quot;&gt;Script or crawler&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;can&amp;#x27;t solve the check:&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;403, cf-mitigated&lt;/span&gt;" style="whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#334155;strokeWidth=1.5;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;spacing=4;spacingLeft=2;rounded=1;arcSize=10;" parent="1" vertex="1">
+          <mxGeometry x="30" y="190" width="186" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="direct" value="&lt;b style=&quot;font-size:13px&quot;&gt;Direct to the server&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;Host: jithendar.com,&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;skipping Cloudflare:&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;403 at the gateway&lt;/span&gt;" style="whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#64748b;strokeWidth=1.5;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;spacing=4;spacingLeft=2;rounded=1;arcSize=10;" parent="1" vertex="1">
+          <mxGeometry x="30" y="300" width="186" height="92" as="geometry" />
+        </mxCell>
+        <mxCell id="rule" value="&lt;b style=&quot;font-size:13px&quot;&gt;WAF custom rule&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;host jithendar.com or www&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;and path starts with&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;/grafana&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;action: Managed Challenge&lt;/span&gt;" style="whiteSpace=wrap;html=1;fillColor=#fef2f2;strokeColor=#b91c1c;strokeWidth=1.5;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;spacing=4;spacingLeft=2;rounded=1;arcSize=10;" parent="1" vertex="1">
+          <mxGeometry x="255" y="85" width="190" height="124" as="geometry" />
+        </mxCell>
+        <mxCell id="cache" value="&lt;b style=&quot;font-size:13px&quot;&gt;Cache&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;Grafana sends no-store:&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;BYPASS, never cached&lt;/span&gt;" style="whiteSpace=wrap;html=1;fillColor=#eef2ff;strokeColor=#4338ca;strokeWidth=1.5;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;spacing=4;spacingLeft=2;rounded=1;arcSize=10;" parent="1" vertex="1">
+          <mxGeometry x="255" y="250" width="190" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="lb" value="&lt;b style=&quot;font-size:13px&quot;&gt;Hetzner load balancer&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;PROXY protocol: real peer&lt;/span&gt;" style="whiteSpace=wrap;html=1;fillColor=#eef2ff;strokeColor=#4338ca;strokeWidth=1.5;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;spacing=4;spacingLeft=2;rounded=1;arcSize=10;" parent="1" vertex="1">
+          <mxGeometry x="495" y="85" width="200" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="gw" value="&lt;b style=&quot;font-size:13px&quot;&gt;Istio ingress gateway&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;cloudflare-public: /grafana&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;only from Cloudflare&amp;#x27;s&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;ranges (remoteIpBlocks)&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;else 403&lt;/span&gt;" style="whiteSpace=wrap;html=1;fillColor=#fef2f2;strokeColor=#b91c1c;strokeWidth=1.5;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;spacing=4;spacingLeft=2;rounded=1;arcSize=10;" parent="1" vertex="1">
+          <mxGeometry x="495" y="175" width="200" height="124" as="geometry" />
+        </mxCell>
+        <mxCell id="grafana" value="&lt;b style=&quot;font-size:13px&quot;&gt;Grafana 13.2&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;anonymous: org Public,&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;role Viewer&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;Sign in: main org&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;no Explore, no editing&lt;/span&gt;" style="whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#1d4ed8;strokeWidth=1.5;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;spacing=4;spacingLeft=2;rounded=1;arcSize=10;" parent="1" vertex="1">
+          <mxGeometry x="725" y="85" width="220" height="124" as="geometry" />
+        </mxCell>
+        <mxCell id="prom" value="&lt;b style=&quot;font-size:13px&quot;&gt;Prometheus&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;both orgs&lt;/span&gt;" style="whiteSpace=wrap;html=1;fillColor=#fffbeb;strokeColor=#b45309;strokeWidth=1.5;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;spacing=4;spacingLeft=2;shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=9;spacingTop=10;" parent="1" vertex="1">
+          <mxGeometry x="725" y="240" width="115" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="loki" value="&lt;b style=&quot;font-size:13px&quot;&gt;Loki&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;both orgs&lt;/span&gt;" style="whiteSpace=wrap;html=1;fillColor=#fffbeb;strokeColor=#b45309;strokeWidth=1.5;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;spacing=4;spacingLeft=2;shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=9;spacingTop=10;" parent="1" vertex="1">
+          <mxGeometry x="850" y="240" width="95" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="jaeger" value="&lt;b style=&quot;font-size:13px&quot;&gt;Jaeger&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:12px;color:#334155&quot;&gt;main org only&lt;/span&gt;" style="whiteSpace=wrap;html=1;fillColor=#fffbeb;strokeColor=#b45309;strokeWidth=1.5;fontColor=#0f172a;fontFamily=Helvetica;fontSize=12;align=center;verticalAlign=middle;spacing=4;spacingLeft=2;shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=9;spacingTop=10;" parent="1" vertex="1">
+          <mxGeometry x="725" y="335" width="220" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="note" value="&lt;b&gt;Live on 24 November 2026:&lt;/b&gt; the org Public holds 16 dashboards (the landing page, 9 Platform, 6 MOKS); the 7 Jithendar.com dashboards stay in the main org. A Viewer may query every data source of its org, not only the dashboards' queries, so the org decides what is public." style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;spacing=0;" parent="1" vertex="1">
+          <mxGeometry x="20" y="435" width="940" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-title" value="&lt;b&gt;Legend&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontFamily=Helvetica;fontSize=12;fontColor=#0f172a;spacing=0;" parent="1" vertex="1">
+          <mxGeometry x="20" y="487" width="80" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="lg0" value="" style="rounded=1;arcSize=20;fillColor=#f8fafc;strokeColor=#334155;strokeWidth=1.5;" parent="1" vertex="1">
+          <mxGeometry x="90" y="489" width="22" height="14" as="geometry" />
+        </mxCell>
+        <mxCell id="lgt0" value="Callers" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontFamily=Helvetica;fontSize=12;fontColor=#334155;spacing=0;" parent="1" vertex="1">
+          <mxGeometry x="120" y="488" width="51.040000000000006" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="lg1" value="" style="rounded=1;arcSize=20;fillColor=#eef2ff;strokeColor=#4338ca;strokeWidth=1.5;" parent="1" vertex="1">
+          <mxGeometry x="183.04000000000002" y="489" width="22" height="14" as="geometry" />
+        </mxCell>
+        <mxCell id="lgt1" value="Edge" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontFamily=Helvetica;fontSize=12;fontColor=#334155;spacing=0;" parent="1" vertex="1">
+          <mxGeometry x="213.04000000000002" y="488" width="30.880000000000003" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="lg2" value="" style="rounded=1;arcSize=20;fillColor=#eff6ff;strokeColor=#1d4ed8;strokeWidth=1.5;" parent="1" vertex="1">
+          <mxGeometry x="255.92000000000002" y="489" width="22" height="14" as="geometry" />
+        </mxCell>
+        <mxCell id="lgt2" value="Grafana" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontFamily=Helvetica;fontSize=12;fontColor=#334155;spacing=0;" parent="1" vertex="1">
+          <mxGeometry x="285.92" y="488" width="51.040000000000006" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="lg3" value="" style="rounded=1;arcSize=20;fillColor=#fffbeb;strokeColor=#b45309;strokeWidth=1.5;" parent="1" vertex="1">
+          <mxGeometry x="348.96000000000004" y="489" width="22" height="14" as="geometry" />
+        </mxCell>
+        <mxCell id="lgt3" value="Data sources" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontFamily=Helvetica;fontSize=12;fontColor=#334155;spacing=0;" parent="1" vertex="1">
+          <mxGeometry x="378.96000000000004" y="488" width="84.64000000000001" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="lg4" value="" style="rounded=1;arcSize=20;fillColor=#f1f5f9;strokeColor=#64748b;strokeWidth=1.5;" parent="1" vertex="1">
+          <mxGeometry x="475.6" y="489" width="22" height="14" as="geometry" />
+        </mxCell>
+        <mxCell id="lgt4" value="Bypass attempt" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontFamily=Helvetica;fontSize=12;fontColor=#334155;spacing=0;" parent="1" vertex="1">
+          <mxGeometry x="505.6" y="488" width="98.08000000000001" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="lg5" value="" style="rounded=1;arcSize=20;fillColor=#fef2f2;strokeColor=#b91c1c;strokeWidth=1.5;" parent="1" vertex="1">
+          <mxGeometry x="615.6800000000001" y="489" width="22" height="14" as="geometry" />
+        </mxCell>
+        <mxCell id="lgt5" value="Checks" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontFamily=Helvetica;fontSize=12;fontColor=#334155;spacing=0;" parent="1" vertex="1">
+          <mxGeometry x="645.6800000000001" y="488" width="44.32000000000001" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="lg6" value="" style="shape=line;strokeColor=#475569;strokeWidth=1.5;" parent="1" vertex="1">
+          <mxGeometry x="702.0000000000001" y="491" width="24" height="10" as="geometry" />
+        </mxCell>
+        <mxCell id="lgt6" value="Request and response" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontFamily=Helvetica;fontSize=12;fontColor=#334155;spacing=0;" parent="1" vertex="1">
+          <mxGeometry x="732.0000000000001" y="488" width="138.4" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="lg7" value="" style="shape=line;strokeColor=#b91c1c;strokeWidth=1.5;dashed=1;dashPattern=3 3;" parent="1" vertex="1">
+          <mxGeometry x="90" y="515" width="24" height="10" as="geometry" />
+        </mxCell>
+        <mxCell id="lgt7" value="Refused (403)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontFamily=Helvetica;fontSize=12;fontColor=#334155;spacing=0;" parent="1" vertex="1">
+          <mxGeometry x="120" y="512" width="91.36000000000001" height="18" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
