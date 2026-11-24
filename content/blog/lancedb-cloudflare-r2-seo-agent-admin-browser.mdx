@@ -1,0 +1,286 @@
+---
+title: "LanceDB on Cloudflare R2: A Browsable Copy of the Article Index That Nothing Searches Yet"
+slug: lancedb-cloudflare-r2-seo-agent-admin-browser
+description: "What the LanceDB page in jithendar.com's admin shows: a copy of the pgvector article index on Cloudflare R2, one writer, one-row edits, and how the copy drifts."
+seoTitle: "LanceDB on Cloudflare R2: Embedded Vector Store, One Writer, Safe Admin Edits"
+seoDescription: "How the jithendar.com seo-agent keeps LanceDB on Cloudflare R2 as a copy of its pgvector index, edits one row safely, and what drift and latency showed."
+author: jithendar-dharmapuri
+category: ai-engineering
+tags: [LanceDB, Vector Database, Cloudflare R2, pgvector, RAG, Embeddings, Python, AI Engineering]
+contentType: tutorial
+status: review
+featuredImage:
+  src: /images/lancedb-r2/lancedb-r2-architecture.png
+  alt: "Three columns. The web app holds the /admin/lancedb page and Admin → Storage, which sends the bucket, endpoint and keys over the internal port. The seo-agent, one replica and the only writer, holds lance_admin.py (the browser API), lance_index.py (the copy) and Ask the Blog with the crews. The data column holds Cloudflare R2 with the LanceDB table article_chunks, and PostgreSQL with pgvector, the source of truth with 3,147 chunks from 67 articles. The browser API reads pages and edits single rows on R2. The copy reads chunks and vectors from Postgres and overwrites the R2 table. Ask the Blog and the crews run vector search on Postgres only. A note says that on 24 November 2026 the table had 3,179 rows from 68 articles, 384-dimension bge-small vectors, one 6.6 MB data file, version 2 and no vector index, and that nothing searches it yet."
+  width: 1922
+  height: 1022
+related:
+  - blog/switch-embedding-model-bge-m3-seo-agent-jithendar-com
+  - blog/rag-evaluation-ask-the-blog-jithendar-com
+  - blog/crewai-flows-crews-jithendar-com-seo-agent
+sources:
+  - title: "LanceDB Embedded"
+    url: https://docs.lancedb.com/oss/v0-41-0/basics/lancedb-embedded.md
+    publisher: LanceDB
+  - title: "Storage"
+    url: https://docs.lancedb.com/storage
+    publisher: LanceDB
+  - title: "Consistency and concurrency guarantees"
+    url: https://docs.lancedb.com/oss/v0-41-0/basics/guarantees.md
+    publisher: LanceDB
+  - title: "Cleaning up old versions"
+    url: https://docs.lancedb.com/oss/v0-41-0/maintenance/cleanup.md
+    publisher: LanceDB
+  - title: "Vector indexes"
+    url: https://docs.lancedb.com/oss/v0-41-0/indexing/vector-index.md
+    publisher: LanceDB
+---
+
+<Todo>Drafted 2026-11-24 from mrjithendar/moks-seo-agent 88bf4ea, mrjithendar/moks-cms 0336cc2 and read-only checks on mk4 the same day (details in docs/knowledge-sharing/lancedb-r2). Before publishing: (1) "How the copy drifted" reports two gaps: deleting an article never updates the copy, and publishing by hand in Admin → Posts never reindexes. Decide whether to fix either one, then update that section and the drift figure. (2) After the weekly reindex on Sunday 29 November (03:17 UTC), check that both stores match again, and update the counts in the text and the figures. (3) The page's own description still says "CrewAI memory and the article index", but memory isn't built: change the page or keep the note under "What the page shows". (4) The latency numbers come from six queries in one session. Measure again if a LanceDB retriever is planned. (5) Then set status to published with a publishedAt time.</Todo>
+
+The admin of jithendar.com has a page at `/admin/lancedb`. It shows one table, 3,179 rows, and a location that starts with `s3://`. This post explains what that data is, why it lives in LanceDB on Cloudflare R2 rather than only in PostgreSQL, how the page can edit it without doing damage, and what I found when I checked it against the live system on 24 November 2026.
+
+The short version:
+
+- LanceDB holds one table, `article_chunks`. It's a **copy** of the pgvector index that Ask the Blog searches, with the same vectors, so nothing is embedded twice.
+- **Nothing searches the copy yet.** Ask the Blog and the crews still read pgvector. CrewAI memory, the other half of what the page's description promises, hasn't been built.
+- LanceDB has no server, so **only the seo-agent opens it**. The admin page goes through the agent's API, changes one row at a time, and can't touch vectors.
+- It cost **105 MiB** of image size.
+- In its first week the copy **drifted**. It still holds 32 chunks of a deleted article, and neither store has the two articles I published by hand on 23 November.
+- A vector query against the copy on R2 took about **0.7 seconds**. pgvector answers the same query in about **3.5 ms**.
+
+## What the page shows
+
+![The LanceDB page in the jithendar.com admin. The heading reads LanceDB, with the description: The SEO agent's vector store: CrewAI memory and the article index. Edits change one row at a time; vectors are read-only, and every change is a new table version and an audit log entry. Three cards show Tables 1, Rows 3,179 and Location s3://jithendar/jithendar/seo-agent/lancedb. Below, the table article_chunks shows 3,179 rows, version 2, page 1 of 128, with a Key selector set to id and buttons Use, Next and Close. The rows list id, article_id, chunk_index, title and path; the first eight are chunks 0 to 7 of 15 Essential Kubernetes Tools for DevOps, each with an Open link.](/images/lancedb-r2/lancedb-r2-admin-page.png)
+
+From top to bottom:
+
+- **Tables** and **Rows** add up every table the agent can see. There is one.
+- **Location** is the LanceDB URI: the media bucket, then the prefix `jithendar/seo-agent/lancedb`. The agent strips any credentials from the URI before sending it, and the keys themselves are never part of it.
+- **`article_chunks · 3,179 rows · version 2 · page 1 of 128`**: LanceDB numbers every write as a new table version, and the page reads 25 rows at a time (3,179 ÷ 25, rounded up, is 128).
+- **Key** picks the column used to find a single row. The page offers `id` when the table has one, and `Open` loads that row in full, with forms to edit or delete it.
+
+The columns are those of the article index in Postgres, plus the vector:
+
+| Column | What it holds |
+|---|---|
+| `id` | `<article_id>:<chunk_index>`, unique, so it works as the key |
+| `article_id`, `chunk_index` | which article, and the chunk's position in it |
+| `title`, `path`, `category` | the article as readers see it |
+| `heading_path`, `anchor` | the section the chunk sits in, and its link anchor |
+| `content`, `content_hash` | the chunk's text (about 700 characters on average) and its hash |
+| `model` | the embedding model: `onnx:bge-small-en-v1.5` for every row today |
+| `updated_at` | when Postgres last wrote the chunk |
+| `vector` | `fixed_size_list<float>[384]`, the embedding, shown cut short and read-only |
+
+One thing on the page is ahead of the code. The description says "CrewAI memory and the article index", but only the article index exists. The memory half is still a plan (see [Where it stands](#where-it-stands)).
+
+## Why LanceDB came back
+
+CrewAI lists LanceDB as a dependency because its memory feature stores records there. When I built the [flows and crews](/blog/crewai-flows-crews-jithendar-com-seo-agent) behind this site, nothing used memory, so I removed LanceDB with a uv override that never matches any platform (`lancedb; sys_platform == 'never'`), and a test checked it stayed out. That kept about 290 MB out of the virtual environment.
+
+On 17 November I reversed that. I wanted the agent's vector data on R2 and manageable from the admin, so that I can see, edit and delete it. When asked what LanceDB should hold, I chose two things: **CrewAI's memory** and **the article index**. That broke two earlier rules on purpose: "LanceDB is not installed" and "one database: PostgreSQL holds the vectors".
+
+The cost was measured when the change was made, and `pyproject.toml` still says so:
+
+```toml
+# pyproject.toml (moks-seo-agent, excerpt)
+# LanceDB (+ pyarrow, +105 MiB of image as stored) is installed since D-91 (owner decision 2026-11-17): CrewAI's memory and the article
+# index are to be stored in LanceDB on Cloudflare R2. Until D-91 it was overridden away (D-47), because nothing used it.
+```
+
+The image went from 363.8 to 468.9 MiB as stored (+28.9%), with `lancedb` 0.40.0 and `pyarrow` 26.0.0. Installing it changed no behaviour: crews are still built with `memory=False`, and flows still skip CrewAI's automatic memory.
+
+The work then landed in three steps, each its own pull request (the agent still lived in the moks-cms repository then):
+
+| Date (2026) | Change | What it did |
+|---|---|---|
+| 17 Nov | D-91, moks-cms #121 | Installed `lancedb` and `pyarrow`. Nothing used them yet. |
+| 18 Nov | D-92, moks-cms #122 | Connected to R2 using the keys from Admin → Storage, and added `/admin/lancedb`. No tables yet. |
+| 18 Nov | D-93, moks-cms #124 | Copied the article index into the table `article_chunks` after each reindex. |
+
+## No server, so one writer
+
+LanceDB's documentation describes the open-source version as "an open-source, embedded retrieval library": "the library runs inside your process. There is no server to deploy, configure, or keep available." On this site, the "database" is a folder of Lance files under an R2 prefix, plus whichever process has the library loaded.
+
+That gave the design its main rule: **only the seo-agent opens LanceDB.** The agent runs as one replica with the `Recreate` strategy, so even a rollout never has two pods writing at once. The web app never connects to R2 for LanceDB. The admin page calls the agent's internal API on its ClusterIP port, with the bearer token `SEO_AGENT_TOKEN`.
+
+![The same figure as the cover: the web app's /admin/lancedb page and Admin → Storage on the left, the seo-agent with lance_admin.py, lance_index.py and Ask the Blog in the middle, Cloudflare R2 and PostgreSQL on the right. The admin page calls lance_admin.py; Admin → Storage sends the URI and keys to it; lance_admin.py reads pages and edits single rows on R2; lance_index.py reads chunks and vectors from Postgres and overwrites the R2 table; Ask the Blog and the crews run vector search on Postgres only.](/images/lancedb-r2/lancedb-r2-architecture.svg)
+
+The documentation gives three reasons a single writer matters:
+
+- Writes use optimistic concurrency. A writer checks its change against commits made in the meantime, and "conflicts may be retried or returned as errors. Applications must handle failed writes."
+- Cleaning up old versions should only happen "when you can guarantee **no other process is writing to the table**", and the copy cleans up after every write (more on that below).
+- "By default, an Embedded table handle does not automatically pick up another process's writes."
+
+With one writer, none of these come up. The cost is that the agent becomes the only way in, for the admin page too.
+
+### Where the keys come from
+
+There are no LanceDB-specific secrets. The media bucket's settings live in **Admin → Storage**, and the agent asks the web app for them over the internal port the first time it needs LanceDB:
+
+```python
+# app/lance_admin.py (excerpt)
+async def ensure(self) -> None:
+    """Connect to the storage Admin → Storage describes, once it exists (checked again at most once a minute)."""
+    if self.uri or self.resolve is None or time.monotonic() - self._asked_at < RETRY_S:
+        return
+    self._asked_at = time.monotonic()
+    try:
+        cfg = await self.resolve()
+    except Exception as e:  # the web app is down or refuses: stay unconfigured, say why in the log
+        log.warning("lancedb storage unavailable", extra={"event": "lancedb_storage_unavailable", "error": type(e).__name__})
+        return
+    if not cfg.get("configured") or not str(cfg.get("uri", "")).startswith("s3://"):
+        return
+    self.uri = str(cfg["uri"])
+    opts = {"endpoint": cfg.get("endpoint"), "aws_access_key_id": cfg.get("accessKeyId"), "aws_secret_access_key": cfg.get("secretAccessKey"), "region": cfg.get("region") or "auto"}
+    self.storage_options = {k: str(v) for k, v in opts.items() if v}
+```
+
+The web app answers with `s3://<media bucket>/jithendar/seo-agent/lancedb`, the endpoint, the keys and the region, or with `{configured: false}` until storage is set up. LanceDB's storage docs say S3-compatible stores "also need `endpoint` and `region`". For R2 that means the account's R2 endpoint and the region `auto`. For Amazon S3 without a custom endpoint, the web app sends an empty endpoint and the client finds AWS from the region. On a laptop, `LANCEDB_URI` points the agent at a local folder instead.
+
+This has a trade-off I accepted when I chose it: the agent now holds the media bucket's keys, not keys limited to its own prefix.
+
+## The table: a copy of pgvector, rewritten whole
+
+PostgreSQL with pgvector stays the source of truth. After each reindex that changed something, the agent copies the published articles' chunks into LanceDB, along with the vectors Postgres already holds:
+
+```python
+# app/lance_index.py (excerpt)
+SELECT = f"""select ch.article_id::text || ':' || ch.chunk_index as id, ch.article_id::text as article_id, ch.chunk_index,
+       p.title, '/' || p.collection || '/' || p.slug as path, coalesce(p.category, '') as category, ch.heading_path,
+       coalesce(ch.anchor, '') as anchor, ch.content, ch.content_hash, ch.model, ch.updated_at, ch.embedding::text as embedding
+     from {LIVE_TABLE} ch join post p on p.id = ch.article_id
+     where p.status = 'published' and p.deleted_at is null
+     order by p.title, ch.article_id, ch.chunk_index"""
+```
+
+The rows become an Arrow table with a fixed-size float32 `vector` column, which is what LanceDB searches. If the chunks have vectors of different sizes, the build fails rather than writing a half-converted table. That matters for the planned [switch from bge-small to bge-m3](/blog/switch-embedding-model-bge-m3-seo-agent-jithendar-com), where the size goes from 384 to 1,024.
+
+Then the whole table is written as one new version, and older versions are removed:
+
+```python
+# app/lance_index.py (excerpt)
+KEEP_VERSIONS = dt.timedelta(hours=1)  # a browser page still reading the previous version keeps working
+
+t = db.create_table(TABLE, data=to_arrow(rows), mode="overwrite")
+try:
+    t.optimize(cleanup_older_than=KEEP_VERSIONS)
+except Exception as e:  # cleanup is housekeeping: the new version is written either way
+    log.warning("lancedb article index: cleanup failed", extra={"event": "lancedb_index_cleanup_failed", "error": type(e).__name__})
+```
+
+Rewriting the whole table means each sync leaves an exact copy of Postgres at that moment, with no row-by-row bookkeeping; at about 3,000 rows a full rewrite is cheap. Called without an argument, `optimize()` removes versions older than 7 days. Here one hour is enough for a page that is still reading the previous version, so R2 holds about one copy of the index.
+
+Three guards keep the copy from doing harm:
+
+- **An empty result never replaces a filled table.** A broken query keeps the previous copy instead of wiping it.
+- **A failed sync never fails the reindex.** It's logged as a warning (`lancedb_index_failed`) and the reindex result records `lancedb_synced: 0`.
+- **The switch `LANCEDB_ARTICLE_INDEX`** ("Copy the article index into LanceDB" in the Retrieval settings, applied on restart) turns the copy off. It's on by default because it changes nothing anyone reads.
+
+### What it looked like on 24 November
+
+A read-only check from inside the agent pod:
+
+```text
+rows 3179  version 2
+version 2 written 2026-11-22 03:23:17 UTC
+stats: total_bytes 6615593, num_fragments 1, num_indices 0
+articles 68, model onnx:bge-small-en-v1.5 (all rows)
+```
+
+Version 2 was written by the weekly reindex on Sunday 22 November, which embedded 671 chunks, left 2,508 unchanged, and reported `lancedb_synced: 1`. Version 1, the first copy, was removed by cleanup as designed. The whole index is one 6.6 MB data file with **no vector index**. LanceDB's docs say an index is "usually unnecessary overhead" for "datasets around 100K rows or fewer", and this table is about 3% of that.
+
+## How the copy drifted
+
+The copy is rewritten only when a reindex changes something. On 24 November, the two stores disagreed:
+
+| | Chunks | Articles |
+|---|---|---|
+| pgvector (published) | 3,147 | 67 |
+| LanceDB `article_chunks` | 3,179 | 68 |
+
+![Two columns. Left, how a sync runs: 1. reindex_flow finishes, weekly on Sunday at 03:17 UTC or for one article from publish_flow, which handles approved AI drafts; 2. did anything change (embedded, reused, deleted or swapped above zero), and if not, write only when the table is missing; 3. read the published chunks and their vectors from pgvector; 4. guards: an empty result keeps the existing copy and mixed vector sizes are refused; 5. create_table in overwrite mode writes the whole table as one new version under the reindex lock; 6. optimize removes versions older than one hour, and a failed sync is only a warning. Right, what happened on mk4: on 15 November the weekly reindex embedded 2,514 chunks from 52 articles, before the copy existed; on 22 November it embedded 671 chunks and left 2,508 unchanged across 68 articles, and the copy was rewritten as version 2 with 3,179 rows; after that one article was deleted, its 32 chunks left pgvector with it but stayed in the copy; on 23 November two articles were published by hand and got no chunks in either store; on 24 November pgvector had 3,147 chunks from 67 articles and LanceDB 3,179 from 68; the next weekly reindex on 29 November should embed the two new articles and rewrite the copy.](/images/lancedb-r2/lancedb-r2-sync.svg)
+
+There are two gaps, and only one of them is in the copy.
+
+**Deleting an article doesn't touch the copy.** One article was deleted after the 22 November sync. Its 32 chunks left pgvector together with the post, but that path runs no reindex, so the sync was never triggered. The copy still holds them, and `/admin/lancedb` still shows them. No reader sees this today, because nothing searches the copy. If LanceDB ever answered Ask the Blog questions, it could cite an article that no longer exists.
+
+**Publishing by hand doesn't index the article.** The reindex schedule's description says "publishing also reindexes each article". That's true for `publish_flow`, which publishes approved AI drafts. It isn't true for **Publish in Admin → Posts**, which is how every article pushed from the jithendar.com repository goes live. The two articles I published that way on 23 November ([the PyTorch reranker](/blog/pytorch-onnx-reranker-seo-agent-ask-the-blog) and [the home page 520 postmortem](/blog/cloudflare-520-home-page-postmortem-jithendar-com)) have no chunks in pgvector, so **Ask the Blog can't find them today**. They'll get chunks at the next weekly reindex, on Sunday 29 November at 03:17 UTC. A manual run of `reindex_flow` would add them sooner.
+
+The second gap isn't about LanceDB at all, but the copy is how I found it. Both gaps need a decision from me rather than a quick patch, so they're listed as open below.
+
+## Editing one row safely
+
+The browser is generic: it lists whatever tables exist and can edit any of them. It was built for CrewAI memory, where deleting a wrong memory record is a real need. That made the limits important.
+
+![A request path and six checks. The row form on /admin/lancedb sends only the changed columns, and a delete needs a ticked box. A server action in the web app, saveRow or deleteRow, adds the signed-in admin as the actor and calls the seo-agent's internal update or delete endpoint with the bearer token. The checks in app/lance_admin.py run in order: 1. the table name is a plain identifier that exists, else 404; 2. the key column is an existing scalar column, so vectors and lists can't be keys; 3. the key value becomes one SQL literal, with quotes doubled, NUL refused, numbers finite and timestamps in ISO 8601; 4. exactly one row matches, else 404 for none and 409 for more than one; 5. only text, number, true or false and timestamp columns can change, vectors are read-only and NOT NULL is kept; 6. the write, table.update or delete, makes one new table version. Every write is recorded twice: in the agent log as lancedb_update or lancedb_delete, and in the web app's audit log as lancedb.update, with deletes at warning. A note says article_chunks is rewritten from pgvector after a reindex, so edits belong in the article.](/images/lancedb-r2/lancedb-r2-edit.svg)
+
+LanceDB's `update` and `delete` take the row filter as a SQL string, so there are no bound parameters. Every value that ends up in a filter goes through one function, which knows the column's type:
+
+```python
+# app/lance_admin.py (excerpt)
+def _literal(value: Any, kind: str) -> str:
+    """A value as a SQL literal for LanceDB's filter language (DataFusion). Never interpolates anything else."""
+    ...
+    if kind == "string":
+        s = str(value)
+        if "\x00" in s:
+            raise LanceError("text may not contain NUL")
+        return "'" + s.replace("'", "''") + "'"
+    raise LanceError("this column cannot be used here")
+```
+
+Table and column names never reach the filter as free text. They must match `^[A-Za-z_][A-Za-z0-9_]{0,127}$` and exist in the table's schema. Tests cover quotes and injection attempts.
+
+Before anything changes, the filter has to match exactly one row:
+
+```python
+# app/lance_admin.py (excerpt)
+def _one(self, t: Any, where: str) -> None:
+    n = t.count_rows(where)
+    if n != 1:
+        raise LanceError("row not found" if n == 0 else f"the key matches {n} rows; pick a unique key column", 404 if n == 0 else 409)
+```
+
+So a request can never change or delete many rows. If you pick a key column like `title`, which repeats across an article's chunks, the agent answers 409 and changes nothing.
+
+Vectors are read-only, because a hand-edited embedding is never right. The page shows the first eight values, then `…` and the size, `(384 dims)`. Nothing can create or drop a table from the browser.
+
+Every write is a new table version, an `info` line in the agent's log with the admin's name, and an audit log entry in the web app (`lancedb.update`, or `lancedb.delete` at `warning`). The previous version stays in R2 until the next sync cleans it up, so a bad edit could be rolled back from Python, but the page has no button for that.
+
+**For `article_chunks`, an edit lasts only until the next sync**, which rewrites the table from Postgres. The page and the user guide both say so. To change what the index says, edit the article. For now the browser is mostly a window on the copy. Editing will matter once memory records exist.
+
+## What a query costs on R2
+
+D-91 noted that every read goes to R2, which is slower than local disk. I measured it from the agent pod (worker3) with six vectors taken from the table, against the same six-nearest-chunks query in pgvector:
+
+| Store | How | Time per query |
+|---|---|---|
+| LanceDB on R2 | brute-force cosine, top 6, no index | 1,388 ms cold; then 734, 638, 619, 1,242 and 4,671 ms (median about 0.7 s) |
+| pgvector (in the cluster) | `embedding <=> $1`, top 6, HNSW index | 2.9 to 11.2 ms (median 3.5 ms) |
+
+In a fresh Python process, importing LanceDB, connecting and opening the table took another 3 seconds; the running agent pays that once. Loading the last page of the browser (offset 3,150) took about 1 second.
+
+This isn't a fair fight. pgvector uses an approximate HNSW index on a database in the same cluster, while LanceDB scans every vector, with no local copy, from object storage in another network. The scan itself is small: 3,179 × 384 float32 values is about 4.9 MB, so most of the time is probably the trips to R2, though I didn't break it down. But it's the number that matters for the plan: as built today, a LanceDB retriever would add most of a second to every Ask the Blog question, on top of the model's own time.
+
+## Where it stands
+
+| Step | What | State on 24 Nov |
+|---|---|---|
+| Install | `lancedb` and `pyarrow` in the image | Done (17 Nov) |
+| Storage and browser | R2 keys from Admin → Storage, `/admin/lancedb` | Done (18 Nov) |
+| Copy | `article_chunks` rewritten after a reindex that changed something | Live; drifts until the next such reindex |
+| Retriever | a LanceDB `Retriever` next to `PgVectorIndex`, with the [RAG evaluation](/blog/rag-evaluation-ask-the-blog-jithendar-com) run on both | Not built |
+| Cut-over | Ask the Blog on LanceDB, pgvector kept until the evaluation shows equal quality | Not built |
+| CrewAI memory | memory on LanceDB, off by default, a switch per crew, each record showing where it came from | Not built |
+
+Open items:
+
+- **Deleting an article.** Rewrite the copy (or delete the article's rows) when an article is deleted or unpublished, not only after a reindex.
+- **Publishing by hand.** Reindex the article when it's published from Admin → Posts, as `publish_flow` already does.
+- **A match check.** Compare row and article counts between the two stores after each reindex, and show both on the page, so drift is visible without running a script.
+- **Latency.** Before building the retriever, decide whether 0.7 s per query on R2 is acceptable, or whether the agent needs a local copy of the table.
+
+The copy has done its first job: the real index is in LanceDB, the same vectors as pgvector, and I can browse it from the admin. Whether it ever answers questions depends on the evaluation and on that 0.7 seconds.

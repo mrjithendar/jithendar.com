@@ -171,7 +171,7 @@ We read the installed package instead of trusting memory, and found five behavio
 
 | What CrewAI does | What we did |
 | --- | --- |
-| A Flow creates CrewAI's unified `Memory` (LanceDB) for itself | The base class sets `_skip_auto_memory`, and LanceDB is not installed |
+| A Flow creates CrewAI's unified `Memory` (LanceDB) for itself | The base class sets `_skip_auto_memory`, so no flow gets a memory store it didn't ask for |
 | `@persist()` without a backend creates a SQLite `flow_states.db`, even when the instance is given another backend | Every class uses `@persist(INSTANCE_ONLY)`, a backend that raises |
 | A router label equal to a method name is refused | Router labels carry a `to_` prefix |
 | `@start` and `@listen` methods inherited from a base class are not registered | The three job flows are built by a factory, each with its own methods |
@@ -201,11 +201,13 @@ def save_state(self, flow_uuid: str, method_name: str, state_data: dict[str, Any
     raise RuntimeError("flow persistence must be set per instance (PgFlowPersistence); local SQLite is not allowed")
 ```
 
-LanceDB is a hard dependency of crewai, for the memory feature we never enable. We resolve it away in `pyproject.toml`:
+LanceDB is a hard dependency of crewai, for its memory feature. At first we resolved it away in `pyproject.toml`, which kept about 290 MB out of the image:
 
 ```toml
 override-dependencies = ["lancedb; sys_platform == 'never'"]
 ```
+
+Since 17 November 2026 LanceDB is installed again: the agent keeps a copy of its article index in LanceDB on Cloudflare R2, which [a separate post](/blog/lancedb-cloudflare-r2-seo-agent-admin-browser) covers. Memory is still off: crews are built with `memory=False`, and every flow keeps `_skip_auto_memory`.
 
 chromadb cannot be dropped the same way, because crewai imports it at load. The image keeps the client-side types and deletes the Chroma server from site-packages, and a test fails if the service ever imports the server.
 

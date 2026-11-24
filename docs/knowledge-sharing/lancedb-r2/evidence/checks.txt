@@ -1,0 +1,53 @@
+Read-only checks for content/blog/lancedb-cloudflare-r2-seo-agent-admin-browser.mdx, 24 November 2026 (about 09:30-10:00 UTC).
+All run on mk4, namespace jithendar, inside the seo-agent pod (1 replica, strategy Recreate, image seo-agent:latest,
+pod on worker3) with kubectl exec. Nothing was written. Keys, the R2 endpoint and the account id are left out on purpose.
+
+== GET /lancedb on the agent's internal API (what /admin/lancedb shows) ==
+configured: true
+location:   s3://jithendar/jithendar/seo-agent/lancedb
+source:     storage (Admin → Storage via GET /internal/seo-agent/storage/lancedb)
+tables:     article_chunks, 3179 rows, version 2
+columns:    id string, article_id string, chunk_index int32, title string, path string, category string,
+            heading_path string, anchor string, content string, content_hash string, model string,
+            updated_at timestamp[us] (all editable); vector fixed_size_list<item: float>[384] (read-only)
+
+== The table, opened with the agent's own LanceAdmin (app/lance_admin.py) ==
+endpoint is Cloudflare R2: yes; region: auto
+list_versions(): only version 2, timestamp 2026-11-22 03:23:17.707 UTC
+  total_rows 3179, total_data_files 1, total_files_size 6615593, total_fragments 1, no deletion files
+stats(): total_bytes 6615593, num_rows 3179, num_indices 0, one fragment
+distinct article_id: 68
+model: onnx:bge-small-en-v1.5 for all 3179 rows
+updated_at: 2026-11-15 03:17:19 to 2026-11-22 03:23:04 UTC
+content length: average 705 characters, longest 4019
+EMBEDDINGS_PROVIDER=onnx; LANCEDB_ARTICLE_INDEX unset (default true)
+
+== pgvector (read-only connection with the agent's DATABASE_URL) ==
+seo_article_chunks: 3147 chunks from 67 articles, all published, model onnx:bge-small-en-v1.5,
+  newest updated_at 2026-11-22 03:23:04 UTC
+indexes: btree pkey, btree (article_id, chunk_index), hnsw (embedding vector_cosine_ops), gin (tsv), gin (identifiers)
+published posts: 69. Published without chunks:
+  blog/pytorch-onnx-reranker-seo-agent-ask-the-blog          published 2026-11-23 03:39:43 UTC
+  blog/cloudflare-520-home-page-postmortem-jithendar-com     published 2026-11-23 09:37:39 UTC
+chunks whose post is no longer published: none
+article only in LanceDB: one blog article, 32 chunks (title and path left out on purpose);
+  no row in `post` any more (deleted), so its chunks left seo_article_chunks with it
+article only in pgvector: none
+
+== reindex_flow runs (seo_flow_runs) and schedule (seo_flow_schedules) ==
+2026-11-15 03:17:06 cron  {"articles": 52, "embedded": 2514, "unchanged": 0, "reused": 0, "deleted": 0}   (before D-93 shipped)
+2026-11-22 03:17:07 cron  {"articles": 68, "embedded": 671, "unchanged": 2508, "reused": 0, "deleted": 0, "lancedb_synced": 1}
+  finished 03:23:21
+schedule "reindex": cron 17 3 * * 0 (Etc/UTC), enabled, built in; description "Weekly incremental reindex of the article
+  embeddings (publishing also reindexes each article)". Only publish_flow (approved AI drafts) reindexes on publish;
+  Publish in Admin → Posts does not start a reindex (moks-cms 0336cc2: no kickoff of reindex_flow outside
+  /api/admin/seo/agent/reindex, the CrewAI console and the schedule).
+
+== Query latency, six vectors taken from the table (about 09:56 UTC) ==
+fresh python process: import lancedb + connect + open_table 2996 ms
+LanceDB on R2, t.search(vec).metric("cosine").limit(6), no index (brute force):
+  1388 ms (first), 734, 638, 619, 1242, 4671 ms; median of the last five 734 ms
+  the query vector's own chunk came back first with distance 0
+t.search().offset(3150).limit(25) (last page of the browser): 978 ms
+pgvector, select ... order by embedding <=> $1::vector limit 6 (HNSW), six random vectors:
+  11.2, 3.3, 3.5, 3.6, 2.9, 5.0 ms; median 3.5 ms
