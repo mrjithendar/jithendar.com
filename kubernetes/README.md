@@ -20,8 +20,9 @@ belongs to; each group is applied on its own, and `scripts/manifests.sh <group>`
 | `80-ci-deployer.yaml` | ServiceAccount `github-ci-deployer`: CI may only set the image of, and restart, the site, the executor and the SEO agent (`scripts/setup-ci-deployer.sh`) |
 | `85-ci-applier.yaml` | ServiceAccount `github-ci-applier`: `.github/workflows/deploy-kubernetes.yml` applies the site group, RBAC included, and may patch the Namespace `jithendar` (not Secrets, nothing else cluster-wide; read the file's header; `scripts/setup-ci-applier.sh`) |
 
-The Grafana dashboards are not cluster manifests here: they live in [`../grafana/`](../grafana/README.md) and
-reach Grafana through Argo CD.
+The site's Grafana dashboards are not here: they live in
+[mrjithendar/monitoring](https://github.com/mrjithendar/monitoring) (`dashboards/private/Jithendar.com/`, signed-in only),
+which deploys them.
 
 ## Python practice (moved)
 
