@@ -1,0 +1,41 @@
+# Flow Reindex: defined in code by the SEO agent (reindex_flow). Its name, categories, tags and switch are editable; `runtime` is read-only.
+key: reindex_flow
+label: Reindex
+description: Rebuilds the article search index the agents and Ask the Blog use.
+categories:
+  - ai
+  - automation
+tags: []
+enabled: true
+disabled_reason: null
+definition: code
+flow_name: reindex_flow
+start: manual
+crews: []
+runtime:
+  inputs_schema:
+    additionalProperties: false
+    properties:
+      article_ids:
+        anyOf:
+          - items:
+              type: string
+            maxItems: 200
+            type: array
+          - type: "null"
+        default: null
+        title: Article Ids
+      full:
+        default: false
+        title: Full
+        type: boolean
+      force:
+        default: false
+        title: Force
+        type: boolean
+    title: ReindexInput
+    type: object
+  schedulable: true
+  approval_only: false
+  mcp: false
+  flow_step: true

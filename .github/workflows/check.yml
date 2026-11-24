@@ -8,6 +8,9 @@ name: check
 # dashboards → the Grafana dashboards in grafana/ (scripts/check-dashboards.py) and the one ConfigMap they render to
 # scripts    → no conflict copies, the kube-context guard and the release/deploy scripts against a stub kubectl,
 #              the manifests' own tests (scripts/tests), shellcheck
+# crewconfig → crewconfig/ (the CrewAI configuration): schemas, references, manifest, no credentials; and, when the
+#              secret JITHENDAR_CREWAI_KEY is set, what the live site would change (a plan, nothing applied): a
+#              configuration the site would refuse fails the check before it is merged
 # The manifests are rendered and checked by deploy-kubernetes.yml (job `plan`).
 
 on:
@@ -79,10 +82,34 @@ jobs:
         run: bash scripts/tests/kube-context.test.sh
       - name: Release and deploy scripts, manifests (stub kubectl)
         run: |
-          pip install --quiet pyyaml==6.0.3
+          pip install --quiet pyyaml==6.0.3 jsonschema==4.23.0
           python3 -m unittest discover -s scripts/tests -p 'test_*.py'
       - name: shellcheck
         run: >-
           shellcheck -x scripts/lib/kube-context.sh scripts/lib/ci-kubeconfig.sh scripts/tests/kube-context.test.sh
           scripts/check-conflict-copies.sh scripts/create-*.sh scripts/set-*.sh
           scripts/setup-ci-applier.sh scripts/setup-ci-deployer.sh scripts/check-content.sh
+
+  crewconfig:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: pip install --quiet pyyaml==6.0.3 jsonschema==4.23.0
+      - name: Check crewconfig/
+        run: python3 scripts/crewconfig.py check
+      - name: What the site would change (plan only)
+        env:
+          JITHENDAR_CREWAI_KEY: ${{ secrets.JITHENDAR_CREWAI_KEY }}
+          REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -uo pipefail
+          if [[ -z "$JITHENDAR_CREWAI_KEY" ]]; then echo "No JITHENDAR_CREWAI_KEY: the site's plan is skipped."; exit 0; fi
+          rc=0
+          python3 scripts/crewconfig.py push --site https://jithendar.com --wait 30 --revision "$REVISION" || rc=$?
+          # 2: the site could not be asked (down, or an older CMS): not this pull request's fault.
+          if [[ $rc -eq 2 ]]; then echo "::warning::The site's plan could not be made; crewconfig/ itself passed the check."; exit 0; fi
+          exit $rc

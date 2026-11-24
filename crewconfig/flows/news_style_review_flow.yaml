@@ -1,0 +1,37 @@
+# Flow News style review: defined in code by the SEO agent (news_style_review_flow). Its name, categories, tags and switch are editable; `runtime` is read-only.
+key: news_style_review_flow
+label: News style review
+description: Reviews recent edits to keep the news writing profile current.
+categories:
+  - content
+  - ai
+tags: []
+enabled: true
+disabled_reason: null
+definition: code
+flow_name: news_style_review_flow
+start: manual
+crews: []
+runtime:
+  inputs_schema:
+    additionalProperties: false
+    properties:
+      profile_key:
+        anyOf:
+          - pattern: ^[a-z0-9][a-z0-9-]{1,40}$
+            type: string
+          - type: "null"
+        default: null
+        title: Profile Key
+      days:
+        default: 7
+        maximum: 60
+        minimum: 1
+        title: Days
+        type: integer
+    title: NewsStyleInput
+    type: object
+  schedulable: true
+  approval_only: false
+  mcp: false
+  flow_step: true

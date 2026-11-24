@@ -1,0 +1,189 @@
+{
+  "$id": "https://moks.dev/schemas/crewconfig/2/flow.schema.json",
+  "title": "flow",
+  "description": "flows/<key>.yaml",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "key": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,39}$"
+    },
+    "label": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 120
+    },
+    "description": {
+      "default": "",
+      "type": "string",
+      "maxLength": 1000
+    },
+    "categories": {
+      "default": [],
+      "maxItems": 10,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 40,
+        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+      }
+    },
+    "tags": {
+      "default": [],
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9 ._-]{0,39}$"
+      }
+    },
+    "enabled": {
+      "default": true,
+      "type": "boolean"
+    },
+    "disabled_reason": {
+      "default": null,
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 300
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "definition": {
+      "type": "string",
+      "enum": [
+        "code",
+        "spec",
+        "content"
+      ]
+    },
+    "flow_name": {
+      "type": "string",
+      "maxLength": 60
+    },
+    "start": {
+      "default": "manual",
+      "type": "string",
+      "enum": [
+        "manual",
+        "review",
+        "approval",
+        "schedule",
+        "internal"
+      ]
+    },
+    "crews": {
+      "default": [],
+      "maxItems": 30,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 60
+      }
+    },
+    "spec": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    },
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "inputs_schema": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        "schedulable": {
+          "type": "boolean"
+        },
+        "approval_only": {
+          "type": "boolean"
+        },
+        "mcp": {
+          "type": "boolean"
+        },
+        "flow_step": {
+          "type": "boolean"
+        }
+      }
+    },
+    "content": {
+      "type": "object",
+      "properties": {
+        "cron": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "timezone": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "single_stories",
+            "daily_digest",
+            "both"
+          ]
+        },
+        "writing_profile_key": {
+          "type": "string",
+          "maxLength": 41
+        },
+        "image_profile_key": {
+          "type": "string",
+          "maxLength": 41
+        },
+        "review_priority": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "sources": {
+          "default": [],
+          "maxItems": 200,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 2000,
+            "format": "uri"
+          }
+        },
+        "config": {
+          "default": {},
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "cron",
+        "timezone",
+        "mode",
+        "writing_profile_key",
+        "image_profile_key",
+        "review_priority"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "key",
+    "label",
+    "definition",
+    "flow_name"
+  ],
+  "additionalProperties": false
+}

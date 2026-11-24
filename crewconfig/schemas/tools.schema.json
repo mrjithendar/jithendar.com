@@ -1,0 +1,69 @@
+{
+  "$id": "https://moks.dev/schemas/crewconfig/2/tools.schema.json",
+  "title": "tools",
+  "description": "tools/tools.yaml",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "groups": {
+            "maxItems": 5,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 20
+            }
+          },
+          "read_only": {
+            "type": "boolean"
+          },
+          "custom": {
+            "type": "boolean"
+          },
+          "crews": {
+            "maxItems": 30,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 60
+            }
+          },
+          "agents": {
+            "maxItems": 60,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 80
+            }
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "groups",
+          "read_only",
+          "custom",
+          "crews",
+          "agents"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "tools"
+  ],
+  "additionalProperties": false
+}
