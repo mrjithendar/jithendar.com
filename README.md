@@ -13,7 +13,6 @@ up to then came along with it.
 | `content/` | `blog/`, `news/`, `projects/`, `pages/`, `authors/` (MDX). The Python practice problems are in [`moks-tech/practice-programming`](https://github.com/moks-tech/practice-programming) |
 | `public/images/` | Images the articles use, served as `/images/…` |
 | `docs/` | Sources of the articles' figures, and scripts that check the articles (never shipped) |
-| `grafana/` | The site's Grafana dashboards (one ConfigMap; Argo CD's `grafana` Application reads this folder) |
 | [`crewconfig/`](crewconfig/README.md) | The CrewAI configuration: every crew with its agents and tasks, flow, skill, schedule, content source and category, and (read-only) the tools, prompt guardrails and model providers. Written and edited from the admin (AI & SEO → Configuration) or here; restored on the site after every deployment |
 | [`kubernetes/`](kubernetes/README.md) | Every manifest the site runs on mk4: the site (CMS image tag, ConfigMap `jithendar-com-site` from `site.json` and `config/`, practice catalog) and the SEO agent. The practice executor deploys from practice-programming |
 | `scripts/` | Deploy (`manifests.sh`, `ci-app-manifests.py`), content check (`check-content.sh`), content push (`push-content.py`), first-time Secrets (`create-*.sh`), site settings (`set-*-config.sh`), CI access (`setup-ci-*.sh`) |

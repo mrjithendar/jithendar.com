@@ -5,7 +5,6 @@ name: check
 # content    → the articles, images, site.json and config/ served by the moks-cms image the Deployment runs
 #              (kubernetes/30-jithendar-com.yaml): main pages and every published article must answer 200
 #              (scripts/check-content.sh). It runs the :latest image the site runs.
-# dashboards → the Grafana dashboards in grafana/ (scripts/check-dashboards.py) and the one ConfigMap they render to
 # scripts    → no conflict copies, the kube-context guard and the release/deploy scripts against a stub kubectl,
 #              the manifests' own tests (scripts/tests), shellcheck
 # crewconfig → crewconfig/ (the CrewAI configuration): schemas, references, manifest, no credentials; and, when the
@@ -44,29 +43,6 @@ jobs:
           printf '%s' "$HARBOR_PASSWORD" | docker login registry.jithendar.com --username "$HARBOR_USERNAME" --password-stdin
       - name: Check the content with the CMS that will serve it
         run: scripts/check-content.sh
-
-  dashboards:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
-        with:
-          version: v1.35.0
-      - name: Check dashboards
-        run: python3 scripts/check-dashboards.py
-      - name: Render the ConfigMap
-        run: |
-          set -euo pipefail
-          out="$RUNNER_TEMP/dashboards.yaml"
-          kubectl kustomize grafana > "$out"
-          [[ "$(grep -c '^kind: ConfigMap$' "$out")" -eq 1 ]] || { echo "::error::grafana/ must render exactly one ConfigMap"; exit 1; }
-          size="$(wc -c < "$out")"
-          echo "$(grep -m1 '^  name: ' "$out" | sed 's/^  name: //'): $size bytes (limit 1 MiB)"
-          [[ "$size" -lt 1048576 ]] || { echo "::error::The dashboards exceed the 1 MiB ConfigMap limit"; exit 1; }
 
   scripts:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
