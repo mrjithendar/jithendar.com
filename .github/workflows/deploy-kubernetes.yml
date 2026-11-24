@@ -18,7 +18,11 @@ name: deploy to kubernetes
 #   merged PR  → a pull request touching the manifests merged into the default branch: the same as a manual run.
 # A changed ConfigMap also restarts its group's Deployments. A Deployment is restarted only if it exists in namespace
 # jithendar; a missing one is skipped with a warning.
-# Each deploy: server-side dry run, diff, apply, restart, wait for every Deployment and StatefulSet, smoke-test the site.
+# Each deploy: server-side dry run, diff, apply, restart, wait for every Deployment and StatefulSet, smoke-test the site,
+# then (job crewconfig) restore the CrewAI configuration from crewconfig/ through the site's API (crewconfig.yml: it
+# waits for the database, the migrations and the SEO agent, plans, applies in one transaction with this commit as the
+# revision, verifies; an admin's change made on the site since the last sync is kept, never overwritten). A failure
+# there fails that stage and changes nothing; the deployment itself stays done. It needs secret JITHENDAR_CREWAI_KEY.
 # plan → pull requests touching the manifests (and every deploy): render the groups of kubernetes/
 #        (scripts/manifests.sh), keep the objects CI applies (scripts/ci-app-manifests.py), list the rest. No cluster access.
 # Rollback: moks-cms also pushes pr-<number>; `kubectl -n jithendar set image deployment/jithendar-com
@@ -238,3 +242,12 @@ jobs:
             sleep 1
           done
           SMOKE_VIA=http://127.0.0.1:18080 scripts/smoke.sh https://jithendar.com || { cat "$RUNNER_TEMP/port-forward.log"; exit 1; }
+
+  # The configuration stage: restore crewconfig/ once the new pods run and the smoke test passed (crewconfig.yml).
+  crewconfig:
+    needs: deploy
+    if: ${{ !cancelled() && needs.deploy.result == 'success' }}
+    uses: ./.github/workflows/crewconfig.yml
+    with:
+      ref: ${{ (github.event.action == 'closed' && github.event.pull_request.merge_commit_sha) || '' }}
+    secrets: inherit

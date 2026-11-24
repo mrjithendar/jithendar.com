@@ -1,0 +1,51 @@
+{
+  "$id": "https://moks.dev/schemas/crewconfig/2/skill.schema.json",
+  "title": "skill",
+  "description": "Front matter of skills/<name>/SKILL.md; the body is the instructions.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "agents": {
+      "minItems": 1,
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 80
+      }
+    },
+    "tags": {
+      "default": [],
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 80
+      }
+    },
+    "enabled": {
+      "default": true,
+      "type": "boolean"
+    },
+    "builtin": {
+      "default": false,
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "name",
+    "description",
+    "agents"
+  ],
+  "additionalProperties": false
+}

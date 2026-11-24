@@ -1,0 +1,81 @@
+{
+  "$id": "https://moks.dev/schemas/crewconfig/2/agent.schema.json",
+  "title": "agent",
+  "description": "Front matter of agents/<crew>/<agent>.md; the body is the backstory.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "crew": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,39}$"
+    },
+    "key": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,39}$"
+    },
+    "role": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    },
+    "goal": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "tools": {
+      "default": [],
+      "maxItems": 12,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 60
+      }
+    },
+    "model": {
+      "default": null,
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 100
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "max_tokens": {
+      "default": null,
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 256,
+          "maximum": 64000
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "max_iter": {
+      "default": null,
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 25
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "crew",
+    "key",
+    "role",
+    "goal"
+  ],
+  "additionalProperties": false
+}

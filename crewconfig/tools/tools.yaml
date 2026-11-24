@@ -1,0 +1,137 @@
+# Read-only: the tools an agent can be given, defined in code by the SEO agent. An import only checks agents' tools against this list.
+tools:
+  - name: fact_sheet
+    description: "The researcher's fact sheet: every allowed claim with its source URL and snippet. Input: anything."
+    groups:
+      - news
+    read_only: true
+    custom: false
+    crews:
+      - news
+    agents:
+      - news.analyst
+      - news.fact_checker
+      - news.writer
+  - name: fetch_allowlisted
+    description: "Fetch a primary source (release notes, advisory, docs): https and allowlisted domains only. Input: the URL."
+    groups:
+      - news
+    read_only: true
+    custom: false
+    crews:
+      - news
+    agents:
+      - news.researcher
+  - name: fetch_allowlisted_docs
+    description: "Fetch an official documentation page (https, allowlisted domains only); returns its main text, at most 12,000 characters. Input: the URL. A long page ends with the anchors of the sections that did not fit: add one (url#anchor) to read from that section."
+    groups:
+      - seo
+    read_only: true
+    custom: true
+    crews:
+      - editorial
+      - optimization
+    agents:
+      - editorial.researcher
+      - editorial.reviewer
+      - optimization.reviewer
+  - name: gsc_queries_for_page
+    description: "Search Console queries (28 days, aggregated: clicks, impressions, CTR, position) the article being optimised ranks for. Input: anything (the article is fixed)."
+    groups:
+      - seo
+    read_only: true
+    custom: false
+    crews:
+      - optimization
+    agents:
+      - optimization.analyst
+  - name: gsc_queries_for_topic
+    description: "Search Console queries (28 days, aggregated) that contain the topic words. Input: a topic."
+    groups:
+      - seo
+      - news
+    read_only: true
+    custom: true
+    crews:
+      - editorial
+      - news
+    agents:
+      - editorial.seo_editor
+      - news.seo_editor
+  - name: image_profile
+    description: "The job's image profile: style prompt, negative prompt, palette, safety rules. Input: anything."
+    groups:
+      - news
+    read_only: true
+    custom: false
+    crews:
+      - news
+    agents:
+      - news.art_director
+  - name: read_article
+    description: "Read one of this site's articles by path (/blog/slug) or id. Input: the path or id."
+    groups:
+      - seo
+    read_only: true
+    custom: true
+    crews:
+      - editorial
+      - optimization
+    agents:
+      - editorial.researcher
+      - editorial.writer
+      - optimization.analyst
+      - optimization.editor
+  - name: read_news_item
+    description: "Read the full text of one news item from this story's sources. Input: the item id."
+    groups:
+      - news
+    read_only: true
+    custom: false
+    crews:
+      - news
+    agents:
+      - news.researcher
+  - name: style_guide
+    description: "The site's writing style guide. Input: anything."
+    groups:
+      - seo
+    read_only: true
+    custom: true
+    crews:
+      - optimization
+    agents:
+      - optimization.editor
+  - name: vector_search
+    description: "Search this site's articles by meaning. Input: a short query. Returns titles, paths, sections and excerpts."
+    groups:
+      - seo
+    read_only: true
+    custom: true
+    crews:
+      - editorial
+    agents:
+      - editorial.researcher
+      - editorial.seo_editor
+  - name: vector_search_site
+    description: "Search this site's own articles by meaning. Input: a short query."
+    groups:
+      - news
+    read_only: true
+    custom: false
+    crews:
+      - news
+    agents:
+      - news.analyst
+      - news.researcher
+      - news.seo_editor
+  - name: writing_profile
+    description: "The job's writing profile: style, structure, tone, audience, banned phrases, required sections. Input: anything."
+    groups:
+      - news
+    read_only: true
+    custom: false
+    crews:
+      - news
+    agents:
+      - news.writer

@@ -1,0 +1,61 @@
+# Flow Optimize article: defined in code by the SEO agent (optimize_article_flow). Its name, categories, tags and switch are editable; `runtime` is read-only.
+key: optimize_article_flow
+label: Optimize article
+description: The Optimization crew turns recommendations into a change set for a published article; the draft waits for review.
+categories:
+  - content
+  - seo
+tags: []
+enabled: true
+disabled_reason: null
+definition: code
+flow_name: optimize_article_flow
+start: review
+crews:
+  - optimization
+runtime:
+  inputs_schema:
+    additionalProperties: false
+    properties:
+      draft_id:
+        pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        title: Draft Id
+        type: string
+      article_id:
+        pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        title: Article Id
+        type: string
+      recommendation_ids:
+        items:
+          type: string
+        maxItems: 50
+        title: Recommendation Ids
+        type: array
+      extra:
+        items:
+          additionalProperties: true
+          type: object
+        maxItems: 20
+        title: Extra
+        type: array
+      trigger:
+        default: manual
+        maxLength: 20
+        title: Trigger
+        type: string
+      feedback:
+        anyOf:
+          - maxLength: 2000
+            type: string
+          - type: "null"
+        default: null
+        title: Feedback
+    required:
+      - draft_id
+      - article_id
+    title: OptimizeInput
+    type: object
+  schedulable: false
+  approval_only: false
+  mcp: true
+  flow_step: true

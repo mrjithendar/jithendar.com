@@ -1,0 +1,52 @@
+# Flow News playground: defined in code by the SEO agent (news_playground_flow). Its name, categories, tags and switch are editable; `runtime` is read-only.
+key: news_playground_flow
+label: News playground
+description: A trial draft from the profile playground.
+categories:
+  - content
+tags: []
+enabled: true
+disabled_reason: null
+definition: code
+flow_name: news_playground_flow
+start: internal
+crews:
+  - news
+runtime:
+  inputs_schema:
+    additionalProperties: false
+    properties:
+      job_id:
+        pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        title: Job Id
+        type: string
+      cluster_id:
+        pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        title: Cluster Id
+        type: string
+      profile_key:
+        pattern: ^[a-z0-9][a-z0-9-]{1,40}$
+        title: Profile Key
+        type: string
+      version_a:
+        minimum: 1
+        title: Version A
+        type: integer
+      version_b:
+        anyOf:
+          - minimum: 1
+            type: integer
+          - type: "null"
+        default: null
+        title: Version B
+    required:
+      - job_id
+      - cluster_id
+      - profile_key
+      - version_a
+    title: NewsPlaygroundInput
+    type: object
+  schedulable: false
+  approval_only: false
+  mcp: false
+  flow_step: true

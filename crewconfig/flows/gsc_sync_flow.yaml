@@ -1,0 +1,32 @@
+# Flow Search Console sync: defined in code by the SEO agent (gsc_sync_flow). Its name, categories, tags and switch are editable; `runtime` is read-only.
+key: gsc_sync_flow
+label: Search Console sync
+description: Imports Google Search Console data.
+categories:
+  - seo
+  - automation
+tags: []
+enabled: true
+disabled_reason: null
+definition: code
+flow_name: gsc_sync_flow
+start: manual
+crews: []
+runtime:
+  inputs_schema:
+    additionalProperties: false
+    properties:
+      slot:
+        anyOf:
+          - maxLength: 40
+            pattern: ^[0-9A-Za-z:_-]+$
+            type: string
+          - type: "null"
+        default: null
+        title: Slot
+    title: JobInput
+    type: object
+  schedulable: true
+  approval_only: false
+  mcp: true
+  flow_step: true

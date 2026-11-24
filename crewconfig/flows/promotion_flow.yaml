@@ -1,0 +1,39 @@
+# Flow Promotion: defined in code by the SEO agent (promotion_flow). Its name, categories, tags and switch are editable; `runtime` is read-only.
+key: promotion_flow
+label: Promotion
+description: The Promotion crew scores where to share new articles and drafts the posts.
+categories:
+  - content
+tags: []
+enabled: true
+disabled_reason: null
+definition: code
+flow_name: promotion_flow
+start: manual
+crews:
+  - promotion
+runtime:
+  inputs_schema:
+    additionalProperties: false
+    properties:
+      article_id:
+        anyOf:
+          - pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            type: string
+          - type: "null"
+        default: null
+        title: Article Id
+      limit:
+        anyOf:
+          - maximum: 10
+            minimum: 1
+            type: integer
+          - type: "null"
+        default: null
+        title: Limit
+    title: PromotionInput
+    type: object
+  schedulable: true
+  approval_only: false
+  mcp: false
+  flow_step: true

@@ -1,0 +1,32 @@
+# Flow Weekly recommendations: defined in code by the SEO agent (weekly_recommendations_flow). Its name, categories, tags and switch are editable; `runtime` is read-only.
+key: weekly_recommendations_flow
+label: Weekly recommendations
+description: Picks this week's articles to improve and starts an Optimize article run for each.
+categories:
+  - seo
+  - content
+tags: []
+enabled: true
+disabled_reason: null
+definition: code
+flow_name: weekly_recommendations_flow
+start: manual
+crews: []
+runtime:
+  inputs_schema:
+    additionalProperties: false
+    properties:
+      limit:
+        anyOf:
+          - maximum: 25
+            minimum: 1
+            type: integer
+          - type: "null"
+        default: null
+        title: Limit
+    title: WeeklyInput
+    type: object
+  schedulable: true
+  approval_only: false
+  mcp: false
+  flow_step: true

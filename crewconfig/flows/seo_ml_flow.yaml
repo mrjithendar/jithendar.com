@@ -1,0 +1,49 @@
+# Flow ML models: defined in code by the SEO agent (seo_ml_flow). Its name, categories, tags and switch are editable; `runtime` is read-only.
+key: seo_ml_flow
+label: ML models
+description: Retrains the SEO models (decay, query clusters, intent, priority, related articles).
+categories:
+  - ai
+  - seo
+tags: []
+enabled: true
+disabled_reason: null
+definition: code
+flow_name: seo_ml_flow
+start: manual
+crews: []
+runtime:
+  inputs_schema:
+    additionalProperties: false
+    properties:
+      models:
+        items:
+          enum:
+            - decay
+            - query_clusters
+            - intent
+            - priority
+            - related
+            - rag_eval
+          type: string
+        maxItems: 6
+        title: Models
+        type: array
+      suggest_labels:
+        default: false
+        title: Suggest Labels
+        type: boolean
+      slot:
+        anyOf:
+          - maxLength: 40
+            pattern: ^[0-9A-Za-z:_-]+$
+            type: string
+          - type: "null"
+        default: null
+        title: Slot
+    title: MlInput
+    type: object
+  schedulable: true
+  approval_only: false
+  mcp: false
+  flow_step: true

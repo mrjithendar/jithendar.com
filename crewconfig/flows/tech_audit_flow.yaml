@@ -1,0 +1,32 @@
+# Flow Technical audit: defined in code by the SEO agent (tech_audit_flow). Its name, categories, tags and switch are editable; `runtime` is read-only.
+key: tech_audit_flow
+label: Technical audit
+description: Crawls the site and records technical SEO issues.
+categories:
+  - seo
+  - monitoring
+tags: []
+enabled: true
+disabled_reason: null
+definition: code
+flow_name: tech_audit_flow
+start: manual
+crews: []
+runtime:
+  inputs_schema:
+    additionalProperties: false
+    properties:
+      slot:
+        anyOf:
+          - maxLength: 40
+            pattern: ^[0-9A-Za-z:_-]+$
+            type: string
+          - type: "null"
+        default: null
+        title: Slot
+    title: JobInput
+    type: object
+  schedulable: true
+  approval_only: false
+  mcp: true
+  flow_step: true

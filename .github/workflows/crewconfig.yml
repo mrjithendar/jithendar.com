@@ -1,0 +1,101 @@
+name: crewconfig
+
+# Restores the site's CrewAI configuration from crewconfig/ (crews with their agents and tasks, flows, skills,
+# schedules, content sources, categories; moks-cms docs/seo/CREWCONFIG.md) on the live site, through its API. Like
+# content.yml: nothing is built, no image is pushed and the cluster is never touched.
+#
+# When:
+#   deploy     → called by deploy-kubernetes.yml after its deploy job succeeded (rollouts finished, smoke test passed):
+#                the configuration stage of every deployment. A failure here fails that stage, not the deployment.
+#   push       → a push to master that changes crewconfig/ (a merged pull request from the admin's editor, or a commit).
+#   manual run → Actions → crewconfig → Run workflow: choose the conflict policy, removal, or a dry run.
+#
+# What (scripts/crewconfig.py):
+#   1. check crewconfig/: schemas, the bundle's references, the manifest, no credentials (no network);
+#   2. wait until GET /api/v1/crewai/config/status says the database answers, every migration is applied and the SEO
+#      agent answers;
+#   3. plan, then apply in one transaction with this commit as the revision. The site verifies what it saved and
+#      records the import (AI & SEO → Configuration → History; the console shows the revision and drift).
+#      Policy skip (the default): an item an admin changed on the site since the last sync is kept and reported, never
+#      overwritten. Nothing is removed unless the manual run asks for it. Repeating a run changes nothing.
+#   A refused or failed import changes nothing and fails this job, with the reasons in its log and summary.
+#
+# Needs the repository secret JITHENDAR_CREWAI_KEY: an admin's API key (Admin → API keys) with the scopes crewai:read
+# and crewai:import. Without it the job only checks crewconfig/ and says so.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'crewconfig/**'
+      - 'scripts/crewconfig.py'
+      - '.github/workflows/crewconfig.yml'
+  workflow_dispatch:
+    inputs:
+      policy:
+        description: Items an admin changed on the site since the last sync
+        type: choice
+        options: [skip, overwrite, fail]
+        default: skip
+      prune:
+        description: Remove what crewconfig/ does not have (never code crews or flows, shipped skills, built-in schedules)
+        type: boolean
+        default: false
+      dry_run:
+        description: Plan only, change nothing
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      ref:
+        description: The commit to restore (a merged pull request's merge commit); empty for the caller's
+        type: string
+        required: false
+        default: ''
+    secrets:
+      JITHENDAR_CREWAI_KEY:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  restore:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    # One import at a time, never cancelled half way (a deployment and a push can arrive together; the second one
+    # then finds nothing to change).
+    concurrency:
+      group: crewconfig-restore
+      cancel-in-progress: false
+    env:
+      SITE_URL: https://jithendar.com
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref || '' }}
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - run: python -m pip install --quiet pyyaml==6.0.3 jsonschema==4.23.0
+      - name: Check crewconfig/
+        run: python3 scripts/crewconfig.py check
+      - name: Restore it on the site
+        env:
+          JITHENDAR_CREWAI_KEY: ${{ secrets.JITHENDAR_CREWAI_KEY }}
+          POLICY: ${{ inputs.policy || 'skip' }}
+          PRUNE: ${{ inputs.prune == true && 'true' || 'false' }}
+          DRY_RUN: ${{ inputs.dry_run == true && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$JITHENDAR_CREWAI_KEY" ]]; then
+            echo "::warning::Secret JITHENDAR_CREWAI_KEY is not set (an admin's API key with crewai:read and crewai:import): crewconfig/ was checked, not restored."
+            echo '### CrewAI configuration: not restored (no JITHENDAR_CREWAI_KEY)' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          rev="$(git rev-parse HEAD)"
+          args=(push --site "$SITE_URL" --policy "$POLICY" --source deploy --revision "$rev" --ref "${GITHUB_REF_NAME:-master}" --url "https://github.com/$GITHUB_REPOSITORY/tree/$rev/crewconfig")
+          [[ "$PRUNE" == true ]] && args+=(--prune)
+          [[ "$DRY_RUN" == true ]] || args+=(--apply)
+          python3 scripts/crewconfig.py "${args[@]}"

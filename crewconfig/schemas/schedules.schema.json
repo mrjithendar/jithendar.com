@@ -1,0 +1,62 @@
+{
+  "$id": "https://moks.dev/schemas/crewconfig/2/schedules.schema.json",
+  "title": "schedules",
+  "description": "schedules/schedules.yaml",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schedules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+          },
+          "flow": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "description": {
+            "default": "",
+            "type": "string",
+            "maxLength": 300
+          },
+          "cron": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "timezone": {
+            "default": "Etc/UTC",
+            "type": "string",
+            "maxLength": 64
+          },
+          "inputs": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "enabled": {
+            "default": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "flow",
+          "cron"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schedules"
+  ],
+  "additionalProperties": false
+}

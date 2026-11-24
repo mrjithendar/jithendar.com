@@ -106,6 +106,23 @@ spec:
               name: redis-site-cachebus-credentials
               key: uri
               optional: true
+        # CrewAI configuration in Git (crewconfig/ of this repository; moks-cms docs/seo/CREWCONFIG.md): where the
+        # admin's AI & SEO → Configuration reads and writes it. Settings saved there win over these. The GitHub token is
+        # a fine-grained token with Contents and Pull requests (read and write) on this repository only, in its own
+        # Secret made by a person (README "CrewAI configuration"), never in Git. optional: without it the admin can still
+        # save a token itself, or the repository editor stays off; deployments restore crewconfig/ either way.
+        - name: CREWAI_CONFIG_REPO
+          value: mrjithendar/jithendar.com
+        - name: CREWAI_CONFIG_BRANCH
+          value: master
+        - name: CREWAI_CONFIG_PATH
+          value: crewconfig
+        - name: CREWAI_CONFIG_GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: jithendar-com-crewconfig
+              key: token
+              optional: true
         # Shared CloudNativePG cluster (namespace postgres-db, role and database jithendar), through its PgBouncer
         # pooler (session mode, so the migrations' advisory lock works). Secret written by Terraform in the miniKube
         # repo (minikube-infrastructure/postgres.tf, postgres_databases.jithendar); env wins over the stale

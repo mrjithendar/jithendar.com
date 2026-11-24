@@ -1,0 +1,85 @@
+{
+  "$id": "https://moks.dev/schemas/crewconfig/2/sources.schema.json",
+  "title": "sources",
+  "description": "sources/sources.yaml",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 120
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "rss",
+              "atom",
+              "json_api",
+              "github_releases",
+              "sitemap",
+              "html_allowlisted"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "maxLength": 2000,
+            "format": "uri"
+          },
+          "topic_hints": {
+            "default": [],
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 60
+            }
+          },
+          "credibility": {
+            "default": 0.7,
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "fetch_interval_minutes": {
+            "default": 60,
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 10080
+          },
+          "enabled": {
+            "default": false,
+            "type": "boolean"
+          },
+          "terms_note": {
+            "default": null,
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "sources"
+  ],
+  "additionalProperties": false
+}

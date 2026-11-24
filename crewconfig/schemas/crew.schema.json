@@ -1,0 +1,163 @@
+{
+  "$id": "https://moks.dev/schemas/crewconfig/2/crew.schema.json",
+  "title": "crew",
+  "description": "crews/<key>.yaml",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "key": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,39}$"
+    },
+    "label": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 120
+    },
+    "description": {
+      "default": "",
+      "type": "string",
+      "maxLength": 1000
+    },
+    "objective": {
+      "default": "",
+      "type": "string",
+      "maxLength": 1500
+    },
+    "categories": {
+      "default": [],
+      "maxItems": 10,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 40,
+        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+      }
+    },
+    "tags": {
+      "default": [],
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9 ._-]{0,39}$"
+      }
+    },
+    "enabled": {
+      "default": true,
+      "type": "boolean"
+    },
+    "definition": {
+      "type": "string",
+      "enum": [
+        "code",
+        "spec"
+      ]
+    },
+    "agents": {
+      "minItems": 1,
+      "maxItems": 12,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]{1,39}$"
+      }
+    },
+    "tasks": {
+      "minItems": 1,
+      "maxItems": 12,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]{1,39}$"
+      }
+    },
+    "inputs": {
+      "maxItems": 12,
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        ]
+      }
+    },
+    "output": {
+      "anyOf": [
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "model": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 100
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "code": {
+      "type": "object",
+      "properties": {
+        "prompt_version": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "default_hash": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "allowed_tools": {
+          "maxItems": 40,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 60
+          }
+        },
+        "replay_flows": {
+          "maxItems": 40,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 60
+          }
+        }
+      },
+      "required": [
+        "prompt_version",
+        "default_hash",
+        "allowed_tools",
+        "replay_flows"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "key",
+    "label",
+    "definition",
+    "agents",
+    "tasks"
+  ],
+  "additionalProperties": false
+}

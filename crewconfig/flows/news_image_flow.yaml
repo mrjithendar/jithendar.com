@@ -1,0 +1,52 @@
+# Flow News image: defined in code by the SEO agent (news_image_flow). Its name, categories, tags and switch are editable; `runtime` is read-only.
+key: news_image_flow
+label: News image
+description: Generates and checks a cover image for a news draft.
+categories:
+  - content
+  - ai
+tags: []
+enabled: true
+disabled_reason: null
+definition: code
+flow_name: news_image_flow
+start: internal
+crews: []
+runtime:
+  inputs_schema:
+    additionalProperties: false
+    properties:
+      article_id:
+        pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        title: Article Id
+        type: string
+      prompt_tweak:
+        default: ""
+        maxLength: 400
+        title: Prompt Tweak
+        type: string
+      provider:
+        anyOf:
+          - enum:
+              - template
+              - gemini
+              - openai
+            type: string
+          - type: "null"
+        default: null
+        title: Provider
+      actor:
+        anyOf:
+          - maxLength: 200
+            type: string
+          - type: "null"
+        default: null
+        title: Actor
+    required:
+      - article_id
+    title: NewsImageInput
+    type: object
+  schedulable: false
+  approval_only: false
+  mcp: false
+  flow_step: true

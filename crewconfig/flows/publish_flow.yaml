@@ -1,0 +1,54 @@
+# Flow Publish: defined in code by the SEO agent (publish_flow). Its name, categories, tags and switch are editable; `runtime` is read-only.
+key: publish_flow
+label: Publish
+description: Publishes an approved draft, verifies it live, submits it to search engines and reindexes it. Starts only from an approval.
+categories:
+  - content
+tags: []
+enabled: true
+disabled_reason: null
+definition: code
+flow_name: publish_flow
+start: approval
+crews: []
+runtime:
+  inputs_schema:
+    additionalProperties: false
+    properties:
+      draft_id:
+        pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        title: Draft Id
+        type: string
+      approval_id:
+        maxLength: 80
+        minLength: 1
+        title: Approval Id
+        type: string
+      accepted_change_ids:
+        items:
+          type: string
+        maxItems: 200
+        title: Accepted Change Ids
+        type: array
+      edits:
+        additionalProperties:
+          type: string
+        title: Edits
+        type: object
+      actor:
+        anyOf:
+          - maxLength: 200
+            type: string
+          - type: "null"
+        default: null
+        title: Actor
+    required:
+      - draft_id
+      - approval_id
+      - accepted_change_ids
+    title: PublishInput
+    type: object
+  schedulable: false
+  approval_only: true
+  mcp: false
+  flow_step: false

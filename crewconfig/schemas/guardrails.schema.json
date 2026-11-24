@@ -1,0 +1,45 @@
+{
+  "$id": "https://moks.dev/schemas/crewconfig/2/guardrails.schema.json",
+  "title": "guardrails",
+  "description": "prompts/guardrails.yaml",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "guardrails": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 60,
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "applies_to": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "applies_to",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "guardrails"
+  ],
+  "additionalProperties": false
+}

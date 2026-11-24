@@ -14,16 +14,19 @@ up to then came along with it.
 | `public/images/` | Images the articles use, served as `/images/…` |
 | `docs/` | Sources of the articles' figures, and scripts that check the articles (never shipped) |
 | `grafana/` | The site's Grafana dashboards (one ConfigMap; Argo CD's `grafana` Application reads this folder) |
+| [`crewconfig/`](crewconfig/README.md) | The CrewAI configuration: every crew with its agents and tasks, flow, skill, schedule, content source and category, and (read-only) the tools, prompt guardrails and model providers. Written and edited from the admin (AI & SEO → Configuration) or here; restored on the site after every deployment |
 | [`kubernetes/`](kubernetes/README.md) | Every manifest the site runs on mk4: the site (CMS image tag, ConfigMap `jithendar-com-site` from `site.json` and `config/`, practice catalog) and the SEO agent. The practice executor deploys from practice-programming |
 | `scripts/` | Deploy (`manifests.sh`, `ci-app-manifests.py`), content check (`check-content.sh`), content push (`push-content.py`), first-time Secrets (`create-*.sh`), site settings (`set-*-config.sh`), CI access (`setup-ci-*.sh`) |
-| `.github/workflows/` | `content.yml` (articles and images, through the site's API), `deploy-kubernetes.yml` (the whole app from `kubernetes/`), `check.yml` (pull requests) |
+| `.github/workflows/` | `content.yml` (articles and images, through the site's API), `deploy-kubernetes.yml` (the whole app from `kubernetes/`, then the CrewAI configuration), `crewconfig.yml` (the CrewAI configuration, through the site's API), `check.yml` (pull requests) |
 
-## Two workflows
+## Workflows
 
 | Workflow | When | What it does |
 |---|---|---|
 | `content.yml` | A push to `master` that changes `content/` or `public/images/`, or a manual run | Checks the files with the CMS image the site runs (`scripts/check-content.sh`), then pushes new and changed images to R2 and new or changed articles as drafts, through the site's API (`scripts/push-content.py`). No image is built and nothing is restarted |
 | `deploy-kubernetes.yml` | A merged pull request that changes `kubernetes/`, `site.json` or `config/`, a manual run, or a `moks-cms-released` dispatch | Applies the whole app from the manifests (server dry run, diff, apply, restart, wait, smoke test), including ConfigMap `jithendar-com-site` with `site.json` and `config/`. Every manifest names `:latest`, so a restart pulls the newest image: a merged pull request or a manual run restarts every Deployment it applies in namespace `jithendar` (`jithendar-com`, `seo-agent`), a dispatch only the released component. Each Deployment is restarted only if it exists; a missing one is skipped with a warning |
+
+| `crewconfig.yml` | Called by `deploy-kubernetes.yml` after each successful deploy, a push to `master` that changes `crewconfig/`, or a manual run | Checks `crewconfig/` (`scripts/crewconfig.py check`), waits until the site's database, migrations and SEO agent are ready, then imports it through the site's API in one transaction, verified and recorded with the commit. An item an admin changed on the site since the last sync is kept and reported (policy `skip`); a manual run can overwrite, refuse on conflicts, remove what is gone, or only plan. A refused or failed import changes nothing and fails the job |
 
 To move to a moks-cms release by hand, or back to an earlier one, change its tag in `kubernetes/30-jithendar-com.yaml`
 (or the seo-agent manifests) in a pull request. Merging it applies the change.
@@ -62,6 +65,27 @@ scripts/push-content.py --all-posts --create-only     # every article that is no
   that is still a draft or in review is updated from the file; a published post is left alone (edit it in
   Admin → Posts). Nothing is published from here. Pages and author profiles are edited in the admin.
 
+## The CrewAI configuration (`crewconfig/`)
+
+`crewconfig/` is the site's whole CrewAI setup as reviewable files (moks-cms `docs/seo/CREWCONFIG.md`): one file per
+crew, agent, task, flow and skill (agents, tasks and skills are Markdown with front matter), the schedules, content
+sources and categories, the read-only tools, guardrails and providers, JSON Schemas of every file kind, and a manifest
+with checksums. No secrets: providers say where their key is, never the key.
+
+- **Edit** it in the admin (AI & SEO → Configuration → Repository: a pull request or a commit per save, with history,
+  compare and revert) or here in a pull request. `check.yml` checks it and, with the key, shows what the site would
+  change. Merging restores it (`crewconfig.yml`).
+- **From the site to Git**: AI & SEO → Configuration → Write to Git, or locally
+  `JITHENDAR_CREWAI_KEY=jk_… scripts/crewconfig.py pull` (then commit). Do this whenever the admin's pages were used
+  to change crews, flows or schedules, so Git holds what runs (the Overview shows such drift).
+- **From Git to the site**: every deployment and every merge; locally `scripts/crewconfig.py push` (a plan) or
+  `push --apply`.
+- **Bootstrapped 2026-11-24** with the CMS's exporter from the SEO agent's code (crews, agents, tasks, flows, tools,
+  guardrails), the CMS's shipped skills and categories and production's export of that day (its 15 schedules, no crew
+  versions or edited skills). Production may also have content flows, sources, crews or flows made in the admin and
+  catalogue edits that are not here yet: after the release, run Write to Git once. Until then a deployment only adds
+  what is missing and keeps every difference (they are conflicts without an earlier sync).
+
 ## Setting up this repository (once)
 
 The workflows need these, which moved here from moks-cms:
@@ -70,6 +94,11 @@ The workflows need these, which moved here from moks-cms:
 - **Content push** (content.yml): secret `JITHENDAR_API_KEY`, an API key created by an admin in Admin → API keys with
   the scopes `images:write` and `posts:draft`. It needs a moks-cms release that has `PUT /api/v1/images/…` and
   `PUT /api/v1/posts/by-path/…`, and storage configured (Admin → Storage). Without the secret the run fails.
+- **CrewAI configuration** (crewconfig.yml, deploy-kubernetes.yml, check.yml): secret `JITHENDAR_CREWAI_KEY`, an admin's
+  API key (Admin → API keys) with the scopes `crewai:read` and `crewai:import`. Without it the configuration is checked,
+  not restored. For editing from the admin: a fine-grained GitHub token with Contents and Pull requests (read and write)
+  on this repository only, saved in AI & SEO → Configuration → Settings, or as the Secret the site Deployment reads:
+  `kubectl -n jithendar create secret generic jithendar-com-crewconfig --from-literal=token=github_pat_…`.
 - **Manifests** (deploy-kubernetes.yml): `scripts/setup-ci-applier.sh` (secret `MK4_CI_APPLY_TOKEN`, variable `MINIKUBE_DEPLOY=true`).
 - **moks-cms → this repository**: in moks-cms, variable `RELEASE_NOTIFY_REPOS=moks-tech/jithendar.com` and secret
   `RELEASE_NOTIFY_TOKEN` (a fine-grained token with Contents: read and write on this repository).

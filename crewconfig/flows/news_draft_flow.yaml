@@ -1,0 +1,78 @@
+# Flow News draft: defined in code by the SEO agent (news_draft_flow). Its name, categories, tags and switch are editable; `runtime` is read-only.
+key: news_draft_flow
+label: News draft
+description: The News desk crew writes one story or digest.
+categories:
+  - content
+tags: []
+enabled: true
+disabled_reason: null
+definition: code
+flow_name: news_draft_flow
+start: internal
+crews:
+  - news
+runtime:
+  inputs_schema:
+    additionalProperties: false
+    properties:
+      job_id:
+        pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        title: Job Id
+        type: string
+      cluster_ids:
+        items:
+          type: string
+        maxItems: 12
+        minItems: 1
+        title: Cluster Ids
+        type: array
+      mode:
+        default: single
+        enum:
+          - single
+          - digest
+        title: Mode
+        type: string
+      news_run_id:
+        pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        title: News Run Id
+        type: string
+      dry_run:
+        default: false
+        title: Dry Run
+        type: boolean
+      llm:
+        default: true
+        title: Llm
+        type: boolean
+      score:
+        anyOf:
+          - type: number
+          - type: "null"
+        default: null
+        title: Score
+      feedback:
+        anyOf:
+          - maxLength: 2000
+            type: string
+          - type: "null"
+        default: null
+        title: Feedback
+      writing_profile_version:
+        anyOf:
+          - minimum: 1
+            type: integer
+          - type: "null"
+        default: null
+        title: Writing Profile Version
+    required:
+      - job_id
+      - cluster_ids
+      - news_run_id
+    title: NewsDraftInput
+    type: object
+  schedulable: false
+  approval_only: false
+  mcp: false
+  flow_step: true

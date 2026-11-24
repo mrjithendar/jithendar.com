@@ -1,0 +1,41 @@
+# Flow News ingest: defined in code by the SEO agent (news_ingest_flow). Its name, categories, tags and switch are editable; `runtime` is read-only.
+key: news_ingest_flow
+label: News ingest
+description: Fetches and stores items from the news sources.
+categories:
+  - content
+  - automation
+tags: []
+enabled: true
+disabled_reason: null
+definition: code
+flow_name: news_ingest_flow
+start: manual
+crews: []
+runtime:
+  inputs_schema:
+    additionalProperties: false
+    properties:
+      source_ids:
+        items:
+          type: string
+        maxItems: 200
+        title: Source Ids
+        type: array
+      force:
+        default: true
+        title: Force
+        type: boolean
+      actor:
+        anyOf:
+          - maxLength: 200
+            type: string
+          - type: "null"
+        default: null
+        title: Actor
+    title: NewsIngestInput
+    type: object
+  schedulable: false
+  approval_only: false
+  mcp: false
+  flow_step: true

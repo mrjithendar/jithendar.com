@@ -1,0 +1,31 @@
+# Flow Report: defined in code by the SEO agent (report_flow). Its name, categories, tags and switch are editable; `runtime` is read-only.
+key: report_flow
+label: Report
+description: The Report crew writes the weekly or monthly briefing, checks its numbers, renders the PDF and emails it.
+categories:
+  - seo
+tags: []
+enabled: true
+disabled_reason: null
+definition: code
+flow_name: report_flow
+start: manual
+crews:
+  - report
+runtime:
+  inputs_schema:
+    additionalProperties: false
+    properties:
+      period:
+        default: weekly
+        enum:
+          - weekly
+          - monthly
+        title: Period
+        type: string
+    title: ReportInput
+    type: object
+  schedulable: true
+  approval_only: false
+  mcp: true
+  flow_step: true

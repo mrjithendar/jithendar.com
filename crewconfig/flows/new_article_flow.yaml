@@ -1,0 +1,49 @@
+# Flow New article: defined in code by the SEO agent (new_article_flow). Its name, categories, tags and switch are editable; `runtime` is read-only.
+key: new_article_flow
+label: New article
+description: The Editorial crew researches, writes, reviews and edits a new article from a calendar item; the draft waits for review.
+categories:
+  - content
+tags: []
+enabled: true
+disabled_reason: null
+definition: code
+flow_name: new_article_flow
+start: review
+crews:
+  - editorial
+runtime:
+  inputs_schema:
+    additionalProperties: false
+    properties:
+      draft_id:
+        pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        title: Draft Id
+        type: string
+      calendar_id:
+        pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+        title: Calendar Id
+        type: string
+      article_id:
+        anyOf:
+          - pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+            type: string
+          - type: "null"
+        default: null
+        title: Article Id
+      feedback:
+        anyOf:
+          - maxLength: 2000
+            type: string
+          - type: "null"
+        default: null
+        title: Feedback
+    required:
+      - draft_id
+      - calendar_id
+    title: NewArticleInput
+    type: object
+  schedulable: false
+  approval_only: false
+  mcp: true
+  flow_step: true

@@ -1,0 +1,32 @@
+# Flow Content flows housekeeping: defined in code by the SEO agent (news_dispatch_flow). Its name, categories, tags and switch are editable; `runtime` is read-only.
+key: news_dispatch_flow
+label: Content flows housekeeping
+description: Keeps the content flows' gauges current on every run and does their daily clean-up. The content flows themselves start on their own times.
+categories:
+  - content
+  - automation
+tags: []
+enabled: true
+disabled_reason: null
+definition: code
+flow_name: news_dispatch_flow
+start: schedule
+crews: []
+runtime:
+  inputs_schema:
+    additionalProperties: false
+    properties:
+      slot:
+        anyOf:
+          - maxLength: 40
+            pattern: ^[0-9A-Za-z:_-]+$
+            type: string
+          - type: "null"
+        default: null
+        title: Slot
+    title: NewsDispatchInput
+    type: object
+  schedulable: true
+  approval_only: false
+  mcp: false
+  flow_step: true
