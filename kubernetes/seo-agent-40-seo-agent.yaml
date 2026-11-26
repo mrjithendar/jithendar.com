@@ -4,6 +4,8 @@
 # edge (/mcp/public, /mcp/admin; Kong only, via Service seo-agent-mcp and kubernetes/kong/seo-agent-mcp.deck.yaml).
 # Applied by a person (scripts/manifests.sh seo-agent | kubectl apply -f -) after the one-time steps in
 # docs/seo/MANUAL_SETUP.md "v3" and "v4": Secret seo-agent-env (scripts/create-seo-agent-secrets.sh), pgvector enabled.
+# Secret seo-agent-rag (optional, scripts/create-seo-agent-rag-secret.sh): RAG_API_URL and RAG_BEARER_TOKEN for the shared
+# moks-rag service; without it moks-rag is off in the agent (seo-agent README "The shared knowledge base").
 # Secret seo-agent-env (never committed): ANTHROPIC_API_KEY, SEO_AGENT_TOKEN, SEO_AGENT_CALLBACK_TOKEN. The admin MCP
 # needs no signing keys: its OAuth tokens are opaque and verified by hash in the shared Postgres (DECISIONS D-60).
 ---
@@ -59,6 +61,10 @@ data:
   # 0.66 for bge-small, 0.52 for bge-m3 (interim, mapped from bge-small's cutoff; rag_eval.py's calibrated floor
   # replaces it). A value here would override it for every model. Admin → Retrieval → Lowest similarity can still set one.
   RAG_RERANKER_ENABLED: "false"
+  # The shared moks-rag service (namespace rag): the agent writes only its own collection and reads moks-cms's. Its URL
+  # and token come from Secret seo-agent-rag (Deployment env below); both unset = off.
+  RAG_SEO_COLLECTION: seo_intel
+  RAG_CMS_COLLECTION: cms_content
   # CrewAI's local storage directory (nothing should write there: flows persist to Postgres; tests assert no SQLite).
   CREWAI_STORAGE_DIR: /tmp/crewai
   # MCP (docs/seo/MCP.md). Both off until switched on; the admin server only after the OAuth flow is verified.
@@ -120,6 +126,12 @@ spec:
             # Secret seo-agent-db-credentials this variable is simply not set and DATABASE_URL above is used.
             - name: SEO_AGENT_DATABASE_URL
               valueFrom: { secretKeyRef: { name: seo-agent-db-credentials, key: uri, optional: true } }
+            # The shared moks-rag service (rag-api). Optional: until scripts/create-seo-agent-rag-secret.sh has created
+            # Secret seo-agent-rag, neither is set and the agent runs with moks-rag off.
+            - name: RAG_API_URL
+              valueFrom: { secretKeyRef: { name: seo-agent-rag, key: RAG_API_URL, optional: true } }
+            - name: RAG_BEARER_TOKEN
+              valueFrom: { secretKeyRef: { name: seo-agent-rag, key: RAG_BEARER_TOKEN, optional: true } }
           # Measured (docs/seo/FLOWS.md "Resources"): ~310 MiB idle with the model loaded, ~700 MiB peak during a
           # full reindex of 37 articles (1,243 chunks). Requests per the brief; the limit leaves room for a crew run.
           resources:
@@ -158,7 +170,7 @@ spec:
   ports: [{ name: http-mcp, port: 8090, targetPort: mcp, protocol: TCP }]
 ---
 # Allowed traffic (kindnet enforces NetworkPolicy on mk4). In on 8080: the site (admin API, review decisions, /api/ask
-# proxy), the flow-trigger CronJobs, Prometheus (/metrics). In on 8090 (MCP edge) only: the Kong gateway. Out: Postgres, the site's callback port, the OTel collector, bge-m3 (embeddings), DNS and HTTPS to public
+# proxy), the flow-trigger CronJobs, Prometheus (/metrics). In on 8090 (MCP edge) only: the Kong gateway. Out: Postgres, the site's callback port, the OTel collector, bge-m3 (embeddings), rag-api (moks-rag), DNS and HTTPS to public
 # addresses (Anthropic API). The crew's documentation fetches go through the site's SSRF-safe fetcher, not from here.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -185,6 +197,10 @@ spec:
       ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
     - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: postgres-db } }, podSelector: { matchLabels: { cnpg.io/cluster: postgres-cluster } } }]
       ports: [{ port: 5432, protocol: TCP }]
+    # moks-rag's rag-api (namespace rag). Its AuthorizationPolicy rag-api-callers already admits namespace jithendar
+    # on 8000 over mTLS; this pod's sidecar is what connects.
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: rag } }, podSelector: { matchLabels: { app: rag-api } } }]
+      ports: [{ port: 8000, protocol: TCP }]
     - to: [{ podSelector: { matchLabels: { app: jithendar-com } } }]
       ports: [{ port: 9465, protocol: TCP }]
     - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: observability } }, podSelector: { matchLabels: { app: otel-collector } } }]
