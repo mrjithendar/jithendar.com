@@ -98,11 +98,14 @@ The workflows need these, which moved here from moks-cms:
   not restored. For editing from the admin: a fine-grained GitHub token with Contents and Pull requests (read and write)
   on this repository only, saved in AI & SEO → Configuration → Settings, or as the Secret the site Deployment reads:
   `kubectl -n jithendar create secret generic jithendar-com-crewconfig --from-literal=token=github_pat_…`.
-- **Hybrid RAG** (moks-rag, optional; moks-cms `docs/RAG.md`): the site syncs published posts to rag-api with rag-api's
-  bearer token, copied into this namespace (a Secret cannot be read across namespaces), then a restart:
-  `kubectl -n jithendar create secret generic jithendar-com-rag --from-literal=token="$(kubectl -n rag get secret rag-secrets -o jsonpath='{.data.RAG_BEARER_TOKEN}' | base64 -d)"`
-  and `kubectl -n jithendar rollout restart deploy/jithendar-com`. Without it the sync stays off. Then, once, Admin →
-  Integrations → Hybrid RAG → Reindex all posts (the backfill). Update the copy when rag-api's token is rotated.
+- **Hybrid RAG** (moks-rag, optional; moks-cms `docs/RAG.md`): the site syncs published posts to rag-api's
+  `cms_content` with a token in Secret `jithendar-com-rag` (key `token`). With rag-api 0.2.0 the site gets its own
+  token, which may read and write `cms_content` only: from a moks-rag checkout, `scripts/issue-service-token.sh moks-cms`
+  (it writes the Secret and restarts rag-api). Until then a copy of rag-api's shared token works:
+  `kubectl -n jithendar create secret generic jithendar-com-rag --from-literal=token="$(kubectl -n rag get secret rag-secrets -o jsonpath='{.data.RAG_BEARER_TOKEN}' | base64 -d)"`.
+  Either way, then `kubectl -n jithendar rollout restart deploy/jithendar-com`. Without the Secret the sync stays off.
+  Then, once, Admin → Integrations → Hybrid RAG → Reindex all posts (the backfill; rag-api skips posts it already has
+  unchanged). The SEO agent's token: `scripts/create-seo-agent-rag-secret.sh`.
 - **Manifests** (deploy-kubernetes.yml): `scripts/setup-ci-applier.sh` (secret `MK4_CI_APPLY_TOKEN`, variable `MINIKUBE_DEPLOY=true`).
 - **moks-cms → this repository**: in moks-cms, variable `RELEASE_NOTIFY_REPOS=moks-tech/jithendar.com` and secret
   `RELEASE_NOTIFY_TOKEN` (a fine-grained token with Contents: read and write on this repository).

@@ -125,10 +125,10 @@ spec:
               key: token
               optional: true
         # Hybrid RAG (moks-rag, namespace rag; moks-cms docs/RAG.md, D-104): background jobs keep published posts in
-        # rag-api's cms_content collection. The token is a copy of rag-api's RAG_BEARER_TOKEN (Secret rag-secrets in
-        # namespace rag; a secretKeyRef cannot cross namespaces) in its own Secret, made by a person (README "Hybrid
-        # RAG"), never in Git. optional: without it the sync is off and nothing is sent. Settings saved in Admin →
-        # Integrations → Hybrid RAG win over these.
+        # rag-api's cms_content collection. The token is the site's own (rag-api 0.2.0: moks-rag
+        # scripts/issue-service-token.sh moks-cms, allowed cms_content only) or, before that, a copy of rag-api's
+        # shared RAG_BEARER_TOKEN, in its own Secret made by a person (README "Hybrid RAG"), never in Git. optional:
+        # without it the sync is off and nothing is sent. Settings saved in Admin → Integrations → Hybrid RAG win over these.
         - name: RAG_API_URL
           value: http://rag-api.rag.svc.cluster.local:8000
         - name: RAG_COLLECTION
