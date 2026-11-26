@@ -1,32 +1,31 @@
 name: deploy to kubernetes
 
-# Deploys the whole site from kubernetes/ to the mk4 cluster: the CMS (moks-cms) and the SEO agent. Every manifest
-# names :latest with imagePullPolicy Always, so a deploy is "apply, then restart": a restarted Deployment pulls the
-# newest :latest. The CMS rolls one pod at a time (maxSurge 1, maxUnavailable 0: no downtime); the SEO agent is one
-# pod with strategy Recreate (its flow runs are in-process, two pods at once would fail each other's runs), so it is
-# away for the few seconds its new pod takes to start. site.json and config/ are ConfigMap jithendar-com-site
+# Deploys the whole site from kubernetes/ to the mk4 cluster. Every manifest names :latest with imagePullPolicy Always,
+# so a deploy is "apply, then restart": a restarted Deployment pulls the newest :latest. The site's pods run the one
+# moks-cms image twice, as containers `web` and `seo-agent` (30-jithendar-com.yaml), and roll one pod at a time
+# (maxSurge 1, maxUnavailable 0: no downtime). site.json and config/ are ConfigMap jithendar-com-site
 # (kubernetes/kustomization.yaml), so a change to them is deployed here too and rolls the site. Articles and images
 # never pass through here: content.yml pushes them through the site's API. The practice problems ship in
-# practice-catalog (moks-tech/practice-programming, which also deploys the practice executor).
+# practice-catalog (mrjithendar/practice-programming, which also deploys the practice executor).
 #
-# When it deploys (only when repository variable MINIKUBE_DEPLOY is "true"):
-#   release    → repository_dispatch "moks-cms-released" {component, tag}, sent by moks-cms's CI after it pushes
-#                :latest (its scripts/notify-sites.sh): apply, restart that component (www → deployment/jithendar-com,
-#                seo-agent → deployment/seo-agent). The SEO agent's CronJobs pull :latest at their next run.
-#   manual run → Actions → deploy to kubernetes → Run workflow, on the default branch: apply, restart every
-#                Deployment it applies (the CMS and the SEO agent).
-#   merged PR  → a pull request touching the manifests merged into the default branch: the same as a manual run.
+# When (deploys only when repository variable MINIKUBE_DEPLOY is "true"):
+#   push to master → a merged pull request or a direct commit that touches the paths below: apply, restart every
+#                    Deployment it applies. ([skip ci] in the commit message skips it.)
+#   manual run     → Actions → deploy to kubernetes → Run workflow, on the default branch: the same; use it after a
+#                    moks-cms release to roll the site onto the new :latest.
+#   pull request   → plan only (job `plan`): render the groups of kubernetes/ (scripts/manifests.sh), keep the objects
+#                    CI applies (scripts/ci-app-manifests.py), list the rest. No cluster access.
 # A changed ConfigMap also restarts its group's Deployments. A Deployment is restarted only if it exists in namespace
 # jithendar; a missing one is skipped with a warning.
-# Each deploy: server-side dry run, diff, apply, restart, wait for every Deployment and StatefulSet, smoke-test the site,
-# then (job crewconfig) restore the CrewAI configuration from crewconfig/ through the site's API (crewconfig.yml: it
-# waits for the database, the migrations and the SEO agent, plans, applies in one transaction with this commit as the
-# revision, verifies; an admin's change made on the site since the last sync is kept, never overwritten). A failure
-# there fails that stage and changes nothing; the deployment itself stays done. It needs secret JITHENDAR_CREWAI_KEY.
-# plan → pull requests touching the manifests (and every deploy): render the groups of kubernetes/
-#        (scripts/manifests.sh), keep the objects CI applies (scripts/ci-app-manifests.py), list the rest. No cluster access.
+# Each deploy: render, server-side dry run, diff, apply, restart, wait for every Deployment and StatefulSet, smoke-test
+# the site, then (job crewconfig) restore the CrewAI configuration from crewconfig/ through the site's API
+# (crewconfig.yml: it waits for the database, the migrations and the SEO agent, plans, applies in one transaction with
+# this commit as the revision, verifies; an admin's change made on the site since the last sync is kept, never
+# overwritten). A failure there fails that stage and changes nothing; the deployment itself stays done. It needs
+# secret JITHENDAR_CREWAI_KEY.
 # Rollback: moks-cms also pushes pr-<number>; `kubectl -n jithendar set image deployment/jithendar-com
-# jithendar-com=registry.jithendar.com/jithendar/moks-cms:pr-<n>` runs an earlier release until the next deploy.
+# web=registry.jithendar.com/jithendar/moks-cms:pr-<n> seo-agent=registry.jithendar.com/jithendar/moks-cms:pr-<n>`
+# runs an earlier release until the next deploy.
 #
 # What CI applies, all in namespace jithendar:
 #   site               everything in kubernetes/kustomization.yaml except Secrets and cluster-wide RBAC: the
@@ -44,11 +43,19 @@ name: deploy to kubernetes
 # again whenever the ClusterRole in 85-ci-applier.yaml changes (CI cannot apply it).
 
 on:
-  repository_dispatch:
-    types: [moks-cms-released]
   workflow_dispatch:
+  push:
+    branches: [master]
+    # The same paths for both events.
+    paths:
+      - 'kubernetes/**'
+      - 'site.json'
+      - 'config/**'
+      - 'scripts/manifests.sh'
+      - 'scripts/ci-app-manifests.py'
+      - '.github/jithendar-ci-applier.yaml'
+      - '.github/workflows/deploy-kubernetes.yml'
   pull_request:
-    types: [opened, synchronize, reopened, closed]
     paths:
       - 'kubernetes/**'
       - 'site.json'
@@ -61,24 +68,22 @@ on:
 permissions:
   contents: read
 
-# One deployment at a time, never cancelled half way.
-# Each moks-cms component's dispatches have their own group, so one release never replaces another waiting one.
+# Pull requests: a new push cancels the plan it replaces. Deploys: one at a time, never cancelled half way (job
+# `deploy` has its own group as well); a newer one waiting replaces an older one that has not started.
 concurrency:
-  group: deploy-kubernetes-${{ github.event.client_payload.component || github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
+  group: deploy-kubernetes-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Pull requests only: a deploy renders and checks the same objects itself (step "Render the objects CI applies").
   plan:
-    if: >-
-      (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'closed' || github.event.pull_request.merged == true)))
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # A merged pull request is built from its merge commit on the default branch.
-          ref: ${{ (github.event.action == 'closed' && github.event.pull_request.merge_commit_sha) || '' }}
       - uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
         with:
           version: v1.35.0
@@ -98,14 +103,9 @@ jobs:
           done
 
   deploy:
-    needs: plan
     if: >-
-      !cancelled() && needs.plan.result == 'success' && vars.MINIKUBE_DEPLOY == 'true' && (
-        github.event_name == 'repository_dispatch' ||
-        (github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
-        (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true &&
-         github.event.pull_request.base.ref == github.event.repository.default_branch)
-      )
+      vars.MINIKUBE_DEPLOY == 'true' && github.event_name != 'pull_request' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     concurrency:
@@ -115,8 +115,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # A merged pull request is built from its merge commit on the default branch.
-          ref: ${{ (github.event.action == 'closed' && github.event.pull_request.merge_commit_sha) || '' }}
       - uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
         with:
           version: v1.35.0
@@ -137,8 +135,6 @@ jobs:
       - name: Apply to mk4
         id: apply
         env:
-          EVENT: ${{ github.event_name }}
-          COMPONENT: ${{ github.event.client_payload.component }}
           MK4_API_SERVER: ${{ vars.MK4_API_SERVER }}
           MK4_CA_DATA: ${{ vars.MK4_CA_DATA }}
           MK4_CI_APPLY_TOKEN: ${{ secrets.MK4_CI_APPLY_TOKEN }}
@@ -171,15 +167,9 @@ jobs:
 
           for g in "${groups[@]}"; do kubectl apply -f "$RUNNER_TEMP/$g.yaml"; done
 
-          # A restart pulls the newest :latest (imagePullPolicy Always). A manual run or a merged pull request
-          # restarts every Deployment it applies; a release only the component that was released.
+          # A restart pulls the newest :latest (imagePullPolicy Always): every Deployment this deploy applies.
           ns=jithendar
-          case "$EVENT:$COMPONENT" in
-            repository_dispatch:www) wanted=(deployment/jithendar-com) ;;
-            repository_dispatch:seo-agent) wanted=(deployment/seo-agent) ;;
-            repository_dispatch:*) echo "::error::Unknown component: $COMPONENT"; exit 1 ;;
-            *) mapfile -t wanted < <(grep '^deployment/' "$RUNNER_TEMP/rollouts.txt" || true) ;;
-          esac
+          mapfile -t wanted < <(grep '^deployment/' "$RUNNER_TEMP/rollouts.txt" || true)
           # Pods read a ConfigMap only when they start (envFrom), so a changed ConfigMap also restarts its group's
           # Deployments; otherwise the new values would wait for the next image release.
           for g in "${groups[@]}"; do
@@ -248,6 +238,4 @@ jobs:
     needs: deploy
     if: ${{ !cancelled() && needs.deploy.result == 'success' }}
     uses: ./.github/workflows/crewconfig.yml
-    with:
-      ref: ${{ (github.event.action == 'closed' && github.event.pull_request.merge_commit_sha) || '' }}
     secrets: inherit

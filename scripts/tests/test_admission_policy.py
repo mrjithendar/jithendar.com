@@ -8,7 +8,7 @@ field, so a pod-template field nobody listed is a field a leaked token could cha
 only (no cluster, no CEL evaluation): every field the four Deployments use must be compared by a policy or named
 below as deliberately left alone, together with the fields that are dangerous even though no manifest sets them.
 
-CI runs them in .github/workflows/ci-repo.yml (job "hygiene").
+CI runs them in .github/workflows/check.yml (job "scripts").
 """
 from __future__ import annotations
 
