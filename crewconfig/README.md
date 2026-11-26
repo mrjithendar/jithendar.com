@@ -12,8 +12,8 @@ repository editor; `manifest.json` is rewritten by both (an import only warns wh
 | `categories/categories.yaml` | Categories | 7 | imported |
 | `sources/sources.yaml` | Content sources | 0 | imported |
 | `crews/` | Crews | 5 | imported |
-| `agents/` | Agents | 16 | imported |
-| `tasks/` | Tasks | 17 | imported |
+| `agents/` | Agents | 17 | imported |
+| `tasks/` | Tasks | 18 | imported |
 | `skills/` | Skills | 22 | imported |
 | `flows/` | Flows | 21 | imported |
 | `schedules/schedules.yaml` | Schedules | 15 | imported |
