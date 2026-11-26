@@ -16,7 +16,8 @@ Two selections (.github/workflows/deploy-kubernetes.yml):
 Never applied by CI in either selection: Secrets (CI cannot read or write them), cluster-wide RBAC, ClusterIssuers,
 the gVisor RuntimeClass, admission policies and CronJobs.
 
-A kind in neither list stops the run (exit 2), so a new kind gets a deliberate decision. Needs PyYAML.
+A kind in neither list stops the run (exit 2), so a new kind gets a deliberate decision. So does a value still
+SET-ME (e.g. kubernetes/35-autoscaling.yaml): a number the owner has not chosen yet, named with its field. Needs PyYAML.
 """
 import argparse
 import sys
@@ -79,6 +80,20 @@ def group_of(api_version: str) -> str:
     return api_version.split("/")[0] if "/" in api_version else ""
 
 
+# A value a manifest leaves for the owner to choose. Rendered manifests carry no comments, so every SET-ME left is a
+# value, never a note.
+UNSET = "SET-ME"
+
+
+def unset_fields(node, path: str = "") -> list[str]:
+    """Paths (spec.triggers[0].metadata.threshold) whose value is still UNSET."""
+    if isinstance(node, dict):
+        return [p for k, v in node.items() for p in unset_fields(v, f"{path}.{k}" if path else str(k))]
+    if isinstance(node, list):
+        return [p for i, v in enumerate(node) for p in unset_fields(v, f"{path}[{i}]")]
+    return [path] if node == UNSET else []
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--rollouts", help="write one kind/name per line for `kubectl rollout status`")
@@ -95,6 +110,8 @@ def main() -> int:
         name, namespace = meta.get("name", "?"), meta.get("namespace")
         key = (group_of(doc.get("apiVersion", "")), kind)
         label = f"{kind} {namespace + '/' if namespace else ''}{name}"
+        for field in unset_fields(doc):
+            problems.append(f"{label}: {field} is {UNSET}, a value the owner has not chosen yet")
         if key == ("", "Namespace") and key in apply_kinds:
             if name != NAMESPACE:
                 problems.append(f"{label}: CI applies only namespace {NAMESPACE}")
