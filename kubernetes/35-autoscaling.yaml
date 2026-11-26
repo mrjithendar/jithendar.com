@@ -31,7 +31,7 @@ spec:
   # Upper bound. Each pod requests 250m CPU and 512Mi memory and opens up to DATABASE_POOL_MAX (5) database
   # connections through PgBouncer (session mode, 20 server connections per pooler pod, two pods; role jithendar
   # limited to 50, the seo-agent included): beyond that, requests wait for a connection.
-  maxReplicaCount: SET-ME
+  maxReplicaCount: 8
   # Optional, add when wanted:
   # fallback:                  # pods to run when the Prometheus trigger fails this many times in a row
   #   failureThreshold: SET-ME
@@ -50,10 +50,10 @@ spec:
         serverAddress: http://prometheus.monitoring:9090/prometheus
         query: sum(rate(istio_requests_total{reporter="destination",destination_workload_namespace="jithendar",destination_workload="jithendar-com",destination_service_name="jithendar-com"}[2m]))
         # Requests per second one pod should take; KEDA runs ceil(total / threshold) pods.
-        threshold: SET-ME
+        threshold: "5"
     - type: cpu
       metricType: Utilization
       metadata:
         containerName: web
         # Percent of the web container's CPU request (250m).
-        value: SET-ME
+        value: "200"
