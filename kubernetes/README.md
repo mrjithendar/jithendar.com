@@ -14,7 +14,8 @@ belongs to; each group is applied on its own, and `scripts/manifests.sh <group>`
 | File | Resources |
 |---|---|
 | `00-namespace.yaml` | Namespace `jithendar` |
-| `30-jithendar-com.yaml` | Deployment (2 replicas), Service, Service `jithendar-com-internal` (SEO agent callbacks, port 9465, never routed publicly), PodDisruptionBudget, NetworkPolicy `jithendar-com`, NetworkPolicy `jithendar-com-cache-bus` (egress to the Valkey pods, pod port 6380 only) |
+| `30-jithendar-com.yaml` | Deployment (no replica count: KEDA's, `35-autoscaling.yaml`), Service, Service `jithendar-com-internal` (SEO agent callbacks, port 9465, never routed publicly), PodDisruptionBudget, NetworkPolicy `jithendar-com`, NetworkPolicy `jithendar-com-cache-bus` (egress to the Valkey pods, pod port 6380 only) |
+| `35-autoscaling.yaml` | KEDA ScaledObject `jithendar-com`: at least 2 pods, more on requests per second (Prometheus) or the web container's CPU; KEDA makes HPA `keda-hpa-jithendar-com` ("Autoscaling" below) |
 | `60-istio-routing.yaml` | Delegate VirtualService `jithendar-com-site`: the default route of the jithendar.com routing table in the miniKube repo (`deploy/minikube/istio/edge`, which also does www → apex, HTTP → HTTPS and compression). Strips client trace headers |
 | `70-observability.yaml` | Headless Service `jithendar-com-metrics` (Prometheus, port 9464) and Role/RoleBinding `alloy-logs`; see moks-cms `services/www/docs/OBSERVABILITY.md` |
 | `80-ci-deployer.yaml` | ServiceAccount `github-ci-deployer`: CI may only set the image of, and restart, the site, the executor and the SEO agent (`scripts/setup-ci-deployer.sh`) |
@@ -41,6 +42,50 @@ The site's database is `jithendar` on the shared cluster `postgres-db/postgres-c
 It was copied there from the old `jithendar-postgres` StatefulSet on 2026-11-09 (`dbMigration.sh` in the workspace,
 row counts verified). The site's own Adminer (`/db`) and `db.jithendar.com` are gone with it: use the cluster's
 `/postgres` UI and `postgres.jithendar.com` (miniKube repo, `deploy/minikube/postgres/access`).
+
+## Autoscaling (KEDA)
+
+KEDA (miniKube repo, `minikube-infrastructure/keda.tf`, namespace `keda`) sets how many site pods run: ScaledObject
+`jithendar-com` in `35-autoscaling.yaml`, from which KEDA makes and updates HPA `keda-hpa-jithendar-com`. Never fewer
+than 2 pods. More when the requests per second per pod (Prometheus, the public Service `jithendar-com` only) or the
+`web` container's CPU (Metrics Server) pass their thresholds; the HPA follows whichever asks for more. Scaling down
+waits 300 s (the HPA's default). `30-jithendar-com.yaml` has no `replicas`: a count there would be applied over
+KEDA's on every deploy. CI applies the ScaledObject (Role `github-ci-applier`, `scripts/ci-app-manifests.py`).
+
+**The owner's numbers.** `maxReplicaCount`, the Prometheus `threshold` (requests per second one pod should take) and
+the CPU `value` (percent of the web container's 250m request) are `SET-ME` until chosen; `fallback` and a slower
+scale-down are optional, commented out in the file. While any is `SET-ME`, the deploy's server-side dry run refuses the
+file and `scripts/tests/test_autoscaling.py` fails. What bounds `maxReplicaCount`:
+
+- each pod requests 250m CPU and 512Mi memory, and the topology spread (`DoNotSchedule`, one skew across the three
+  workers) puts the third pod on whichever worker has none: that worker must have the room;
+- each pod opens up to `DATABASE_POOL_MAX` (5) connections through PgBouncer in session mode (20 server connections per
+  pooler pod, two pods; role `jithendar` limited to 50, the seo-agent included). Past that, requests queue for a
+  connection.
+
+**Once, before the first deploy without `replicas`.** `kubectl apply` (client-side) remembers the last applied
+manifest in an annotation. Applying one without `replicas` when the annotation still has `replicas: 2` deletes the
+field, and the Deployment drops to 1 pod until KEDA's HPA brings it back to 2. Rewrite the annotation from the new
+manifest first, right before merging; if another deploy runs in between, do it again:
+
+```sh
+scripts/manifests.sh site | python3 -c 'import sys, yaml; print(yaml.safe_dump(next(d for d in yaml.safe_load_all(sys.stdin) if d and d["kind"] == "Deployment" and d["metadata"]["name"] == "jithendar-com")))' > /tmp/jithendar-com-deployment.yaml
+kubectl -n jithendar apply set-last-applied -f /tmp/jithendar-com-deployment.yaml
+kubectl -n jithendar get deployment jithendar-com -o jsonpath='{.metadata.annotations.kubectl\.kubernetes\.io/last-applied-configuration}' | python3 -c 'import json, sys; print("replicas" in json.load(sys.stdin)["spec"])'   # False
+```
+
+**Checking it**
+
+```sh
+kubectl -n jithendar get scaledobject jithendar-com        # READY True; ACTIVE True while a trigger is above its threshold
+kubectl -n jithendar get hpa keda-hpa-jithendar-com        # both metrics with current values, MINPODS 2
+kubectl -n jithendar describe scaledobject jithendar-com   # conditions and events (a Prometheus error shows here)
+kubectl -n keda logs deploy/keda-operator -c keda-operator --tail=50
+```
+
+`READY False` with a Prometheus error: KEDA's operator could not query `prometheus.monitoring` (its sidecar, or
+monitoring's AuthorizationPolicy in the miniKube repo). Pods `Pending` after a scale-up: no worker has the room the
+topology spread allows.
 
 ## Traefik (gone)
 

@@ -1,0 +1,58 @@
+# How many site pods run: KEDA (installed on mk4 by k8s-deployments, minikube-infrastructure/keda.tf) owns the
+# replica count of Deployment jithendar-com through HPA keda-hpa-jithendar-com, which it creates and updates itself.
+# 30-jithendar-com.yaml therefore sets no replicas: a kubectl apply of a count would undo KEDA's on every deploy.
+#
+# SET-ME values are the owner's to choose (kubernetes/README.md, "Autoscaling"). Until they are numbers, the deploy's
+# server-side dry run refuses this file and scripts/tests/test_autoscaling.py fails, so nothing half-set reaches mk4.
+#
+# Two triggers; the HPA follows whichever asks for more pods:
+#   prometheus  requests per second per pod, counted by the pods' sidecars (Istio), public Service jithendar-com only
+#               (not Prometheus's scrapes, not the seo-agent's callbacks on jithendar-com-internal). Through
+#               Cloudflare, so cached pages never reach it.
+#   cpu         the web container's CPU against its request (250m), the sidecar left out. Read from Metrics Server,
+#               so it keeps working when Prometheus does not.
+# When Prometheus cannot be read, the HPA scales up on CPU but never down, and minReplicaCount always holds.
+# Scale-down waits for the HPA's default stabilization window (300 s) unless `advanced` below says otherwise.
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: jithendar-com
+  namespace: jithendar
+  labels:
+    app.kubernetes.io/part-of: jithendar-com
+spec:
+  scaleTargetRef:
+    name: jithendar-com
+  # Two pods on two nodes at least (the Deployment's topology spread), as before KEDA; above the
+  # PodDisruptionBudget's minAvailable 1, so a node drain still keeps one pod serving.
+  minReplicaCount: 2
+  # Upper bound. Each pod requests 250m CPU and 512Mi memory and opens up to DATABASE_POOL_MAX (5) database
+  # connections through PgBouncer (session mode, 20 server connections per pooler pod, two pods; role jithendar
+  # limited to 50, the seo-agent included): beyond that, requests wait for a connection.
+  maxReplicaCount: SET-ME
+  # Optional, add when wanted:
+  # fallback:                  # pods to run when the Prometheus trigger fails this many times in a row
+  #   failureThreshold: SET-ME
+  #   replicas: SET-ME
+  # advanced:
+  #   horizontalPodAutoscalerConfig:
+  #     behavior:
+  #       scaleDown:
+  #         stabilizationWindowSeconds: SET-ME   # default 300
+  triggers:
+    - type: prometheus
+      metricType: AverageValue
+      metadata:
+        # Prometheus's route prefix is /prometheus. KEDA's operator calls it through its sidecar (mTLS); namespace
+        # keda is one of monitoring's allowed callers (k8s-deployments, deploy/minikube/istio/mesh/values.yaml).
+        serverAddress: http://prometheus.monitoring:9090/prometheus
+        query: sum(rate(istio_requests_total{reporter="destination",destination_workload_namespace="jithendar",destination_workload="jithendar-com",destination_service_name="jithendar-com"}[2m]))
+        # Requests per second one pod should take; KEDA runs ceil(total / threshold) pods.
+        threshold: SET-ME
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        containerName: web
+        # Percent of the web container's CPU request (250m).
+        value: SET-ME
