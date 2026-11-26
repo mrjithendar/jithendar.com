@@ -10,7 +10,8 @@
 # shared RAG_BEARER_TOKEN from rag/rag-secrets (a Secret cannot be read across namespaces); FORCE_SHARED_TOKEN=1 copies
 # the shared one even over the agent's own. RAG_API_URL: $RAG_API_URL if set, otherwise rag-api's cluster address.
 # Nothing is printed, written to disk or committed; tokens travel on stdin.
-# Until this Secret exists the agent runs with moks-rag switched off (both keys are optional in seo-agent-40).
+# Until this Secret exists the agent runs with moks-rag switched off (both keys are optional; the seo-agent container
+# of the site's pods reads them, kubernetes/30-jithendar-com.yaml).
 set -euo pipefail
 # shellcheck source=/dev/null
 source "$(dirname -- "${BASH_SOURCE[0]}")/lib/kube-context.sh"
@@ -37,5 +38,6 @@ RU="$url" RT="$token" python3 -c 'import json, os; print(json.dumps({
 unset token shared current
 
 echo "Stored seo-agent-rag in $NS with $kept."
-echo "Restart the agent to use it (Recreate: check that no flow is running first):"
-echo "  kubectl -n $NS rollout restart deploy/seo-agent"
+echo "Restart the site's pods to use it: the agent is their seo-agent container (moks-cms D-105), one pod at a time, no"
+echo "downtime. A flow still running on a pod stops with it, so check AI & SEO → Flow runs first:"
+echo "  kubectl -n $NS rollout restart deploy/jithendar-com"

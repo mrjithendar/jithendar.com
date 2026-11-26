@@ -33,6 +33,6 @@ AT="$agent_token" CT="$callback_token" python3 -c 'import json, os; print(json.d
   | k patch secret jithendar-com-env --type merge --patch-file /dev/stdin >/dev/null
 unset agent_token callback_token ANTHROPIC_API_KEY
 
-echo "Stored seo-agent-env and the site's SEO_AGENT_TOKEN / SEO_AGENT_CALLBACK_TOKEN in $NS. Restart both:"
-echo "  kubectl -n $NS rollout restart deploy/seo-agent"
+echo "Stored seo-agent-env and the site's SEO_AGENT_TOKEN / SEO_AGENT_CALLBACK_TOKEN in $NS. Restart the site's pods (the"
+echo "web app and the agent are two containers of each, moks-cms D-105, so one restart gives both the new tokens):"
 echo "  kubectl -n $NS rollout restart deploy/jithendar-com"
