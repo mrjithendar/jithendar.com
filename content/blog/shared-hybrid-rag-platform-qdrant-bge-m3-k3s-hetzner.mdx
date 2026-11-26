@@ -1,0 +1,374 @@
+---
+title: "One Hybrid RAG Platform for Three Services: Qdrant, bge-m3 and Claude on CPU-Only k3s"
+slug: shared-hybrid-rag-platform-qdrant-bge-m3-k3s-hetzner
+description: "How we run Qdrant hybrid search, bge-m3, docling-serve, LiteLLM and Open WebUI in one rag namespace on CPU-only Hetzner k3s, deployed by Argo CD."
+seoTitle: "Self-Hosted Hybrid RAG on k3s: Qdrant, bge-m3, LiteLLM and Argo CD"
+seoDescription: "A shared hybrid RAG platform on CPU-only Hetzner k3s: Qdrant dense + sparse RRF, bge-m3, LiteLLM to Claude, Open WebUI, Argo CD and Istio. What we learned."
+author: jithendar-dharmapuri
+category: kubernetes
+tags: [RAG, Hybrid Search, Qdrant, bge-m3, LiteLLM, Claude, Open WebUI, Kubernetes, k3s, Hetzner, Argo CD, Istio, GitOps]
+contentType: tutorial
+status: review
+featuredImage:
+  src: /images/moks-rag/moks-rag-architecture.png
+  alt: "The moks-rag platform in namespace rag on mk4. On the left, the callers: a browser opening jithendar.com/chat, and moks-sre-agent, moks-cms and moks-seo-agent, all three marked not connected yet. In the middle, namespace rag with Istio STRICT mTLS and deny by default: open-webui (Open WebUI 0.13.5, three virtual models) calls rag-api over /v1 with a token. rag-api, a FastAPI app served under /rag, checks a Bearer token, offers /ingest, /query and /documents plus OpenAI-style /v1 endpoints, chunks text at 1500 characters with 200 of overlap and makes hashed BM25 sparse vectors. It sends files to docling-serve (PDF, DOCX and HTML to Markdown), text to bge-m3 on Ollama 0.40.16 for dense 1024-dimension vectors, vectors to Qdrant 1.20.2 (three collections with dense and sparse named vectors, IDF on the sparse side) for upserts and RRF search, and the prompt to the LiteLLM proxy. On the right, LiteLLM calls the Anthropic API (Sonnet 5.5, Haiku 5.5); a GPU node with vLLM behind the same LiteLLM is marked as later. A note says every workload is Synced and Healthy, the collections hold 0 points, no service calls rag-api yet, and only /rag and /chat have routes."
+  width: 2002
+  height: 1174
+related:
+  - blog/bge-m3-ollama-pgvector-moks-sre-retire-opensearch
+  - blog/argocd-gitops-deploy-k3s-app-of-apps
+  - blog/moks-rag-and-skills-design
+  - blog/four-ai-systems-one-cluster
+sources:
+  - title: "Hybrid and Multi-Stage Queries"
+    url: https://qdrant.tech/documentation/concepts/hybrid-queries/
+    publisher: Qdrant
+  - title: "qdrant-helm"
+    url: https://github.com/qdrant/qdrant-helm
+    publisher: Qdrant
+  - title: "BAAI/bge-m3"
+    url: https://huggingface.co/BAAI/bge-m3
+    publisher: Hugging Face
+  - title: "bge-m3"
+    url: https://ollama.com/library/bge-m3
+    publisher: Ollama
+  - title: "docling-serve"
+    url: https://github.com/docling-project/docling-serve
+    publisher: Docling Project
+  - title: "Virtual Keys"
+    url: https://docs.litellm.ai/docs/proxy/virtual_keys
+    publisher: LiteLLM
+  - title: "Environment Variable Configuration"
+    url: https://docs.openwebui.com/getting-started/env-configuration
+    publisher: Open WebUI
+  - title: "Multiple Sources for an Application"
+    url: https://argo-cd.readthedocs.io/en/stable/user-guide/multiple_sources/
+    publisher: Argo CD
+  - title: "Projects"
+    url: https://argo-cd.readthedocs.io/en/stable/user-guide/projects/
+    publisher: Argo CD
+  - title: "Virtual Service"
+    url: https://istio.io/latest/docs/reference/config/networking/virtual-service/
+    publisher: Istio
+  - title: "Default cache behavior"
+    url: https://developers.cloudflare.com/cache/concepts/default-cache-behavior/
+    publisher: Cloudflare
+---
+
+<Todo>Drafted 2026-11-26 from mrjithendar/moks-rag at dc91b07 and read-only checks on mk4 and the public site (evidence in docs/knowledge-sharing/moks-rag/evidence/checks.txt). Before publishing: (1) Fix, or at least decide on, the three gaps the article describes, because publishing them unfixed points readers at a live cluster: the CI token plus the unrestricted default AppProject, Cloudflare caching /rag and /chat, and /rag/docs being public. (2) moks-sre-agent (values-hetzner.yaml) and seo-agent (ConfigMap and NetworkPolicy in jithendar.com) still point at http://bge-m3.embeddings:11434, which no longer exists. Update "Moving bge-m3" once they point at rag. (3) None of the three services calls rag-api yet and every collection is empty. If you connect one before publishing, update the collections table, "When rag-api is down" and the figures (build_diagrams.py). (4) There are no latency or retrieval-quality numbers yet. Add them after the first real ingest. (5) Decide whether to say this was written with an AI assistant (see the AI use policy). (6) Then set status to published with a publishedAt time.</Todo>
+
+We had three services that each wanted retrieval-augmented generation, and we were on our way to building it three times. `moks-sre-agent` keeps runbooks and post-mortems in its own Postgres with pgvector, plus its own embedder and reranker pods. `moks-seo-agent` keeps jithendar.com's articles in a second pgvector store, with its own embedding settings and calibration. `moks-cms` needed its published articles searchable too, and kept in step with publish and unpublish. That's three chunkers, three embedding paths, three indexes to keep fresh and three sets of quirks to debug.
+
+So we built one platform instead: a `rag` namespace on our Hetzner k3s cluster with one vector store (Qdrant), one embedding model (bge-m3), one document parser (docling-serve), one model gateway (LiteLLM, in front of Anthropic's Claude), one API (`rag-api`) and one chat UI (Open WebUI). Each service gets its own collection.
+
+This post is how it's built and deployed, with the trade-offs. It also says plainly where we are: on 26 November 2026 the platform is live and healthy, but **no service is connected to it yet** and every collection is empty. Some of what follows is design, and I say which parts.
+
+## The constraint: CPUs only
+
+The cluster is called mk4. It's k3s on four Hetzner ARM64 machines: a `cax11` control plane (2 vCPU, 4 GB) and three `cax21` workers (4 vCPU, 8 GB each). There's no GPU, and the workers already carry the site, MOKS, monitoring and a database.
+
+That decides the shape. We call it **Path A**:
+
+- **Retrieval runs in the cluster.** Parsing, chunking, embedding and vector search all work on CPUs. bge-m3 at 567M parameters is the heaviest piece, and it fits.
+- **Generation leaves the cluster.** Answers come from Claude (`claude-sonnet-5-5`, with `claude-haiku-5-5` for cheap calls) through LiteLLM.
+- **The door stays open for Path B.** `rag-api` only speaks the OpenAI chat format to LiteLLM. A Hetzner GPU node running vLLM would be one more entry in LiteLLM's `model_list`. `rag-api` doesn't change.
+
+## Architecture: one namespace, short names
+
+![The moks-rag platform in namespace rag on mk4. On the left, the callers: a browser opening jithendar.com/chat, and moks-sre-agent, moks-cms and moks-seo-agent, all three marked not connected yet. In the middle, namespace rag with Istio STRICT mTLS and deny by default: open-webui (Open WebUI 0.13.5, three virtual models) calls rag-api over /v1 with a token. rag-api, a FastAPI app served under /rag, checks a Bearer token, offers /ingest, /query and /documents plus OpenAI-style /v1 endpoints, chunks text at 1500 characters with 200 of overlap and makes hashed BM25 sparse vectors. It sends files to docling-serve (PDF, DOCX and HTML to Markdown), text to bge-m3 on Ollama 0.40.16 for dense 1024-dimension vectors, vectors to Qdrant 1.20.2 (three collections with dense and sparse named vectors, IDF on the sparse side) for upserts and RRF search, and the prompt to the LiteLLM proxy. On the right, LiteLLM calls the Anthropic API (Sonnet 5.5, Haiku 5.5); a GPU node with vLLM behind the same LiteLLM is marked as later. A note says every workload is Synced and Healthy, the collections hold 0 points, no service calls rag-api yet, and only /rag and /chat have routes.](/images/moks-rag/moks-rag-architecture.svg)
+
+Six workloads, all in namespace `rag`, all `ClusterIP`:
+
+| Component | Runs | Address inside the cluster | Job |
+|---|---|---|---|
+| `rag-api` | our FastAPI image, tagged by commit | `rag-api.rag.svc.cluster.local:8000` | Auth, chunking, sparse vectors, hybrid search, prompts, OpenAI-style `/v1` |
+| `bge-m3` | `ollama/ollama:0.40.16` (pinned digest), model `bge-m3:567m` | `bge-m3.rag.svc.cluster.local:8001` and `:11434` | Dense 1024-dimension embeddings |
+| `qdrant` | Helm chart `qdrant/qdrant`, image `v1.20.2` | `qdrant.rag.svc.cluster.local:6333` | Vectors, three collections, RRF fusion |
+| `docling-serve` | `docling-serve-cpu` | `docling-serve.rag.svc.cluster.local:5001` | PDF, DOCX and HTML to Markdown |
+| `litellm` | `berriai/litellm` | `litellm.rag.svc.cluster.local:4000/v1` | OpenAI-compatible gateway to Anthropic |
+| `open-webui` | `open-webui:main` (0.13.5 today) | `open-webui.rag.svc.cluster.local:80` | Chat UI over `rag-api`'s `/v1` |
+
+**Ingestion:** a caller posts text or a file to `/ingest`. Plain text and Markdown are read as they are, and everything else goes to docling-serve first. `rag-api` splits the text on paragraphs, then sentences, into 1,500-character chunks with 200 characters of overlap. It gets a dense vector for each chunk from bge-m3, builds a sparse vector itself, and upserts both into the caller's collection.
+
+**Query:** `/query` (or `/v1/chat/completions` from Open WebUI) embeds the question the same two ways. Qdrant runs one prefetch per vector type and fuses the two lists with Reciprocal Rank Fusion (RRF). The top six chunks go into a system prompt, and LiteLLM sends that to Claude.
+
+### Why everything lives in `rag`
+
+bge-m3 used to run in its own `embeddings` namespace, deployed by Terraform from the cluster repository. We moved it into `rag` for three reasons:
+
+1. **One boundary to reason about.** One `PeerAuthentication` (STRICT), one default-deny `AuthorizationPolicy`, one Argo CD `AppProject` whose only destination is `rag`. A service in another namespace needs an explicit rule to get in.
+2. **One release unit.** bge-m3's model, its vector size (1024) and Qdrant's collection schema have to agree. Now they ship from the same repository.
+3. **Short, predictable names.** Every internal URL is `<service>.rag.svc.cluster.local`, and `rag-api` reads them from environment variables.
+
+The bge-m3 manifest came across almost unchanged: an init container downloads `bge-m3:567m` once onto a volume and refuses to serve if the weights don't match the pinned SHA-256 digest. The Service keeps the old Ollama port, `11434`, next to the new `8001`, so old callers only need a new host name.
+
+### Moving bge-m3: do the callers first
+
+The move isn't finished, and the order we did it in is the lesson. The old `embeddings` release was switched off in the cluster repository (its Terraform files renamed to `.tfbk`) the same morning the new copy came up in `rag`. But two callers still had the old address:
+
+- `moks-sre-agent`'s Hetzner values seed its embedding model as `http://bge-m3.embeddings:11434`.
+- seo-agent's ConfigMap says `OLLAMA_URL=http://bge-m3.embeddings:11434`, and its NetworkPolicy only allows egress to namespace `embeddings`.
+
+seo-agent had just been switched from its in-process 384-dimension model to bge-m3. It's waiting for a full reindex into 1,024 dimensions, and until then "Ask the Blog" uses its fallback. That reindex can't reach bge-m3 now.
+
+Readers haven't lost anything they had: Ask the Blog was already on its fallback, waiting for that reindex. But the right order is:
+
+1. Bring up the new copy. Check it returns 1,024-dimension vectors.
+2. Point every caller at `bge-m3.rag.svc.cluster.local:11434` and move their egress rules to namespace `rag`. The new bge-m3 policies already allow both callers (seo-agent's `default` and MOKS's `moks` service accounts, checked on 26 November).
+3. Watch the old pod's log until it gets no traffic.
+4. Only then delete the old release and namespace.
+
+### Where the sparse vectors come from
+
+bge-m3 can produce three kinds of output: dense vectors, sparse lexical weights and multi-vector (ColBERT) representations. **Ollama only serves the dense one.** So the "sparse" side of our hybrid search doesn't come from bge-m3. `rag-api` builds it:
+
+- It lowercases the text, drops a short stopword list and hashes each remaining token to a 32-bit index with BLAKE2b.
+- Each index gets a BM25-style saturated term-frequency weight.
+- Qdrant's sparse index applies `Modifier.IDF`, so inverse document frequency is computed by Qdrant at query time, per collection.
+
+That's plain BM25 keyword matching. It's not learned sparse retrieval, but it's what we wanted for exact tokens like `CrashLoopBackOff`, `OOMKilled` or an HTTP status code, which dense vectors tend to blur. There's a switch (`SPARSE_MODE=bge_m3`) for a server that does return bge-m3's lexical weights. Nothing on mk4 serves that today.
+
+### The hybrid query
+
+This is the heart of `rag-api`'s Qdrant client, trimmed:
+
+```python
+prefetch_k = max(self._prefetch_limit, top_k * 3)          # 24 by default
+prefetches = [
+    models.Prefetch(query=dense_vector, using="dense",
+                    limit=prefetch_k, filter=query_filter),
+]
+if sparse_vector.indices:                                  # a query of stopwords has none
+    prefetches.append(models.Prefetch(
+        query=models.SparseVector(indices=sparse_vector.indices,
+                                  values=sparse_vector.values),
+        using="sparse", limit=prefetch_k, filter=query_filter))
+
+result = await self._client.query_points(
+    collection_name=collection,                            # exactly one collection
+    prefetch=prefetches,
+    query=models.FusionQuery(fusion=models.Fusion.RRF),
+    limit=top_k,                                           # 6 by default
+    with_payload=True,
+    query_filter=query_filter,
+)
+```
+
+Qdrant does the fusion server-side, so there's one round trip and no score normalisation in Python. RRF uses ranks, not raw scores, which is why it can combine a cosine similarity and a BM25 score without tuning. The flip side: plain RRF weights both lists equally for every collection. More on that below.
+
+Each collection is created with two named vectors: `dense` (1024, cosine) and `sparse` (with the IDF modifier). There's also a keyword index on `doc_id`, so deleting or replacing one document is a filtered delete, not a scan.
+
+## Three collections, one API
+
+![Three collections behind one API. On the left, three planned callers: moks-sre-agent (investigations look up runbooks), moks-cms (on publish, unpublish and delete) and moks-seo-agent (internal links and cannibalisation checks). In the middle, rag-api checks the token; every request carries the token, one collection name and X-Service-Name. On the right, Qdrant has one collection per service: sre_knowledge (runbooks, post-mortems, manifests; exact error codes need the sparse side), cms_content (published articles; upsert by doc_id, DELETE /documents by doc_id on unpublish) and seo_intel (audits, SERP and keyword notes; seo-agent also reads cms_content). Dashed planned arrows: moks-sre-agent reads and writes sre_knowledge, moks-cms writes cms_content, moks-seo-agent reads and writes seo_intel and reads cms_content. Below, enforced today: one shared Bearer token, every request names one collection, a keyword index on doc_id, and ingested_by saved on every chunk. Not enforced yet: any token holder may read or write any collection, X-Service-Name is a claim anyone can make, no per-service budget, and no cross-collection query, so seo-agent makes two calls. At the bottom, next: one token per service, mapped to the collections it may use.](/images/moks-rag/moks-rag-collections.svg)
+
+Every request names one collection, and the collection name is checked against a fixed list of three. That's the isolation unit:
+
+| Service | Collection | What goes in | How it gets in (planned) | Retrieval |
+|---|---|---|---|---|
+| `moks-sre-agent` | `sre_knowledge` | Runbooks, post-mortems, Kubernetes manifests | Its nightly knowledge sync posts each changed file to `/ingest` with a stable `doc_id` | Hybrid RRF. Exact error strings are what the sparse side is for. |
+| `moks-cms` | `cms_content` | Published articles | On publish: `POST /ingest` with the article's ID as `doc_id`. On unpublish or delete: `DELETE /documents/<id>?collection=cms_content` | Hybrid RRF |
+| `moks-seo-agent` | `seo_intel`, and reads `cms_content` | Audit notes, SERP and keyword research | Its own runs write `seo_intel`; it reads `cms_content` for internal links and keyword cannibalisation | Hybrid RRF, two calls (one per collection) |
+| Open WebUI | one per virtual model | — | Read only | Three "models" in the picker: `moks-sre`, `moks-cms`, `moks-seo-agent` |
+
+Some details make the CMS sync safe to retry:
+
+- **Point IDs are deterministic:** `uuid5("<collection>:<doc_id>:<chunk index>")`. Ingesting the same article twice produces the same points, not duplicates.
+- **An upsert replaces the whole document.** `rag-api` deletes every chunk with that `doc_id` first, then writes the new ones. An article that shrinks from twelve chunks to eight leaves no orphans behind. The catch: delete-then-insert isn't atomic, so a query that lands in between won't find that article at all.
+- **Every chunk records who wrote it.** `ingested_by` is set from `X-Service-Name`.
+
+For services that run their own models, there's `include_answer: false`. `/query` then returns the ranked chunks and doesn't call Claude. moks-sre-agent's crew and seo-agent's flows already have an LLM, and they don't need a second one writing a summary they'll throw away.
+
+### What isolation doesn't cover yet
+
+Collections keep the data apart. They don't yet stop anyone reaching another service's data:
+
+- **There's one shared Bearer token.** Any caller holding it can read or write any of the three collections.
+- **`X-Service-Name` is a claim, not an identity.** `rag-api` logs whatever the caller sends, so "which service did this" is only as honest as the callers.
+- **The SRE collection gets no special weighting.** "High sparse weight for `sre_knowledge`" was in our design, but today every collection uses the same plain RRF. Changing that is cheap. Knowing whether it helps needs an evaluation set, and we don't have one for this corpus yet.
+
+The fix for the first two is the same: one token per service, mapped in `rag-api` to the collections that service may read or write. That's the next change to `rag-api`, and it should land before the first service connects.
+
+## GitOps: GitHub Actions, Argo CD and Istio
+
+### The repository
+
+```text
+moks-rag/
+├── app/                     # rag-api: FastAPI source, tests, Dockerfile
+├── deploy/
+│   ├── k8s/                 # Kustomize: namespace, bge-m3, docling-serve, litellm,
+│   │                        #   rag-api, open-webui, istio-routing (+ secret templates)
+│   └── argocd/              # AppProject, two Applications, Qdrant values, CI RBAC
+└── .github/workflows/
+    ├── build-and-deploy.yaml      # app/** → test, image, tag bump
+    └── deploy-argocd-apps.yaml    # deploy/argocd/** → apply the Argo CD objects
+```
+
+### The loop
+
+![How a commit to moks-rag reaches the cluster. In GitHub, build-and-deploy.yaml runs on changes under app: ruff and pytest, a buildx build for arm64 and amd64 under QEMU, a push to GHCR as the commit SHA and latest, then a commit of the new tag to main marked skip ci. GHCR holds ghcr.io/mrjithendar/moks-rag-api. deploy-argocd-apps.yaml runs on changes under deploy/argocd: it validates the YAML, renders Kustomize, applies the AppProject and two Applications, forces a hard refresh and waits for Healthy, using the token of github-rag-argocd-deployer, marked as failure point 1. In namespace argocd: Application moks-rag-stack (path deploy/k8s with Kustomize, prune, selfHeal, server-side apply) receives the new tag and syncs five Deployments in namespace rag (rag-api, bge-m3, docling-serve, litellm, open-webui, with Istio routes and policies; images pulled from GHCR and Docker Hub). AppProject moks-rag allows this repository and the Qdrant charts, only namespace rag, and has no Secret kind, so Argo never stores or prunes rag-secrets. Application moks-rag-qdrant uses chart qdrant 1.* with values from the repository and syncs StatefulSet qdrant (qdrant/qdrant v1.20.2, a 15 Gi hcloud-volumes claim). Secret rag-secrets is created by hand with kubectl and is never in Git. Note 1: the CI token may create any Application in namespace argocd, an Application can name the default project, and on mk4 that project allows every repository, namespace and cluster-wide kind.](/images/moks-rag/moks-rag-delivery.svg)
+
+There are two workflows, one per kind of change.
+
+**`build-and-deploy.yaml`** runs when `app/**` changes. It runs `ruff` and `pytest`, builds a multi-arch image (`linux/arm64,linux/amd64`, QEMU on a hosted runner), and pushes `ghcr.io/mrjithendar/moks-rag-api:<sha>` plus `:latest`. Then it rewrites `newTag` in `deploy/k8s/kustomization.yaml` and commits that to `main` with `[skip ci]`. Argo CD sees the commit and rolls out the new image. On 26 November the first build took 219 seconds, and the next one, with a warm cache, 88. Deploying by commit SHA means Git always says exactly which build runs, and a rollback is a `git revert`.
+
+**`deploy-argocd-apps.yaml`** runs when `deploy/argocd/**` changes. It applies the `AppProject` and both `Application`s, forces a hard refresh, and waits until both report `Synced` and `Healthy`. It authenticates with a ServiceAccount token that is only allowed to create and patch AppProjects and Applications in namespace `argocd`.
+
+Argo CD owns two Applications:
+
+- **`moks-rag-stack`** renders `deploy/k8s` with Kustomize: `prune: true`, `selfHeal: true`, `ServerSideApply=true`.
+- **`moks-rag-qdrant`** installs Qdrant's official Helm chart, with the values file taken from our repository. That's a multi-source Application:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: moks-rag-qdrant
+  namespace: argocd
+spec:
+  project: moks-rag
+  sources:
+    - repoURL: https://qdrant.github.io/qdrant-helm
+      chart: qdrant
+      targetRevision: "1.*"                # see "pin what you run" below
+      helm:
+        releaseName: qdrant
+        valueFiles:
+          - $values/deploy/argocd/qdrant-values.yaml
+    - repoURL: https://github.com/mrjithendar/moks-rag.git
+      targetRevision: main
+      ref: values                          # names the second source "$values"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rag
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true, PruneLast=true]
+```
+
+The `moks-rag` AppProject lists exactly two sources (this repository and Qdrant's chart repository), one destination (`rag`), and the resource kinds the stack uses. **It deliberately leaves out `Secret`.** `rag-secrets` (the Anthropic key, Qdrant's API key, LiteLLM's master key, `rag-api`'s Bearer token and Open WebUI's session key) is created once with `kubectl create secret`. Argo CD never stores it, never shows it as drift and can never prune it. The repository has SealedSecrets and External Secrets templates for when we want that in Git too.
+
+**A gap we found while writing this:** the CI token can create *any* Application in `argocd`, and an Application chooses its own `project`. On mk4 the `default` project allows every repository, every namespace and every cluster-scoped kind. So a leaked GitHub secret could create an Application in `default` that deploys anything anywhere. The token is effectively cluster-admin with an extra step. The fix belongs on the Argo CD side: restrict the `default` project (Argo CD lets you edit it, though not delete it) so it allows nothing, and the Role becomes as narrow as it looks.
+
+### Istio at the edge
+
+![From the internet to rag-api and Open WebUI. A browser asks for /chat and a service client asks for /rag with a Bearer token and X-Service-Name. Both pass Cloudflare's site cache rule, which caches responses that have no Cache-Control for an hour (failure point 1). In mk4, the root VirtualService jithendar-com in istio-ingress, from k8s-deployments, sends /rag to rag/rag-api and /chat to rag/open-webui. VirtualService rag-api rewrites /rag/ and /rag to /, leading to rag-api on port 8000, which checks the token in the app and leaves /health, /docs and /openapi.json open. VirtualService open-webui redirects /chat to /chat/ with a 308, rewrites /chat/ to / and sets no timeout for SSE and WebSockets, leading to open-webui on port 8080, whose SvelteKit build is patched at start-up for /chat, with one admin and signup off. The AuthorizationPolicies: rag-api accepts istio-ingress, rag, moks-sre and jithendar; open-webui accepts istio-ingress; qdrant, docling and litellm accept rag; bge-m3 accepts three service accounts; everything else is denied. A planned box: chat.jithendar.com gives Open WebUI its own origin with no patched bundle, its own cookies and localStorage, its own cache rule that bypasses the cache, and turns /chat into a redirect like /harbor to registry. Note 1: on 26 November Cloudflare returned /rag/health, /rag/openapi.json and Open WebUI's /chat/api/config from its cache with max-age 3600; the cached config was 32 minutes old and still said onboarding true although the admin account existed; responses marked no-store bypass the cache.](/images/moks-rag/moks-rag-edge.svg)
+
+jithendar.com has one root `VirtualService` in the cluster repository that *delegates* path prefixes to VirtualServices owned by each namespace. Adding the platform meant two lines there and one delegate VirtualService per route here:
+
+```yaml
+# k8s-deployments: deploy/minikube/istio/edge/values.yaml
+root:
+  delegates:
+    - {name: rag, prefix: /rag, to: rag/rag-api}
+    - {name: chat, prefix: /chat, to: rag/open-webui}
+---
+# moks-rag: deploy/k8s/istio-routing.yaml (a delegate: no hosts, no gateways)
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: rag-api
+  namespace: rag
+spec:
+  http:
+    - name: rag-api-prefix
+      match:
+        - uri: { prefix: /rag/ }
+        - uri: { exact: /rag }
+      rewrite:
+        uri: /
+      route:
+        - destination:
+            host: rag-api.rag.svc.cluster.local
+            port: { number: 8000 }
+```
+
+The gateway strips `/rag`, and FastAPI runs with `root_path="/rag"`, so its generated links still point to the right place.
+
+**Authentication happens in `rag-api`, not at the gateway.** Every endpoint except `/health` and `/ready` requires `Authorization: Bearer <token>`, compared in constant time. FastAPI's `/docs`, `/redoc` and `/openapi.json` are also open, so anyone can read the API's schema at `https://jithendar.com/rag/docs` (they still can't call anything). It's harmless, but it isn't what we meant. Production should set `docs_url=None` or put the docs behind the token.
+
+**Everything else stays internal.** bge-m3, Qdrant, docling-serve and LiteLLM have no VirtualService. Inside the mesh, a default-deny policy plus a few ALLOW rules decide who talks to whom (plus one that lets Prometheus scrape the sidecars):
+
+- `rag-api` accepts the gateway, `rag`, `moks-sre` and `jithendar`.
+- Open WebUI accepts only the gateway.
+- Qdrant, docling-serve and LiteLLM accept only namespace `rag`.
+- bge-m3 accepts three named service accounts on one port.
+
+### Open WebUI: a subpath today, a subdomain next
+
+Open WebUI runs at `https://jithendar.com/chat/` today. Getting it there took more than a rewrite. The upstream image's SvelteKit frontend is built for `/`: its assets, API calls and Socket.IO path are all root-absolute. Our deployment mounts a small Python script that patches the built `index.html` and the JavaScript bundles at start-up. It prefixes those paths with `/chat`, and it wraps `fetch`, `XMLHttpRequest`, `WebSocket` and `EventSource` so that requests built at run time get the prefix too. It works. It's also the most fragile thing in the stack: it pattern-matches minified code in an image we pull as `:main`.
+
+The plan is `chat.jithendar.com`. The patch is only one of three reasons:
+
+1. **No patching.** Open WebUI gets the root of its own host, which is what it's built for.
+2. **Its own origin.** Today Open WebUI shares an origin with the site and every admin tool on jithendar.com. That means they share cookies and `localStorage`, and Open WebUI keeps its session token in `localStorage`.
+3. **Its own cache policy.** The site's Cloudflare cache rule applies to `/rag` and `/chat` too, so a successful response without a `Cache-Control` header is cached for an hour. On 26 November, Cloudflare served `/rag/health`, `/rag/openapi.json` and Open WebUI's `/chat/api/config` from cache. The cached config was 32 minutes old and still said `onboarding: true`, although the admin account already existed. The endpoints we checked that need a login weren't cached (they answer `no-store` or 401). But relying on every endpoint of an app we don't write to send the right header isn't a plan.
+
+The cluster already uses this pattern: `/harbor` is a redirect to `registry.jithendar.com`, because Harbor can't live under a prefix either. `/chat` will go the same way. Until then, a Cloudflare cache rule that bypasses `/rag*` and `/chat*` closes the caching issue.
+
+## Sizing for CPU-only nodes
+
+What each component asks for, what it actually held when idle on 26 November (before any real traffic), and where it landed:
+
+| Component | Request (CPU / memory) | Limit (CPU / memory) | Idle memory | Node | Notes |
+|---|---|---|---|---|---|
+| `bge-m3` | 500m / 1.5 Gi | none / 2.5 Gi | 1.32 GiB | worker3 | No CPU limit on purpose: Ollama sizes its threads to the node's cores, and a CFS quota stalls batches. On 19 November this Ollama build embedded about 0.7 chunks/s on a `cax21`, one request at a time whatever `OLLAMA_NUM_PARALLEL` says. |
+| `docling-serve` | 250m / 1 Gi | 2 / 4 Gi | 0.87 GiB | worker3 | `OMP_NUM_THREADS=2`. The request was cut from 500m / 2 Gi so it would schedule at all. Large PDFs will use the 4 Gi. |
+| `qdrant` | 250m / 512 Mi | 2 / 2 Gi | 78 MiB | worker3 | Empty today. `on_disk_payload: true` keeps chunk text off the heap. 15 Gi leaves room to grow. |
+| `litellm` | 100m / 384 Mi | 1 / 1.5 Gi | 1.12 GiB | worker2 | OOMKilled at start-up (exit 137) with a 768 Mi limit. It idles at three times its request. |
+| `rag-api` | 150m / 256 Mi | 1 / 768 Mi | 124 MiB | worker1 | Read-only root filesystem, non-root, no service account token. |
+| `open-webui` | 200m / 512 Mi | 1 / 1.5 Gi | 0.86 GiB | worker1 | 2 Gi of data on `local-path`, which pins it to one node. |
+
+Lessons from that table:
+
+- **Requests are what the scheduler believes.** Together these pods request about 4.1 GiB and hold about 4.4 GiB while doing nothing. LiteLLM and Open WebUI hold 3× and 1.7× what they request. Worker3, home to bge-m3, docling-serve and Qdrant, has 93% of its memory requested. Set requests from what the pods actually hold, or the scheduler packs nodes on numbers that aren't true.
+- **Hetzner's CSI has a 10 Gi minimum.** bge-m3's 5 Gi claim became 10 Gi. Open WebUI's 2 Gi stays on `local-path`, so its data lives on one node.
+- **One embedder is the throughput ceiling.** At about 0.7 chunks per second, a 3,000-chunk corpus takes over an hour to embed. That's fine for nightly syncs and per-article updates, not for bulk reindexing during the day. `rag-api` embeds in batches of 32, which takes about 45 seconds, inside its 120-second HTTP timeout.
+
+## Security basics
+
+- **Secrets stay out of Git and out of Argo CD.** As above, `rag-secrets` is created by hand, and the AppProject can't manage Secrets.
+- **The mesh is STRICT mTLS and denies by default.** bge-m3 is the strictest: three named service-account principals, port 11434, GET and POST only. It also has a NetworkPolicy, so it stays closed even if someone deletes the mesh policy.
+- **Every request is logged with `X-Service-Name`.** `rag-api` writes one JSON line per request (request ID, service, method, path, status, duration), plus events for ingests, queries and chats. Those lines are what per-service usage and **per-service token budgets** will be built on. That part isn't built: LiteLLM runs with one master key, `disable_spend_logs: true` and no database, and LiteLLM's per-key budgets need its database and one virtual key per caller. Since the header is self-declared (see "What isolation doesn't cover yet"), per-service tokens come first and budgets second. The budget numbers will be ours to set, not defaults in a manifest.
+- **Open WebUI signup is off.** `ENABLE_SIGNUP=false` and `WEBUI_AUTH=true`, and the live config confirms signup is disabled. Two details matter here:
+  - Open WebUI always lets the *first* account sign up, as admin, whatever `ENABLE_SIGNUP` says. So create the admin account before the route goes public. Ours exists: one user, role admin.
+  - Signup is one of the settings Open WebUI keeps in its own database after the first start. Changing the environment variable later does nothing; change it in the admin panel.
+- **Open WebUI doesn't send `X-Service-Name`,** so its traffic is logged as `unknown`. It will get its own read-only token with the per-service change.
+
+## When rag-api is down
+
+A shared platform is a shared failure. The rule for every caller is that losing `rag-api` costs them *retrieval*, not their own job.
+
+What's in place:
+
+- `rag-api`'s readiness probe (`/ready`) checks Qdrant. If Qdrant is gone, `rag-api` leaves the Service's endpoints, and callers get a fast 503 from the mesh instead of a hang.
+- `rag-api` creates its collections lazily. The two Argo CD Applications sync independently, and on the first deploy `rag-api` started before Qdrant, so the start-up step that creates the collections failed once and never ran again. Now any request creates them if they're missing.
+
+What each caller will do once connected (none of this is built yet):
+
+| Caller | If `rag-api` is unreachable or slow |
+|---|---|
+| `moks-cms` | Publishing never waits for `rag-api`. The sync runs after the publish is saved, retries with backoff, and is safe to repeat (deterministic point IDs, replace by `doc_id`). A periodic reconcile compares published article IDs with what's in `cms_content` and fixes the difference. |
+| `moks-sre-agent` | An investigation never fails because of retrieval. MOKS keeps its own pgvector knowledge base as a fallback, calls `rag-api` with a short timeout of its own, and records "shared knowledge base unavailable" as evidence so the answer says what it couldn't check. |
+| `moks-seo-agent` | Link and cannibalisation checks are advisory. If `rag-api` is down, the run skips them and says so in its report instead of failing. |
+
+## Lessons learned
+
+1. **Move the callers, then delete the old service.** Deleting the old `embeddings` release first left seo-agent unable to reindex and MOKS pointing at nothing.
+2. **Pin what you run.** LiteLLM `main-latest`, `docling-serve-cpu:latest` and `open-webui:main` all use `imagePullPolicy: IfNotPresent`, and the Qdrant chart tracks `1.*`. Which build runs depends on when each node first pulled it, and neither Argo CD nor a restart changes that. Our own image is deployed by SHA, and so is bge-m3. Do the same for the rest (a digest, or an exact version).
+3. **Independent Applications start in any order.** If one service needs another at start-up, make it retry, not assume.
+4. **Measure memory before you set limits.** LiteLLM needed more than 768 Mi just to start.
+5. **A subpath is a tax on apps built for `/`.** If an app doesn't support a base path, give it a host.
+6. **A CDN in front of an API needs its own rule.** The site's cache rule was written for pages. It shouldn't apply to `/rag` or `/chat` at all.
+7. **A "least-privilege" token is only as narrow as the default project.** Check what Argo CD's `default` AppProject allows before you hand anyone permission to create Applications.
+
+## What's next
+
+- **Connect the services**, in this order: `moks-cms` (writes only, easiest to verify), then `moks-seo-agent` (reads `cms_content`), then `moks-sre-agent`. Per-service tokens land first.
+- **Finish the bge-m3 move** for MOKS and seo-agent, then run seo-agent's reindex.
+- **Close the gaps in this post:** restrict Argo CD's `default` project, bypass Cloudflare's cache for `/rag` and `/chat`, hide `/docs`, pin image versions.
+- **Move chat to `chat.jithendar.com`** and drop the start-up patch.
+- **Measure, then tune.** We'll add an evaluation set per collection (seo-agent already has `rag_eval.yaml` for the blog) before we try per-collection fusion weights.
+- **Add a reranker.** MOKS already runs one, and seo-agent has an int8 cross-encoder that's switched off. A reranker over the fused top 24 is the cheapest quality gain on CPUs, at a latency cost we'd measure first.
+- **Path B: a GPU node.** A Hetzner GPU server joined to the cluster, running vLLM with an open model, added to LiteLLM's `model_list` next to Claude. The same node could serve bge-m3 with sparse output and a larger reranker. `rag-api` wouldn't change, which is the point of putting LiteLLM in the middle.

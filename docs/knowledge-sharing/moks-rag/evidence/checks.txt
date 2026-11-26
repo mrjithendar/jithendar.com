@@ -1,0 +1,92 @@
+Read-only checks behind content/blog/shared-hybrid-rag-platform-qdrant-bge-m3-k3s-hetzner.mdx
+Taken 26 November 2026, 09:00-09:40 UTC, against mk4 (current kubectl context) and the public site.
+Sanitised: no client addresses, cluster IPs, tokens or Cloudflare IDs.
+
+== Repository: mrjithendar/moks-rag main at dc91b07 ==
+2207db0 feat: build and deploy moks-rag hybrid RAG platform           (PR #1)
+018b74e fix(ci): configure ruff first-party isort                     (PR #2)
+80cbf4e bge-m3 PVC 5Gi -> 10Gi (hcloud-volumes minimum); docling-serve request 500m/2Gi -> 250m/1Gi
+f2020c4 litellm limit 768Mi -> 1536Mi (startup OOMKill, exit 137); request 256Mi -> 384Mi
+114eedd rag-api creates the Qdrant collections lazily if Qdrant starts after rag-api
+25f5ae5 open-webui at jithendar.com/chat + deploy-argocd-apps.yaml    (PR #3)
+dc91b07 open-webui: patch the SvelteKit build at start-up for /chat
+
+== Argo CD ==
+kubectl -n argocd get applications moks-rag-qdrant moks-rag-stack
+moks-rag-qdrant   Synced   Healthy
+moks-rag-stack    Synced   Healthy
+Both are standalone Applications in AppProject moks-rag, applied by deploy-argocd-apps.yaml (not children of moks-root).
+GitHub secrets/vars present: K8S_ARGOCD_TOKEN, K8S_API_SERVER, K8S_CA_DATA (no KUBECONFIG_B64).
+
+kubectl -n argocd get appproject default -o jsonpath='{.spec}'
+{"clusterResourceWhitelist":[{"group":"*","kind":"*"}],"destinations":[{"namespace":"*","server":"*"}],"sourceRepos":["*"]}
+kubectl auth can-i create applications.argoproj.io -n argocd --as=system:serviceaccount:argocd:github-rag-argocd-deployer
+yes
+=> the CI token can create an Application in project "default", which may deploy anything anywhere.
+
+== GitHub Actions (mrjithendar/moks-rag, 26 Nov, UTC) ==
+06:10 Build and Deploy rag-api   pull_request  failure  (ruff import order, fixed in #2)
+07:10 Build and Deploy rag-api   push          success  219 s (arm64+amd64 via QEMU)
+07:58 Build and Deploy rag-api   push          success   88 s
+08:10 Deploy ArgoCD Applications push          failure   19 s
+08:22 Deploy ArgoCD Applications dispatch      success   29 s
+
+== Namespace rag ==
+kubectl get ns | grep -E 'rag|embed'     -> rag only; namespace embeddings no longer exists
+deployment bge-m3          ollama/ollama:0.40.16@sha256:910d0d81...   worker3
+deployment docling-serve   docling-serve-cpu:latest                   worker3
+statefulset qdrant         qdrant/qdrant:v1.20.2                      worker3
+deployment litellm         berriai/litellm:main-latest                worker2
+deployment rag-api         moks-rag-api:114eedd3...                   worker1
+deployment open-webui      open-webui:main (0.13.5)                   worker1
+Services: all ClusterIP. VirtualServices: rag-api, open-webui (delegates, no hosts).
+PeerAuthentication default STRICT; AuthorizationPolicies allow-nothing, rag-internal-services, rag-api-callers,
+open-webui-ingress, bge-m3, monitoring-scrape. NetworkPolicy: bge-m3 only.
+PVCs: bge-m3-models 10Gi hcloud-volumes, qdrant-storage-qdrant-0 15Gi hcloud-volumes, open-webui-data 2Gi local-path.
+
+kubectl -n rag top pods (idle)
+bge-m3          4m   1354Mi
+docling-serve   5m    895Mi
+litellm         5m   1150Mi
+open-webui     13m    885Mi
+qdrant-0        6m     78Mi
+rag-api         7m    124Mi
+
+Nodes: master1 cax11 (2 vCPU, 4 GB); worker1-3 cax21 (4 vCPU, 8 GB), all arm64, no GPU.
+Requested memory: worker1 73%, worker2 77%, worker3 93%.
+
+== Qdrant (from inside rag-api, with its API key) ==
+sre_knowledge  green  points=0  vectors=[dense]  sparse={sparse: {modifier: idf}}
+cms_content    green  points=0  vectors=[dense]  sparse={sparse: {modifier: idf}}
+seo_intel      green  points=0  vectors=[dense]  sparse={sparse: {modifier: idf}}
+
+== rag-api traffic (last 3 h, probes removed) ==
+One GET /v1/models without a token -> 401 (this check). No ingest, query or chat calls.
+
+== Callers ==
+git grep over origin/HEAD of moks-cms, moks-sre-agent, moks-seo-agent: no reference to rag-api or rag.svc.
+moks-sre-agent deploy/helm/moks/values-hetzner.yaml: embedding endpoint http://bge-m3.embeddings:11434
+seo-agent ConfigMap (live): EMBEDDINGS_PROVIDER=ollama, OLLAMA_URL=http://bge-m3.embeddings:11434
+seo-agent NetworkPolicy egress: namespace embeddings, port 11434
+seo-agent log: "embeddings dimension changed (vector(384) -> vector(1024)): building seo_article_chunks_next; run a
+full reindex to swap it in (Ask the Blog falls back until then)"
+k8s-deployments 5cb029d "remove bg3-m3": minikube-infrastructure rag.tf and rag_bge-m3.tf renamed to .tfbk
+
+== Public edge ==
+GET https://jithendar.com/rag/health          200 {"status":"ok","service":"moks-rag-api","version":"0.1.0"}
+GET https://jithendar.com/rag/v1/models       401 (no token)
+GET https://jithendar.com/rag/docs            200   (also /rag/openapi.json, /rag/redoc)
+GET https://jithendar.com/chat                308 -> /chat/
+GET https://jithendar.com/chat/health         200
+chat.jithendar.com                            no DNS record
+
+Cloudflare cache (cf-cache-status / cache-control as seen by the client):
+/rag/health          HIT     max-age=3600
+/rag/openapi.json    HIT     max-age=3600
+/chat/api/config     HIT     max-age=3600, age 1953 s; said "onboarding": true
+/chat/api/v1/auths/  BYPASS  no-store
+/chat/              REVALIDATED max-age=3600
+The pod's own /api/config (no Cache-Control header) said onboarding false, enable_signup false.
+
+Open WebUI database: 1 user, role admin. /api/config features.enable_signup = false.
+Open WebUI 0.13.5 routers/auths.py: "Don't gate the first admin on ENABLE_SIGNUP" (the first account can always sign up).
