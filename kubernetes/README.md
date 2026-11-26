@@ -54,8 +54,9 @@ KEDA's on every deploy. CI applies the ScaledObject (Role `github-ci-applier`, `
 
 **The owner's numbers.** `maxReplicaCount`, the Prometheus `threshold` (requests per second one pod should take) and
 the CPU `value` (percent of the web container's 250m request) are `SET-ME` until chosen; `fallback` and a slower
-scale-down are optional, commented out in the file. While any is `SET-ME`, the deploy's server-side dry run refuses the
-file and `scripts/tests/test_autoscaling.py` fails. What bounds `maxReplicaCount`:
+scale-down are optional, commented out in the file. While any is `SET-ME`, the deploy's `plan` job names each one and
+stops (`scripts/ci-app-manifests.py`), so no deploy runs, not even a moks-cms release restart; and
+`scripts/tests/test_autoscaling.py` fails. What bounds `maxReplicaCount`:
 
 - each pod requests 250m CPU and 512Mi memory, and the topology spread (`DoNotSchedule`, one skew across the three
   workers) puts the third pod on whichever worker has none: that worker must have the room;
@@ -66,7 +67,8 @@ file and `scripts/tests/test_autoscaling.py` fails. What bounds `maxReplicaCount
 **Once, before the first deploy without `replicas`.** `kubectl apply` (client-side) remembers the last applied
 manifest in an annotation. Applying one without `replicas` when the annotation still has `replicas: 2` deletes the
 field, and the Deployment drops to 1 pod until KEDA's HPA brings it back to 2. Rewrite the annotation from the new
-manifest first, right before merging; if another deploy runs in between, do it again:
+manifest first, right before merging; if another deploy runs in between, do it again. Done on mk4 on 2026-11-26 (the
+annotation has no `replicas`), so only needed again if a manifest with `replicas` is applied:
 
 ```sh
 scripts/manifests.sh site | python3 -c 'import sys, yaml; print(yaml.safe_dump(next(d for d in yaml.safe_load_all(sys.stdin) if d and d["kind"] == "Deployment" and d["metadata"]["name"] == "jithendar-com")))' > /tmp/jithendar-com-deployment.yaml

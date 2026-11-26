@@ -85,6 +85,20 @@ class Selection(unittest.TestCase):
         so = {"apiVersion": "keda.sh/v1alpha1", "kind": "ScaledObject", "metadata": {"name": "web", "namespace": "other"}}
         self.assertEqual(2, select([so], "--all").returncode)
 
+    def test_a_value_left_set_me_stops_the_run_and_is_named(self):
+        so = {"apiVersion": "keda.sh/v1alpha1", "kind": "ScaledObject", "metadata": {"name": "web", "namespace": "jithendar"},
+              "spec": {"maxReplicaCount": "SET-ME", "triggers": [{"type": "cpu", "metadata": {"value": "SET-ME"}}]}}
+        out = select([so], "--all")
+        self.assertEqual(2, out.returncode)
+        self.assertIn("spec.maxReplicaCount is SET-ME", out.stderr)
+        self.assertIn("spec.triggers[0].metadata.value is SET-ME", out.stderr)
+        self.assertEqual("", out.stdout)  # nothing selected, so nothing is applied
+
+    def test_set_me_inside_a_longer_string_is_not_a_placeholder(self):
+        cm = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c", "namespace": "jithendar"},
+              "data": {"note": "replace SET-ME values first"}}
+        self.assertEqual(0, select([cm], "--all").returncode)
+
     def test_a_trigger_authentication_stops_the_run(self):
         ta = {"apiVersion": "keda.sh/v1alpha1", "kind": "TriggerAuthentication", "metadata": {"name": "x", "namespace": "jithendar"}}
         self.assertEqual(2, select([ta], "--all").returncode)
