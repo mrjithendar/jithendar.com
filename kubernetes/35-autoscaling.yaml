@@ -36,11 +36,17 @@ spec:
   # fallback:                  # pods to run when the Prometheus trigger fails this many times in a row
   #   failureThreshold: SET-ME
   #   replicas: SET-ME
-  # advanced:
-  #   horizontalPodAutoscalerConfig:
-  #     behavior:
-  #       scaleDown:
-  #         stabilizationWindowSeconds: SET-ME   # default 300
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 120   # default 300
+        scaleUp:
+          stabilizationWindowSeconds: 120   # default 0: ignore spikes shorter than this
+          policies:
+            - type: Pods
+              value: 1                      # add at most 1 pod…
+              periodSeconds: 60  
   triggers:
     - type: prometheus
       metricType: AverageValue
