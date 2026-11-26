@@ -85,14 +85,31 @@ class Selection(unittest.TestCase):
         so = {"apiVersion": "keda.sh/v1alpha1", "kind": "ScaledObject", "metadata": {"name": "web", "namespace": "other"}}
         self.assertEqual(2, select([so], "--all").returncode)
 
-    def test_a_value_left_set_me_stops_the_run_and_is_named(self):
+    def test_a_scaled_object_left_set_me_waits_for_the_owner_and_the_rest_is_applied(self):
         so = {"apiVersion": "keda.sh/v1alpha1", "kind": "ScaledObject", "metadata": {"name": "web", "namespace": "jithendar"},
               "spec": {"maxReplicaCount": "SET-ME", "triggers": [{"type": "cpu", "metadata": {"value": "SET-ME"}}]}}
-        out = select([so], "--all")
+        deployment = {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "web", "namespace": "jithendar"}}
+        out = select([deployment, so], "--all")
+        self.assertEqual(0, out.returncode, out.stderr)
+        self.assertIn("::warning::ScaledObject jithendar/web not applied: spec.maxReplicaCount is SET-ME", out.stderr)
+        self.assertIn("::warning::ScaledObject jithendar/web not applied: spec.triggers[0].metadata.value is SET-ME", out.stderr)
+        self.assertEqual([deployment], [d for d in yaml.safe_load_all(io.StringIO(out.stdout)) if d])
+
+    def test_a_scaled_object_left_set_me_elsewhere_still_stops_the_run(self):
+        so = {"apiVersion": "keda.sh/v1alpha1", "kind": "ScaledObject", "metadata": {"name": "web", "namespace": "other"},
+              "spec": {"maxReplicaCount": "SET-ME"}}
+        self.assertEqual(2, select([so], "--all").returncode)
+
+    def test_a_value_left_set_me_in_another_kind_stops_the_run_and_is_named(self):
+        cm = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c", "namespace": "jithendar"},
+              "data": {"POOL_MAX": "SET-ME"}}
+        out = select([cm], "--all")
         self.assertEqual(2, out.returncode)
-        self.assertIn("spec.maxReplicaCount is SET-ME", out.stderr)
-        self.assertIn("spec.triggers[0].metadata.value is SET-ME", out.stderr)
+        self.assertIn("ConfigMap jithendar/c: data.POOL_MAX is SET-ME", out.stderr)
         self.assertEqual("", out.stdout)  # nothing selected, so nothing is applied
+
+    def test_only_applied_kinds_wait_for_the_owner(self):
+        self.assertLessEqual(ci.WAIT_FOR_OWNER, ci.APPLY)
 
     def test_set_me_inside_a_longer_string_is_not_a_placeholder(self):
         cm = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c", "namespace": "jithendar"},

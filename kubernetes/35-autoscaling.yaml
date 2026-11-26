@@ -2,9 +2,9 @@
 # replica count of Deployment jithendar-com through HPA keda-hpa-jithendar-com, which it creates and updates itself.
 # 30-jithendar-com.yaml therefore sets no replicas: a kubectl apply of a count would undo KEDA's on every deploy.
 #
-# SET-ME values are the owner's to choose (kubernetes/README.md, "Autoscaling"). Until they are numbers, the deploy's
-# plan job names each one and stops (scripts/ci-app-manifests.py), so no deploy runs, and
-# scripts/tests/test_autoscaling.py fails: nothing half-set reaches mk4.
+# SET-ME values are the owner's to choose (kubernetes/README.md, "Autoscaling"). Until all of them are numbers, the
+# deploy leaves this ScaledObject out with a warning naming each one (scripts/ci-app-manifests.py) and applies the rest;
+# the site keeps the pods it has (no autoscaling yet), and nothing half-set reaches mk4.
 #
 # Two triggers; the HPA follows whichever asks for more pods:
 #   prometheus  requests per second per pod, counted by the pods' sidecars (Istio), public Service jithendar-com only

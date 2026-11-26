@@ -17,7 +17,9 @@ Never applied by CI in either selection: Secrets (CI cannot read or write them),
 the gVisor RuntimeClass, admission policies and CronJobs.
 
 A kind in neither list stops the run (exit 2), so a new kind gets a deliberate decision. So does a value still
-SET-ME (e.g. kubernetes/35-autoscaling.yaml): a number the owner has not chosen yet, named with its field. Needs PyYAML.
+SET-ME: a number the owner has not chosen yet, named with its field. Except in a kind of WAIT_FOR_OWNER (the
+ScaledObject of kubernetes/35-autoscaling.yaml): that object is left out with a warning naming each field, and the
+rest is applied, so the deploy keeps working until the owner sets the numbers. Needs PyYAML.
 """
 import argparse
 import sys
@@ -84,6 +86,11 @@ def group_of(api_version: str) -> str:
 # value, never a note.
 UNSET = "SET-ME"
 
+# Kinds left out, with a warning, while any of their values is UNSET (in any other kind an UNSET stops the run).
+# Leaving one out changes nothing that runs: without its ScaledObject, Deployment jithendar-com keeps the pods it has
+# (30-jithendar-com.yaml sets no replicas), and nothing half-set reaches mk4. Must be kinds of APPLY.
+WAIT_FOR_OWNER = {("keda.sh", "ScaledObject")}
+
 
 def unset_fields(node, path: str = "") -> list[str]:
     """Paths (spec.triggers[0].metadata.threshold) whose value is still UNSET."""
@@ -101,7 +108,7 @@ def main() -> int:
     args = parser.parse_args()
     apply_kinds = APPLY | APPLY_ALL if args.all else APPLY
 
-    applied, manual, problems = [], [], []
+    applied, manual, waiting, problems = [], [], [], []
     for doc in yaml.safe_load_all(sys.stdin):
         if not doc:
             continue
@@ -110,7 +117,13 @@ def main() -> int:
         name, namespace = meta.get("name", "?"), meta.get("namespace")
         key = (group_of(doc.get("apiVersion", "")), kind)
         label = f"{kind} {namespace + '/' if namespace else ''}{name}"
-        for field in unset_fields(doc):
+        unset = unset_fields(doc)
+        if unset and key in WAIT_FOR_OWNER and key in apply_kinds and namespace == NAMESPACE:
+            for field in unset:
+                print(f"::warning::{label} not applied: {field} is {UNSET}, a value the owner has not chosen yet", file=sys.stderr)
+            waiting.append(label)
+            continue
+        for field in unset:
             problems.append(f"{label}: {field} is {UNSET}, a value the owner has not chosen yet")
         if key == ("", "Namespace") and key in apply_kinds:
             if name != NAMESPACE:
@@ -145,6 +158,10 @@ def main() -> int:
     print(f"Not applied by CI, a person applies these ({len(manual)}):", file=sys.stderr)
     for label in manual:
         print(f"  {label}", file=sys.stderr)
+    if waiting:
+        print(f"Not applied until the owner sets their {UNSET} values ({len(waiting)}):", file=sys.stderr)
+        for label in waiting:
+            print(f"  {label}", file=sys.stderr)
     return 0
 
 
