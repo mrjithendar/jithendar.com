@@ -5,8 +5,8 @@ stay consistent.
 
 KEDA owns the replica count, so the Deployment must not set one (every deploy would apply it over KEDA's). The
 ScaledObject keeps at least two pods, more than the PodDisruptionBudget's minAvailable. Its numbers are the owner's:
-a SET-ME left in the file fails here (and in the deploy's server-side dry run) instead of reaching mk4.
-Reads the files only, no cluster.
+while one is SET-ME its test is skipped, naming it, and the deploy leaves the ScaledObject out
+(scripts/ci-app-manifests.py); once it is set, it must be a valid number. Reads the files only, no cluster.
 """
 from __future__ import annotations
 
@@ -78,21 +78,26 @@ class Wiring(unittest.TestCase):
 
 
 class OwnersNumbers(unittest.TestCase):
-    """The values in 35-autoscaling.yaml marked SET-ME (kubernetes/README.md, "Autoscaling")."""
+    """The values in 35-autoscaling.yaml marked SET-ME (kubernetes/README.md, "Autoscaling"): skipped while SET-ME,
+    checked once set."""
 
-    def test_maximum_is_set_and_not_below_the_minimum(self):
-        value = SPEC["maxReplicaCount"]
-        self.assertNotEqual(UNSET, value, "maxReplicaCount: choose the upper bound")
+    def chosen(self, value, what: str):
+        if value == UNSET:
+            self.skipTest(f"{what} is {UNSET}: the owner's to choose; until then the deploy leaves the ScaledObject out")
+        return value
+
+    def test_maximum_is_not_below_the_minimum(self):
+        value = self.chosen(SPEC["maxReplicaCount"], "maxReplicaCount (upper bound)")
         self.assertIsInstance(value, int)
         self.assertGreaterEqual(value, SPEC["minReplicaCount"])
 
-    def test_requests_per_second_threshold_is_set(self):
-        value = TRIGGERS["prometheus"]["metadata"]["threshold"]
-        self.assertTrue(is_number(value), f"prometheus threshold is {value!r}: choose requests per second per pod")
+    def test_requests_per_second_threshold_is_a_number(self):
+        value = self.chosen(TRIGGERS["prometheus"]["metadata"]["threshold"], "prometheus threshold (requests per second per pod)")
+        self.assertTrue(is_number(value), f"prometheus threshold is {value!r}: requests per second per pod")
 
-    def test_cpu_target_is_set(self):
-        value = TRIGGERS["cpu"]["metadata"]["value"]
-        self.assertTrue(is_number(value), f"cpu value is {value!r}: choose the percent of the web container's request")
+    def test_cpu_target_is_a_number(self):
+        value = self.chosen(TRIGGERS["cpu"]["metadata"]["value"], "cpu value (percent of the web container's request)")
+        self.assertTrue(is_number(value), f"cpu value is {value!r}: percent of the web container's request")
 
     def test_optional_values_are_set_when_present(self):
         fallback = SPEC.get("fallback")

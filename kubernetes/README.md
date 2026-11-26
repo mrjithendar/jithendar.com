@@ -54,9 +54,11 @@ KEDA's on every deploy. CI applies the ScaledObject (Role `github-ci-applier`, `
 
 **The owner's numbers.** `maxReplicaCount`, the Prometheus `threshold` (requests per second one pod should take) and
 the CPU `value` (percent of the web container's 250m request) are `SET-ME` until chosen; `fallback` and a slower
-scale-down are optional, commented out in the file. While any is `SET-ME`, the deploy's `plan` job names each one and
-stops (`scripts/ci-app-manifests.py`), so no deploy runs, not even a moks-cms release restart; and
-`scripts/tests/test_autoscaling.py` fails. What bounds `maxReplicaCount`:
+scale-down are optional, commented out in the file. While any is `SET-ME`, the deploy leaves the ScaledObject out
+(`scripts/ci-app-manifests.py`, a warning on the run names each value) and applies everything else, so releases and
+deploys keep working and the site keeps the pods it has (2), without autoscaling. `scripts/tests/test_autoscaling.py`
+skips the unset values and checks each one once it is set. Setting the last one turns autoscaling on at the next
+deploy. What bounds `maxReplicaCount`:
 
 - each pod requests 250m CPU and 512Mi memory, and the topology spread (`DoNotSchedule`, one skew across the three
   workers) puts the third pod on whichever worker has none: that worker must have the room;
