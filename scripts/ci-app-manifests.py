@@ -36,6 +36,9 @@ APPLY = {
     ("policy", "PodDisruptionBudget"),
     ("cert-manager.io", "Certificate"),
     ("networking.istio.io", "VirtualService"),
+    # Scales a Deployment (min/max replicas, triggers); its HPA is KEDA's. TriggerAuthentication (reads Secrets) is in
+    # neither list on purpose.
+    ("keda.sh", "ScaledObject"),
 }
 
 # Added by --all (the site group). Keep in step with the Role and ClusterRole in kubernetes/85-ci-applier.yaml.
