@@ -98,6 +98,11 @@ The workflows need these, which moved here from moks-cms:
   not restored. For editing from the admin: a fine-grained GitHub token with Contents and Pull requests (read and write)
   on this repository only, saved in AI & SEO → Configuration → Settings, or as the Secret the site Deployment reads:
   `kubectl -n jithendar create secret generic jithendar-com-crewconfig --from-literal=token=github_pat_…`.
+- **Hybrid RAG** (moks-rag, optional; moks-cms `docs/RAG.md`): the site syncs published posts to rag-api with rag-api's
+  bearer token, copied into this namespace (a Secret cannot be read across namespaces), then a restart:
+  `kubectl -n jithendar create secret generic jithendar-com-rag --from-literal=token="$(kubectl -n rag get secret rag-secrets -o jsonpath='{.data.RAG_BEARER_TOKEN}' | base64 -d)"`
+  and `kubectl -n jithendar rollout restart deploy/jithendar-com`. Without it the sync stays off. Then, once, Admin →
+  Integrations → Hybrid RAG → Reindex all posts (the backfill). Update the copy when rag-api's token is rotated.
 - **Manifests** (deploy-kubernetes.yml): `scripts/setup-ci-applier.sh` (secret `MK4_CI_APPLY_TOKEN`, variable `MINIKUBE_DEPLOY=true`).
 - **moks-cms → this repository**: in moks-cms, variable `RELEASE_NOTIFY_REPOS=moks-tech/jithendar.com` and secret
   `RELEASE_NOTIFY_TOKEN` (a fine-grained token with Contents: read and write on this repository).
