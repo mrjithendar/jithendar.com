@@ -1,0 +1,360 @@
+---
+title: "How KEDA Scales jithendar.com on Requests per Second, with CPU as a Backstop"
+slug: keda-autoscaling-requests-per-second-jithendar-com
+description: "The CMS behind jithendar.com now scales with KEDA on k3s: requests per second from Istio via Prometheus, CPU as a backstop, numbers taken from real traffic."
+seoTitle: "KEDA Autoscaling on Requests per Second: Prometheus, Istio and the HPA on k3s"
+seoDescription: "Scale a Kubernetes Deployment on requests per second with KEDA: an Istio metric through Prometheus, a CPU trigger as a backstop, and how to pick the numbers."
+author: jithendar-dharmapuri
+category: kubernetes
+tags: [KEDA, Kubernetes, Autoscaling, HPA, Prometheus, PromQL, Istio, k3s, GitHub Actions, SRE]
+contentType: tutorial
+status: review
+featuredImage:
+  src: /images/keda-autoscaling/keda-autoscaling-overview.png
+  alt: "How jithendar.com scales. A visitor's request goes through Cloudflare, which caches HTML by URL so a cache hit never reaches the pods; a miss goes on to the Istio gateway, the public Service jithendar-com and its pods, between 2 and 8 of them, where each pod's istio-proxy counts the requests it receives. Prometheus scrapes istio_requests_total every 30 seconds, and metrics-server reads each container's CPU. In namespace keda, keda-operator watches the ScaledObject jithendar-com (min 2, max 8, 5 requests per second per pod, CPU at 200 % of 250m), queries Prometheus over mTLS, and creates and updates the HPA keda-hpa-jithendar-com. The HPA asks KEDA's metrics API for the metric s0-prometheus, which reads it from the operator over gRPC on port 9666, and asks metrics.k8s.io for CPU; it takes the larger answer, keeps it between 2 and 8, and scales the Deployment. A note gives the rule: every 15 seconds, pods equal the larger of requests per second divided by 5 and pods times CPU percent divided by 200, rounded up, never fewer than 2 or more than 8; up at once, down only after 5 minutes."
+  width: 1922
+  height: 1578
+related:
+  - blog/deploy-moks-cms-kubernetes-k3s
+  - blog/public-grafana-read-only-dashboards-k3s-cloudflare
+  - blog/cloudflare-520-home-page-postmortem-jithendar-com
+sources:
+  - title: "ScaledObject specification"
+    url: https://keda.sh/docs/2.21/reference/scaledobject-spec/
+    publisher: KEDA
+  - title: "Prometheus scaler"
+    url: https://keda.sh/docs/2.21/scalers/prometheus/
+    publisher: KEDA
+  - title: "CPU scaler"
+    url: https://keda.sh/docs/2.21/scalers/cpu/
+    publisher: KEDA
+  - title: "Horizontal Pod Autoscaling"
+    url: https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/
+    publisher: Kubernetes
+  - title: "Pod Topology Spread Constraints"
+    url: https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/
+    publisher: Kubernetes
+  - title: "kubectl apply set-last-applied"
+    url: https://kubernetes.io/docs/reference/kubectl/generated/kubectl_apply/kubectl_apply_set-last-applied/
+    publisher: Kubernetes
+  - title: "Istio Standard Metrics"
+    url: https://istio.io/latest/docs/reference/config/metrics/
+    publisher: Istio
+---
+
+<Todo>Drafted 2026-11-26 from mrjithendar/jithendar.com #23 to #26 and commit 83c02c3, mrjithendar/k8s-deployments #33, and read-only Prometheus and kubectl checks the same day (queries and output in docs/knowledge-sharing/keda-autoscaling/evidence). Before publishing: (1) The site has not scaled past 2 pods yet. When it first does, add the HPA's events (kubectl -n jithendar describe hpa keda-hpa-jithendar-com) to "Checking it", and say whether the third pod started. (2) Worker3 is 23Mi short for a third pod. Once you free memory there, relax the spread rule or add a node, update "Where a third pod would go" and rebuild the placement figure (diagrams/build_diagrams.py, placement()). (3) The ScaledObject went live at 09:13 UTC on 26 November, outside the deploy workflow: no deploy run applied it. The next merged pull request that touches kubernetes/ applies it through the pipeline described here; check that run is green. (4) Decide whether to scrape KEDA's operator metrics and add an autoscaling panel to the public Grafana ("What's next"). (5) Then set status to published with a publishedAt time.</Todo>
+
+For most of its life, jithendar.com has run on exactly two pods. Two is plenty on an ordinary day, and two is what the Deployment said, so two is what ran. That holds until a post gets shared somewhere busy, and then it's two pods against whatever turns up.
+
+Since 26 November that number belongs to [KEDA](https://keda.sh). The site still never drops below two pods. When the requests reaching them go past what two should handle, more start, up to eight. This post walks through how that works on **mk4**, the small k3s cluster on Hetzner behind this site:
+- what KEDA measures and what it builds from it;
+- how I picked the numbers from a week of real traffic;
+- why the cluster can't place a third pod yet;
+- the morning this change broke every deploy.
+
+The short version:
+
+- **It scales on requests per second, not CPU.** Each pod's Istio sidecar counts the requests it receives, and Prometheus scrapes those counts. KEDA asks Prometheus for the site's total, and the HPA divides it by the number of pods. One pod should take 5 requests per second.
+- **CPU is only a backstop, at 200 % of the container's request.** In a week of data, nearly all of the CPU spikes (129 of 133 minutes) came from pods starting up, not from visitors. A low CPU target would have added pods on every deploy.
+- **Two to eight pods.** At least two, because the pods spread over nodes and a node drain has to leave one serving. At most eight, because that's where the database connections run out.
+- **A third pod has nowhere to go yet.** The spread rule sends it to worker3, which is 23Mi of memory short. The autoscaler works; the cluster needs room.
+- **The ScaledObject ships through the same pipeline as every other manifest:** a test, an allow-list and a permission in CI's Role. Merging it with placeholder values stopped every deploy for almost half an hour. Since then, a half-configured ScaledObject is left out with a warning instead of breaking the deploy.
+
+![How jithendar.com scales. A visitor's request passes Cloudflare, which caches HTML by URL so a cache hit never reaches the pods; a miss goes on to the Istio gateway, the public Service jithendar-com and its pods, between 2 and 8, where each pod's istio-proxy counts the requests it receives. Prometheus scrapes istio_requests_total every 30 seconds, and metrics-server reads each container's CPU from the kubelets. In namespace keda (KEDA 2.21.1), keda-operator watches the ScaledObject jithendar-com (min 2, max 8, requests 5 per pod, CPU 200 % of 250m), queries Prometheus with PromQL over mTLS, and creates and updates the HPA keda-hpa-jithendar-com. The HPA asks KEDA's metrics API for s0-prometheus; that API has no sidecar and reads the value from the operator over gRPC on port 9666. The HPA asks metrics.k8s.io for CPU, takes the larger of the two answers, keeps it between 2 and 8, and scales the Deployment jithendar-com. A note: every 15 seconds, pods equal the larger of requests per second divided by 5, rounded up, and pods times CPU percent divided by 200, rounded up; never fewer than 2 or more than 8; up at once, down only after 5 minutes.](/images/keda-autoscaling/keda-autoscaling-overview.svg)
+
+## Why not an HPA on CPU
+
+That was my first idea too. CPU is the default example in every autoscaling guide, and Kubernetes can do it without installing anything. Before picking a number, I pulled a week of data out of Prometheus: CPU of the site's `web` container from cAdvisor, matched to each pod's start time, plus the request counts from Istio.
+
+![Why requests lead and CPU only backs them up, 7 days to 26 November 2026. Left: minutes a pod used more than 0.4 cores, 129 in its first 10 minutes after starting and 4 in the rest of its life; a new pod warms its page cache first, and 88 different pods ran in these 7 days because deploys, releases and node work all restart them. Right: minutes the site's average CPU was above a target, as a percent of the 250m request: 79 minutes above 80 %, 73 above 100 %, 50 above 150 % and 28 above 200 %, the target we chose. Below left: requests per second for the whole site, 0.9 now, 1.47 at the 99th percentile over the week and 4.79 at the week's peak. A box explains that CPU jumps when a pod starts and requests don't, so requests per second decide and CPU at 200 % only adds pods for unusually heavy requests. A footnote says that at the busiest minute, with 4.8 requests per second for the whole site, the busiest pod used 0.26 cores.](/images/keda-autoscaling/keda-autoscaling-cpu-evidence.svg)
+
+The pattern was hard to miss:
+
+- **The CPU spikes are startups.** A pod used more than 0.4 cores in 133 minutes of the week, and 129 of those minutes were in the pod's first ten. A fresh pod warms its page cache before anything else. In the [home page 520 postmortem](/blog/cloudflare-520-home-page-postmortem-jithendar-com), that took about 52 seconds for 91 pages, and it shows up as a burst of up to 0.9 cores.
+- **Pods start a lot.** 88 different `jithendar-com` pods ran that week: deploys restart them, moks-cms releases restart them, and node maintenance moves them.
+- **Visitors barely move the needle.** At the busiest minute of the week, 4.8 requests per second for the whole site, the busiest pod used 0.26 cores.
+- **A textbook target would flap.** The site's average CPU was above 80 % of its request for 79 minutes, almost all of them during restarts. An HPA with the usual 70 to 80 % target would have added pods on nearly every deploy, then removed them five minutes later.
+
+Requests per second don't care that a pod has just started. They measure what I actually want to scale for: people asking for pages. So requests lead, and CPU stays as a backstop for the day requests get unusually heavy.
+
+## Counting the right requests
+
+The site runs in the Istio mesh, so every pod has an `istio-proxy` sidecar that counts what passes through it in `istio_requests_total`. Prometheus scrapes those counters every 30 seconds. The query KEDA runs:
+
+```promql
+sum(rate(istio_requests_total{
+  reporter="destination",
+  destination_workload_namespace="jithendar",
+  destination_workload="jithendar-com",
+  destination_service_name="jithendar-com"
+}[2m]))
+```
+
+Every part of it is there for a reason:
+
+- **`reporter="destination"`** keeps only what the receiving sidecar reported. Istio reports a request on both sides, once from the caller's proxy (here, the gateway) and once from the receiver's, so counting both would double every number.
+- **`destination_service_name="jithendar-com"`** keeps only requests through the public Service. The seo-agent calls the site through a second Service, `jithendar-com-internal`, and its callbacks shouldn't add pods for readers.
+- **`rate(...[2m])`** turns a counter into requests per second, averaged over two minutes. With a 30-second scrape, that's about four samples: enough to ignore a single burst, short enough to react within a couple of minutes.
+- **`sum(...)`** gives the total for the whole site. KEDA hands that total to the HPA, and with `metricType: AverageValue` the HPA divides it by the number of pods. So the threshold you write is **per pod**.
+
+There's one kind of request the query never sees: pages Cloudflare serves from its cache. They never reach mk4, which is exactly right, because a cached page costs the pods nothing.
+
+## The ScaledObject
+
+KEDA itself was already on the cluster: version 2.21.1, installed as a Helm release by Terraform in [k8s-deployments](https://github.com/mrjithendar/k8s-deployments) (`minikube-infrastructure/keda.tf`). The site's part is one file in this site's repository, `kubernetes/35-autoscaling.yaml`, applied with the rest of the site. Without its comments:
+
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: jithendar-com
+  namespace: jithendar
+spec:
+  scaleTargetRef:
+    name: jithendar-com            # the Deployment (KEDA's default kind)
+  minReplicaCount: 2
+  maxReplicaCount: 8
+  triggers:
+    - type: prometheus
+      metricType: AverageValue
+      metadata:
+        serverAddress: http://prometheus.monitoring:9090/prometheus
+        query: sum(rate(istio_requests_total{reporter="destination",destination_workload_namespace="jithendar",destination_workload="jithendar-com",destination_service_name="jithendar-com"}[2m]))
+        threshold: "5"               # requests per second, per pod
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        containerName: web           # the app only, not the istio-proxy sidecar
+        value: "200"                 # percent of the web container's CPU request (250m)
+```
+
+A few things that aren't obvious from the YAML:
+
+- **The Deployment has no `replicas` field anymore.** If it did, every `kubectl apply` would set the count back to that number, over whatever KEDA had chosen.
+- **No credentials anywhere.** Prometheus is inside the mesh, so there's no TriggerAuthentication: KEDA's operator has its own Istio sidecar and calls Prometheus over mTLS as `keda/keda-operator`. Namespace `keda` is on the list of callers the monitoring namespace accepts.
+- **`containerName: web`** makes the CPU trigger compare only the app container against its own request. Without it, KEDA uses the whole pod, sidecar included.
+- **`minReplicaCount: 2` means no scale to zero.** KEDA can take a workload down to nothing and back, but a website that has to warm up for a minute on the first request isn't a good candidate. Because of this, KEDA's `pollingInterval`, which drives the jump from zero to one, barely matters here.
+
+### Two easy mistakes with the values
+
+The trigger values are **strings**, and the counts are **integers**. KEDA's CRD types `triggers[].metadata` as a map of strings, so `threshold: 5` without quotes is refused by the API server. `maxReplicaCount: "8"` with quotes is refused for the opposite reason.
+
+The values also carry no units:
+- `threshold` is a plain number of requests per second, so `150s` means nothing to it.
+- A `Utilization` value is a percent of the container's request, not millicores. If you mean "0.5 cores" on a 250m request, that's `"200"`. `500m` only works with `metricType: AverageValue`.
+
+## What KEDA builds from it
+
+KEDA doesn't scale anything itself. Its operator reads the ScaledObject and creates an ordinary HorizontalPodAutoscaler named `keda-hpa-jithendar-com`, which it owns and keeps in step. If you already have an HPA for the same Deployment, KEDA's admission webhook refuses the ScaledObject, so delete yours first. Here is what it made, from the live cluster:
+
+```yaml
+spec:
+  minReplicas: 2
+  maxReplicas: 8
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: jithendar-com}
+  metrics:
+    - type: ContainerResource
+      containerResource:
+        name: cpu
+        container: web
+        target: {type: Utilization, averageUtilization: 200}
+    - type: External
+      external:
+        metric:
+          name: s0-prometheus
+          selector:
+            matchLabels: {scaledobject.keda.sh/name: jithendar-com}
+        target: {type: AverageValue, averageValue: "5"}
+```
+
+The CPU trigger became a plain `ContainerResource` metric. The HPA reads it from Metrics Server, and KEDA isn't involved at all. The Prometheus trigger became an `External` metric called `s0-prometheus`, which is where KEDA does its real work.
+
+![One HPA sync, every 15 seconds, as a sequence between six participants: the HPA controller in k3s, kube-apiserver, KEDA's metrics API (no sidecar), keda-operator and its sidecar, Prometheus in namespace monitoring, and metrics-server in kube-system. 1, the HPA asks the API server for s0-prometheus. 2, the API server forwards it to KEDA's metrics API as external.metrics. 3, the metrics API calls the operator over gRPC on port 9666. 4, the operator sends the PromQL query to Prometheus over mTLS. 5, Prometheus answers 1.4 requests per second. 6, the total 1.4, not per pod, goes back to the HPA. 7, the HPA asks the API server for the CPU of web. 8, the API server asks metrics-server through metrics.k8s.io. 9, the answer is 51m per pod, 20 % of 250m. 10, the HPA decides: requests 1.4 divided by 5 is 0.28, so 1 pod; CPU 2 pods times 20 % divided by 200 % is 0.2, so 1 pod; the larger is 1, below the minimum, so 2; 2 pods already run, so nothing changes. A note explains that the API server calls KEDA's metrics API directly, so that pod has no Istio sidecar; it reads each value from the operator over gRPC with KEDA's own TLS on port 9666, which is PERMISSIVE; the operator queries Prometheus through its sidecar because Prometheus accepts mTLS only and namespace keda is an allowed caller; KEDA answers with the query's total and the HPA divides it by the pods; CPU never passes through KEDA.](/images/keda-autoscaling/keda-autoscaling-loop.svg)
+
+Every 15 seconds the HPA controller asks the API server for `s0-prometheus`. The API server doesn't know what that is, but an APIService, `v1beta1.external.metrics.k8s.io`, says who does: `keda-operator-metrics-apiserver`. That pod asks the operator over gRPC, the operator runs the query against Prometheus, and the answer travels back the same way.
+
+KEDA's install on mk4 splits the mesh around that path:
+
+- **The operator has an Istio sidecar.** Prometheus only accepts mTLS, so the operator's queries have to go through one.
+- **The metrics API server and the admission webhooks don't.** The Kubernetes API server calls them directly, and a proxy that isn't ready yet would fail those calls.
+- **One port is relaxed.** The metrics API server talks to the operator on port 9666 with KEDA's own TLS, so a PeerAuthentication makes just that port PERMISSIVE and leaves the rest of the operator on STRICT.
+
+You can make the same call the HPA makes:
+
+```console
+$ kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/jithendar/s0-prometheus?labelSelector=scaledobject.keda.sh%2Fname%3Djithendar-com"
+{"kind":"ExternalMetricValueList","apiVersion":"external.metrics.k8s.io/v1beta1","metadata":{},
+ "items":[{"metricName":"s0-prometheus","metricLabels":null,"timestamp":"2026-11-26T09:24:45Z","value":"1.400"}]}
+```
+
+That `1.400` is the whole site's requests per second, not one pod's. The HPA does the division, which is why `kubectl get hpa` shows something like `700m/5 (avg)` with two pods running.
+
+## The arithmetic
+
+The HPA's rule is the same for both metrics: `desired = ceil(current pods × current value ÷ target)`. With an average value that works out to:
+
+- **Requests:** the current value is the total divided by the pods, so the pods cancel out: `ceil(total ÷ 5)`.
+- **CPU:** `ceil(pods × utilization ÷ 200)`.
+
+It takes the larger of the two, then clamps it between 2 and 8.
+
+![Pods for a given load: requests per second divided by 5, never below 2 or above 8. A step chart with requests per second for the whole site on the horizontal axis, from 0 to 45, and pods on the vertical axis, from 0 to 8. The line stays at 2 pods up to 10 requests per second, then steps up one pod every 5 requests per second: 3 pods to 15, 4 to 20, 5 to 25, 6 to 30, 7 to 35, and 8 from 35 on. Two red lines mark now, at 0.9, and the 7-day peak, at 4.8, both on the 2-pod step. Notes: minimum 2 because of two nodes and more than the disruption budget's 1; the 3rd pod comes at about 11 requests per second because the HPA ignores changes within 10 %; maximum 8 is the database connection ceiling; CPU at 200 % is about 9 requests per second of typical requests on one pod, 0.5 cores, and adds pods only when requests get heavier than usual. A footnote says this illustrates the rule with the ScaledObject's numbers, the site has not needed a third pod yet, scaling up happens at the next sync and scaling down waits 5 minutes.](/images/keda-autoscaling/keda-autoscaling-steps.svg)
+
+| Requests per second, whole site | Pods |
+|---|---|
+| up to 10 (today: about 1; the week's peak: 4.8) | 2 |
+| 10 to 15 | 3 |
+| 15 to 20 | 4 |
+| 20 to 25 | 5 |
+| 25 to 30 | 6 |
+| 30 to 35 | 7 |
+| 35 and more | 8 |
+
+Three HPA defaults shape how it moves, and none of them is set in the ScaledObject:
+
+- **A 10 % tolerance.** The HPA doesn't act when the ratio to the target is within 10 %. Going from 2 pods to 3 therefore happens at about 11 requests per second, not at 10.01.
+- **Scaling up is immediate.** There's no stabilization window going up, and in one 15-second step the HPA may add 4 pods or double the count, whichever is more. From 2 pods it can go straight to 6.
+- **Scaling down waits five minutes.** The HPA uses the highest recommendation of the last 300 seconds. A spike that lasts one minute holds its extra pods for five, so the count doesn't bounce.
+
+## Choosing 5, 200 and 8
+
+Picking these numbers is the part most guides skip. Here's the reasoning, from the same week of data.
+
+**5 requests per second per pod.** The first question was what a request costs. Across the 9,238 minutes of the week in which no pod had started in the previous quarter of an hour, a straight-line fit gives:
+- about **0.053 core-seconds of CPU per request**;
+- about 0.013 cores for both pods sitting idle.
+
+So a pod taking 5 requests per second uses about 0.27 cores, a little over its 250m request. At that load:
+- **Today's traffic stays on two pods.** The week's peak was 4.8 requests per second for the whole site, 2.4 per pod.
+- **A third pod comes at about 11 requests per second,** more than twice the busiest minute of the week.
+- **There's headroom while it starts.** A new pod needs a minute or two to start and warm up. Each pod may use up to 2 cores (its limit), so one sitting at 0.27 has plenty of room in that time.
+
+**CPU at 200 %.** 200 % of a 250m request is 0.5 cores. At 0.053 core-seconds per request, that's about 9 typical requests per second on one pod, well past the point where the requests trigger has already added pods. So CPU only decides when requests are heavier than usual: pages that miss every cache, admin work, search. It isn't completely clear of restart noise. The site's average was above 200 % for 28 minutes of the week, almost all during restarts. The HPA sets aside CPU from pods that aren't ready yet, which takes some of the edge off. If extra pods do start turning up after deploys, the fix is a short scale-up stabilization window under `advanced.horizontalPodAutoscalerConfig`, not a lower target.
+
+**8 pods at most.** This one isn't about CPU or memory. Each pod opens up to 5 database connections (`DATABASE_POOL_MAX`). PgBouncer runs in session mode, so every client connection holds a server connection, and the two pooler pods have 20 server connections each. Eight pods use all 40. Past that, requests would queue for a connection, and more pods wouldn't help.
+
+Two of the queries behind those numbers, if you want to try the same on your own cluster:
+
+```promql
+# The whole site's requests per second: the busiest 2-minute rate of the last 7 days
+max_over_time(sum(rate(istio_requests_total{reporter="destination",destination_workload_namespace="jithendar",destination_workload="jithendar-com",destination_service_name="jithendar-com"}[2m]))[7d:1m])
+
+# The busiest pod's CPU: 99th percentile over the last 7 days, in cores
+quantile_over_time(0.99, max(rate(container_cpu_usage_seconds_total{namespace="jithendar",pod=~"jithendar-com-.*",container="web"}[2m]))[7d:1m])
+```
+
+The rest are in the repository with their results, in [`docs/knowledge-sharing/keda-autoscaling/evidence/prometheus.txt`](https://github.com/mrjithendar/jithendar.com/tree/master/docs/knowledge-sharing/keda-autoscaling).
+
+## Where a third pod would go
+
+An autoscaler can only ask for pods. The scheduler still has to find room for them, and on 26 November it couldn't.
+
+![Where a third pod would go, and why it would wait, on 26 November 2026. A zone shows the mk4 workers, the spread domains, with maxSkew 1 and DoNotSchedule. worker1 has 5774 of 7729 Mi of memory requested, 74 %, and runs pod 1. worker2 has 5988 of 7729 Mi, 77 %, and runs pod 2. worker3 has 7240 of 7729 Mi, 93 %, shown in red, and holds pod 3 as Pending, marked with failure point 1: it needs 512Mi and 489 are free; it is the only node pod 3 may use, because 1, 1 and 0 pods allow no other place. master1 is tainted and so not a spread domain, because of nodeTaintsPolicy Honor. A database cylinder, PgBouncer in session mode, reads 2 poolers times 20 equals 40, 8 pods times 5 equals 40, so at most 8 pods. Text below explains why pod 3 would wait: the Deployment spreads its pods so that no node has more than one pod more than another, a pod that can't keep to that stays Pending, and with one pod each on worker1 and worker2 a third may only start on worker3, which has 489Mi of memory requests left against the 512Mi a pod asks for; until someone frees about 25Mi there or relaxes the rule to ScheduleAnyway, the HPA can ask for 3 pods and the site keeps running 2. It also explains why 8 is the ceiling: each pod opens up to 5 database connections and PgBouncer in session mode holds one server connection per client, so 8 pods use all 40.](/images/keda-autoscaling/keda-autoscaling-placement.svg)
+
+The Deployment has a topology spread rule:
+- `maxSkew: 1` across `kubernetes.io/hostname`, with `whenUnsatisfiable: DoNotSchedule`;
+- `nodeTaintsPolicy: Honor`, so the tainted control-plane node doesn't count.
+
+In plain words, no worker may have more than one pod more than another. That's what gives two pods on two different nodes, and it's why a node drain never takes the whole site down. But it also decides where the third pod goes:
+
+- **worker1 and worker2 already have one pod each.** A second pod on either would make it 2, 1, 0, a skew of 2.
+- **So the third pod may only start on worker3.**
+- **worker3 has 489Mi of memory requests left.** A site pod asks for 512Mi.
+
+So if traffic went past 11 requests per second today, the HPA would ask for three pods, and the third would sit Pending. The site would keep serving from two. That's no worse than before KEDA, but it isn't the point of having it either. The fixes are all trade-offs:
+- free about 25Mi of requests on worker3, where the `rag` namespace holds the largest share (3 GiB);
+- relax the rule to `ScheduleAnyway`, giving up the even spread to gain scheduling;
+- add a fourth worker.
+
+None of them is done yet.
+
+## Shipping it through the pipeline
+
+This site's manifests are applied by a GitHub Actions workflow, not by hand. On a merged pull request, the workflow does a server-side dry run, a diff, an apply, a rolling restart, a smoke test, and then restores the CrewAI configuration. Adding a new kind of object to that pipeline took three things:
+
+- **A permission.** The workflow deploys as the ServiceAccount `jithendar/github-ci-applier`. Its Role gained `create`, `patch` and `update` on `scaledobjects.keda.sh`, and read-only access to HorizontalPodAutoscalers, so the deploy can show the HPA but never edit it.
+- **A place on the allow-list.** A script, `scripts/ci-app-manifests.py`, picks the objects CI may apply from the rendered manifests. A kind on neither of its lists stops the run, so every new kind is a deliberate decision. ScaledObject is now on the list. TriggerAuthentication deliberately isn't, because it reads Secrets, so a manifest that adds one stops the deploy until a person decides.
+- **A test.** `scripts/tests/test_autoscaling.py` checks the wiring:
+  - the Deployment sets no `replicas`;
+  - the ScaledObject targets it and keeps at least two pods, more than the PodDisruptionBudget's `minAvailable: 1`;
+  - the query selects the public Service;
+  - the CPU trigger names a container that exists;
+  - no trigger needs credentials.
+
+![From a pull request to an HPA: what checks the ScaledObject on the way. A pull request changing kubernetes/35-autoscaling.yaml runs check, scripts (test_autoscaling.py: wiring, max at least min, numbers; skipped while SET-ME), then deploy, plan (kustomize, then ci-app-manifests.py with its allow-list; a SET-ME leaves the object out with a warning), marked with failure point 2. Once merged to master, the deploy job starts; it also runs on a manual run or a moks-cms release. Inside the deploy job, which runs as ServiceAccount jithendar/github-ci-applier: server dry run against the API and webhooks, marked with failure point 1; kubectl diff; kubectl apply of the site and seo-agent groups; rollout restart and wait; smoke test through a port-forward; crewconfig restore. kubectl apply creates the ScaledObject jithendar-com on mk4; keda-operator validates it and creates the HPA keda-hpa-jithendar-com, which scales the Deployment. The Role github-ci-applier lets the deploy job create, patch and update scaledobjects, only get, list and watch HPAs, and nothing for TriggerAuthentication. Note 1: on 26 November at 08:33 UTC the pull request that added the ScaledObject was merged with three values still SET-ME; the server dry run refused it because spec.maxReplicaCount must be of type integer, so every deploy failed before it changed anything, moks-cms release restarts included, and the site kept its 2 pods. Note 2: after #25 the plan step named each SET-ME and stopped, so the failure showed on the pull request itself; since #26 it leaves a ScaledObject with any SET-ME out, with one warning per value, and deploys the rest; a SET-ME in any other kind still stops the run.](/images/keda-autoscaling/keda-autoscaling-pipeline.svg)
+
+### The replicas trap
+
+Removing `replicas: 2` from the Deployment looks harmless. It isn't, if the Deployment was ever applied with `kubectl apply`. Client-side apply keeps the last manifest it applied in an annotation, `kubectl.kubernetes.io/last-applied-configuration`, and compares three things: that annotation, the live object and your new file. A field that's in the annotation but missing from the new file is treated as "you deleted this", so kubectl removes it from the live object. A Deployment without `replicas` defaults to **one** pod. The site would have dropped to one pod on the first deploy and stayed there until the HPA noticed and brought it back.
+
+The fix is to rewrite the annotation from the new manifest before that deploy. It changes nothing else on the object:
+
+```sh
+kubectl -n jithendar apply set-last-applied -f jithendar-com-deployment.yaml
+kubectl -n jithendar get deployment jithendar-com \
+  -o jsonpath='{.metadata.annotations.kubectl\.kubernetes\.io/last-applied-configuration}' \
+  | python3 -c 'import json, sys; print("replicas" in json.load(sys.stdin)["spec"])'   # False
+```
+
+After that, `kubectl diff` of the new Deployment against the cluster showed no change at all, which is what you want to see before letting KEDA take over.
+
+### The morning it broke every deploy
+
+The numbers in the ScaledObject were meant to be chosen last, from the data above, so the pull request that added it had `SET-ME` in their place. Then it was merged on 26 November at 08:32 UTC, still with the placeholders.
+
+The deploy started a minute later and stopped at the first step, the server-side dry run:
+
+```text
+* spec.maxReplicaCount: Invalid value: "string": spec.maxReplicaCount in body must be of type integer: "string"
+##[error]Server dry run of group site failed.
+```
+
+Nothing was applied, and the site kept running its two pods. But the site group is all or nothing, so every deploy after that failed the same way, including the restarts that pick up a new moks-cms release. Two quick fixes followed:
+
+- **The plan step now names the problem on the pull request.** The deploy's `plan` job runs on every pull request, and now it reports each placeholder by its path, for example `spec.triggers[0].metadata.threshold is SET-ME`. That turns a confusing dry-run error after the merge into a clear failure before it.
+- **A ScaledObject with any `SET-ME` is now left out** with a warning per value, and everything else deploys. That's safe here because leaving it out changes nothing that runs: the Deployment has no `replicas`, so it keeps the pods it has. A `SET-ME` in any other kind of object still stops the run, and the autoscaling tests skip a number while it's unset and check it once it's set.
+
+The fix was merged at 08:58, and its deploy went green at 09:00, less than half an hour after the first failure. The real numbers went live at 09:13. The lesson I'm keeping: a placeholder that the API server can't parse is a time bomb on the main branch, and a draft label won't stop anyone from merging it. If a value has to be filled in later, the unfilled state should still deploy.
+
+## Checking it
+
+Everything here is read-only:
+
+```console
+$ kubectl -n jithendar get scaledobject jithendar-com
+NAME            SCALETARGETKIND      SCALETARGETNAME   MIN   MAX   READY   ACTIVE   FALLBACK   PAUSED   TRIGGERS
+jithendar-com   apps/v1.Deployment   jithendar-com     2     8     True    True     False      False    prometheus,cpu
+
+$ kubectl -n jithendar get hpa keda-hpa-jithendar-com
+NAME                     REFERENCE                  TARGETS                      MINPODS   MAXPODS   REPLICAS
+keda-hpa-jithendar-com   Deployment/jithendar-com   cpu: 2%/200%, 306m/5 (avg)   2         8         2
+```
+
+How to read them:
+
+- **`READY True`** means KEDA accepted the object and can reach its scalers.
+- **`ACTIVE True`** only says a trigger is above its activation threshold. That's 0 by default, so any traffic at all makes it active, and it doesn't mean "scaling up".
+- **The HPA's `TARGETS` column** shows both metrics against their targets: CPU at 2 % of the web container's request, and 0.306 requests per second per pod against 5.
+
+When something's wrong, look here first:
+
+```sh
+kubectl -n jithendar describe scaledobject jithendar-com     # conditions and events; a Prometheus error shows here
+kubectl -n jithendar describe hpa keda-hpa-jithendar-com     # every scaling decision, with the metric that drove it
+kubectl -n keda logs deploy/keda-operator -c keda-operator --tail=50
+kubectl get apiservice v1beta1.external.metrics.k8s.io       # Available True, or no HPA can read s0-prometheus
+```
+
+If Prometheus can't be reached, the External metric fails. The HPA then still scales up on CPU but won't scale down, and the minimum of two always holds. KEDA can also run a fixed `fallback` number of pods after a set number of failed reads. The file has that commented out for now.
+
+## What's next
+
+- **Room for the third pod**, as above. Until then, the ceiling in practice is two.
+- **Watching it from Grafana.** KEDA's operator exports its own metrics (scaler values, errors, active state), but this Prometheus doesn't scrape it yet. kube-state-metrics, which would give the HPA's desired and current replicas, isn't running either. With both, an autoscaling panel could go on the [public Grafana](/blog/public-grafana-read-only-dashboards-k3s-cloudflare), next to the request rates it already shows.
+- **A load test somewhere safe.** I'd rather see the first scale-up in a copy of the namespace than wait for a busy day in production. When it does happen for real, this post gets the HPA's events.
+
+The pieces are all public if you want to copy them:
+- the ScaledObject, tests and deploy pipeline in [jithendar.com](https://github.com/mrjithendar/jithendar.com) (`kubernetes/35-autoscaling.yaml`, `scripts/tests/test_autoscaling.py`, `scripts/ci-app-manifests.py`);
+- KEDA's install in [k8s-deployments](https://github.com/mrjithendar/k8s-deployments) (`minikube-infrastructure/keda.tf`, `deploy/minikube/keda/`).
+
+The numbers are the part you can't copy. Take a week of your own traffic first.

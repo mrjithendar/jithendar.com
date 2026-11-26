@@ -1,0 +1,64 @@
+# Prometheus on mk4, 26 November 2026, queried 09:00–09:20 UTC over a port-forward
+# (kubectl -n monitoring port-forward deploy/prometheus 19090:9090; route prefix /prometheus).
+# Window: the 7 days before the query. Scrape interval for envoy-stats and kubernetes-cadvisor: 30 s.
+# These numbers chose the ScaledObject's threshold ("5") and cpu value ("200") in kubernetes/35-autoscaling.yaml.
+
+SEL = reporter="destination",destination_workload_namespace="jithendar",destination_workload="jithendar-com",destination_service_name="jithendar-com"
+CPU = container_cpu_usage_seconds_total{namespace="jithendar",pod=~"jithendar-com-.*",container="web"}
+PR  = sum by (pod) (rate(istio_requests_total{SEL}[2m]))
+
+## Requests per second, public Service jithendar-com (what the ScaledObject's prometheus trigger reads)
+
+sum(rate(istio_requests_total{SEL}[2m]))                                         now          0.90
+quantile_over_time(0.99, sum(rate(istio_requests_total{SEL}[2m]))[7d:1m])         p99          1.47
+max_over_time(sum(rate(istio_requests_total{SEL}[2m]))[7d:1m])                    max          4.79
+
+Per pod:
+quantile_over_time(0.5,  max(PR)[7d:1m])                                          median       0.011
+quantile_over_time(0.99, max(PR)[7d:1m])                                          p99          0.83
+max_over_time(max(PR)[7d:1m])                                                     max          2.57
+
+## CPU of the web container (cores)
+
+quantile_over_time(0.5,  avg(rate(CPU[2m]))[7d:1m])                               median/pod   0.0063
+quantile_over_time(0.99, max(rate(CPU[2m]))[7d:1m])                               p99 busiest  0.219
+max_over_time(max(rate(CPU[2m]))[7d:1m])                                          max busiest  0.883
+max per-pod CPU in minutes where sum(PR) > 3.5 req/s                              0.262
+
+## Where the CPU peaks come from
+
+Range query max by (pod) (rate(CPU[2m])) > 0.4, 1-minute steps, matched with
+max by (pod) (container_start_time_seconds{namespace="jithendar",pod=~"jithendar-com-.*",container="web"}):
+  pods seen in 7 days                                            88
+  minutes a pod used more than 0.4 cores                         133
+    in the pod's first 10 minutes                                129
+    later                                                        4
+  peaks within the first 10 minutes reached                      0.43 to 0.90 cores
+
+Site average, avg(rate(CPU[2m])) / 0.25 * 100 (percent of the 250m request, what Utilization compares):
+  p50 3 %   p90 6 %   p99 60 %   p99.9 263 %   max 343 %
+  minutes above  80 %: 79
+  minutes above 100 %: 73
+  minutes above 150 %: 50
+  minutes above 200 %: 28        (almost all inside a pod's first 10 minutes)
+
+## CPU cost of a request
+
+Least squares over the 9238 one-minute steps with no pod started in the previous 15 minutes:
+  sum(rate(CPU[2m]))  ≈  0.013 cores  +  0.053 core-seconds × sum(rate(istio_requests_total{destination_workload="jithendar-com"}[2m]))
+  (all callers of the pods, both Services; 0.013 cores is two idle pods)
+Cross-check, the 67 minutes with more than 1.5 req/s: 0.15 cores on average for 2.36 req/s.
+
+Derived (per pod, idle 0.0065 cores):
+  5 req/s per pod   ≈ 0.0065 + 5 × 0.053  ≈ 0.27 cores  ≈ 108 % of the 250m request
+  200 % of request  = 0.5 cores           ≈ (0.5 − 0.0065) / 0.053 ≈ 9 req/s per pod
+
+## Latency
+
+histogram_quantile(0.95, sum by (le) (rate(istio_request_duration_milliseconds_bucket{reporter="destination",destination_workload="jithendar-com",destination_service_name="jithendar-com"}[7d])))
+  p95 over 7 days                                                395 ms
+
+## Not in this Prometheus (26 November)
+
+keda_scaler_metrics_value, keda_scaler_active, keda_scaled_object_errors_total     no series (KEDA's operator is not scraped)
+kube_horizontalpodautoscaler_status_desired_replicas, kube_deployment_status_replicas  no series (no kube-state-metrics)

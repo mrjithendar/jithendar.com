@@ -1,0 +1,69 @@
+# Read-only kubectl on mk4, 26 November 2026, about 09:25 UTC (current context, nothing changed)
+
+## KEDA (k8s-deployments #33: minikube-infrastructure/keda.tf, chart kedacore/keda 2.21.1)
+
+$ kubectl -n keda get pods
+keda-admission-webhooks-…            1/1   Running
+keda-operator-…                      2/2   Running      (operator + istio-proxy)
+keda-operator-metrics-apiserver-…    1/1   Running
+
+$ kubectl get apiservice v1beta1.external.metrics.k8s.io
+v1beta1.external.metrics.k8s.io   keda/keda-operator-metrics-apiserver   True
+
+## The ScaledObject (kubernetes/35-autoscaling.yaml, values from commit 83c02c3)
+
+$ kubectl -n jithendar get scaledobject jithendar-com
+SCALETARGETKIND      SCALETARGETNAME   MIN   MAX   READY   ACTIVE   FALLBACK   PAUSED   TRIGGERS
+apps/v1.Deployment   jithendar-com     2     8     True    True     False      False    prometheus,cpu
+created 2026-11-26T09:13:14Z (outside the deploy workflow: no deploy-kubernetes run between 08:58 and 09:25)
+
+conditions:
+Ready=True     ScaledObjectReady  ScaledObject is defined correctly and is ready for scaling
+Active=True    ScalerActive       Scaling is performed because triggers are active
+Fallback=False NoFallbackFound    No fallbacks are active on this scaled object
+HPAActive=True HPAActive          HPA is actively scaling
+status.externalMetricNames: ["s0-prometheus"]
+
+## The HPA KEDA made from it
+
+$ kubectl -n jithendar get hpa keda-hpa-jithendar-com
+REFERENCE                  TARGETS                      MINPODS   MAXPODS   REPLICAS
+Deployment/jithendar-com   cpu: 2%/200%, 306m/5 (avg)   2         8         2
+
+spec.metrics (no spec.behavior: the HPA defaults apply):
+- type: ContainerResource   containerResource: {name: cpu, container: web, target: {type: Utilization, averageUtilization: 200}}
+- type: External            external: {metric: {name: s0-prometheus, selector: {matchLabels: {scaledobject.keda.sh/name: jithendar-com}}},
+                                       target: {type: AverageValue, averageValue: "5"}}
+status a few minutes later: cpu averageUtilization 20 (51m), s0-prometheus averageValue 628m, currentReplicas 2, desiredReplicas 2
+conditions: AbleToScale True ScaleDownStabilized; ScalingActive True ValidMetricFound; ScalingLimited False DesiredWithinRange
+
+## The external metric as the HPA reads it (KEDA returns the total; the HPA divides by the pod count)
+
+$ kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/jithendar/s0-prometheus?labelSelector=scaledobject.keda.sh%2Fname%3Djithendar-com"
+{"kind": "ExternalMetricValueList", "items": [{"metricName": "s0-prometheus", "timestamp": "2026-11-26T09:24:45Z", "value": "1.400"}]}
+
+## Placement (kubernetes/30-jithendar-com.yaml and kubectl describe nodes)
+
+topologySpreadConstraints: maxSkew 1, topologyKey kubernetes.io/hostname, whenUnsatisfiable DoNotSchedule,
+                           nodeTaintsPolicy Honor, matchLabelKeys [pod-template-hash]
+strategy: RollingUpdate maxSurge 1, maxUnavailable 0
+PodDisruptionBudget: minAvailable 1
+web container: requests 250m CPU / 512Mi memory, limits 2 CPU / 1536Mi
+
+node                              allocatable memory   requested          pods of jithendar-com
+jithendar-master1                 3897092Ki            170Mi (4 %)        - (tainted: not a spread domain)
+jithendar-pool-workers-worker1    7915012Ki            5774Mi (74 %)      1
+jithendar-pool-workers-worker2    7915016Ki            5988Mi (77 %)      1
+jithendar-pool-workers-worker3    7915020Ki            7240Mi (93 %)      0      → 489Mi free, a pod requests 512Mi
+
+## Why every deploy failed between #24 and #26 (run 45784054735, deploy after #24 merged with SET-ME)
+
+* spec.maxReplicaCount: Invalid value: "string": spec.maxReplicaCount in body must be of type integer: "string"
+##[error]Server dry run of group site failed. …
+
+After #25 the plan job named the values instead (run 45786853862):
+##[error]ScaledObject jithendar/jithendar-com: spec.maxReplicaCount is SET-ME, a value the owner has not chosen yet
+
+After #26 (run 45787648470, green):
+##[warning]ScaledObject jithendar/jithendar-com not applied: spec.maxReplicaCount is SET-ME, a value the owner has not chosen yet
+(and the same for spec.triggers[0].metadata.threshold and spec.triggers[1].metadata.value)
