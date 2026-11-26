@@ -4,7 +4,7 @@
 #
 # This ServiceAccount may create and update, in namespace jithendar, the kinds scripts/ci-app-manifests.py lets
 # through: Deployments, StatefulSets, Services, ConfigMaps, Ingresses, NetworkPolicies, PodDisruptionBudgets,
-# cert-manager Certificates, Istio VirtualServices and, since 2026-11-14 (owner decision, docs/DEPLOYMENT.md),
+# cert-manager Certificates, Istio VirtualServices, KEDA ScaledObjects (since 2026-11-26) and, since 2026-11-14 (owner decision, docs/DEPLOYMENT.md),
 # ServiceAccounts, Roles, RoleBindings, ResourceQuotas, PeerAuthentications and AuthorizationPolicies. It may also
 # patch the Namespace jithendar itself (ClusterRole below, that one name only).
 #
@@ -43,6 +43,15 @@ rules:
 - apiGroups: ["policy"]
   resources: ["poddisruptionbudgets"]
   verbs: ["get", "list", "watch", "create", "patch", "update"]
+# KEDA (installed by k8s-deployments, minikube-infrastructure/keda.tf): ScaledObjects scale the site's Deployment.
+# Not TriggerAuthentications: they read Secrets, so one is a person's decision (scripts/ci-app-manifests.py).
+- apiGroups: ["keda.sh"]
+  resources: ["scaledobjects"]
+  verbs: ["get", "list", "watch", "create", "patch", "update"]
+# The HPA KEDA makes for each ScaledObject (keda-hpa-<name>): read only, for the deploy's summary and diagnosis.
+- apiGroups: ["autoscaling"]
+  resources: ["horizontalpodautoscalers"]
+  verbs: ["get", "list", "watch"]
 - apiGroups: ["cert-manager.io"]
   resources: ["certificates"]
   verbs: ["get", "list", "watch", "create", "patch", "update"]
