@@ -1,7 +1,11 @@
-# SEO platform v4 agent service (services/seo-agent, docs/seo/FLOWS.md, CREWS.md, MCP.md): every AI workflow and
+# SEO platform v4 agent service (moks-cms seo-agent/, docs/seo/FLOWS.md, CREWS.md, MCP.md): every AI workflow and
 # scheduled SEO job as a CrewAI Flow, the Optimization/Editorial/Report crews, pgvector retrieval, Ask the Blog, and
 # the MCP servers. Two ports: 8080 the internal API (web pods, trigger CronJobs, Prometheus only) and 8090 the MCP
 # edge (/mcp/public, /mcp/admin; Kong only, via Service seo-agent-mcp and kubernetes/kong/seo-agent-mcp.deck.yaml).
+# Since moks-cms D-105 (2026-11-26) the agent runs as the `seo-agent` container of every jithendar-com pod
+# (30-jithendar-com.yaml), from the one moks-cms image. This file keeps its ConfigMap, and its Services and
+# NetworkPolicy now select the site's pods (app: jithendar-com). The seo-agent Deployment below is kept at 0 replicas
+# so the deploy stops the old pod; delete it once the site pods run the agent (README "SEO agent in the site pod").
 # Applied by a person (scripts/manifests.sh seo-agent | kubectl apply -f -) after the one-time steps in
 # docs/seo/MANUAL_SETUP.md "v3" and "v4": Secret seo-agent-env (scripts/create-seo-agent-secrets.sh), pgvector enabled.
 # Secret seo-agent-rag (optional, scripts/create-seo-agent-rag-secret.sh): RAG_API_URL and RAG_BEARER_TOKEN for the shared
@@ -18,7 +22,8 @@ metadata:
   labels: { app: seo-agent, app.kubernetes.io/part-of: jithendar-com }
 data:
   APP_ENV: production
-  SEO_AGENT_CALLBACK_URL: http://jithendar-com-internal.jithendar:9465
+  # The site's callback listener in the same pod (container web, port 9465), D-105.
+  SEO_AGENT_CALLBACK_URL: http://127.0.0.1:9465
   SEO_DRAFT_MODEL: claude-sonnet-5-5
   SEO_CLASSIFY_MODEL: claude-haiku-5-5
   # Shared with the web app (same seo_llm_usage table): keep equal to the site's SEO_LLM_MONTHLY_BUDGET_USD.
@@ -96,9 +101,10 @@ metadata:
   namespace: jithendar
   labels: { app: seo-agent, app.kubernetes.io/part-of: jithendar-com }
 spec:
-  replicas: 1
-  # One replica, and never two at once: flow runs execute in-process; on start the new pod marks runs the old one left
-  # running as failed (runs.py recover; reruns start from the beginning). Advisory locks also guard each run.
+  # Retired (D-105): the agent is a container of the site's pods now. 0 replicas, so applying this stops the old pod
+  # (whose start-up sweep would fail the new agents' runs if it ever started again); delete the Deployment afterwards:
+  #   kubectl -n jithendar delete deployment seo-agent
+  replicas: 0
   strategy: { type: Recreate }
   revisionHistoryLimit: 5
   selector: { matchLabels: { app: seo-agent } }
@@ -156,8 +162,9 @@ metadata:
   labels: { app: seo-agent, app.kubernetes.io/part-of: jithendar-com }
 spec:
   type: ClusterIP
-  selector: { app: seo-agent }
-  ports: [{ name: http, port: 8080, targetPort: http, protocol: TCP }]
+  # The site's pods: their seo-agent container (D-105).
+  selector: { app: jithendar-com }
+  ports: [{ name: http, port: 8080, targetPort: agent-http, protocol: TCP }]
 ---
 # The MCP edge only (port 8090). Kong's upstream for jithendar.com/mcp/public and /mcp/admin. Nothing else uses it.
 apiVersion: v1
@@ -168,8 +175,8 @@ metadata:
   labels: { app: seo-agent, app.kubernetes.io/part-of: jithendar-com }
 spec:
   type: ClusterIP
-  selector: { app: seo-agent }
-  ports: [{ name: http-mcp, port: 8090, targetPort: mcp, protocol: TCP }]
+  selector: { app: jithendar-com }
+  ports: [{ name: http-mcp, port: 8090, targetPort: agent-mcp, protocol: TCP }]
 ---
 # Allowed traffic (kindnet enforces NetworkPolicy on mk4). In on 8080: the site (admin API, review decisions, /api/ask
 # proxy), the flow-trigger CronJobs, Prometheus (/metrics). In on 8090 (MCP edge) only: the Kong gateway. Out: Postgres, the site's callback port, the OTel collector, bge-m3 (embeddings), rag-api (moks-rag), DNS and HTTPS to public
@@ -181,7 +188,8 @@ metadata:
   namespace: jithendar
   labels: { app.kubernetes.io/part-of: jithendar-com }
 spec:
-  podSelector: { matchLabels: { app: seo-agent } }
+  # The site's pods (D-105). NetworkPolicies add up: this adds the agent's traffic to what jithendar-com (30-…) allows.
+  podSelector: { matchLabels: { app: jithendar-com } }
   policyTypes: ["Ingress", "Egress"]
   ingress:
     - from:
@@ -223,5 +231,5 @@ metadata:
   labels: { app: seo-agent, app.kubernetes.io/part-of: jithendar-com }
 spec:
   clusterIP: None
-  selector: { app: seo-agent }
-  ports: [{ name: metrics, port: 8080, targetPort: http, protocol: TCP }]
+  selector: { app: jithendar-com }
+  ports: [{ name: metrics, port: 8080, targetPort: agent-http, protocol: TCP }]

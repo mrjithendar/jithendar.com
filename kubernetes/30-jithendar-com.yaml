@@ -1,5 +1,9 @@
 # Site: Deployment, Service, PodDisruptionBudget, NetworkPolicy (needs Secrets jithendar-com-env, harbor-pull and
 # postgres-db-credentials; the last is written by Terraform in the miniKube repo)
+# Since moks-cms D-105 (2026-11-26) the SEO agent is part of moks-cms: one image, moks-cms:latest, and every pod of this
+# Deployment runs it as two containers, `web` (the site, the image's default command) and `seo-agent` (workingDir /srv,
+# `python -m app.main`; its ConfigMap, Secrets, Services and NetworkPolicy stay in seo-agent-40-seo-agent.yaml). So
+# there is one agent per site pod (KEDA: 2-8); moks-cms seo-agent/app/runs.py makes several agents safe.
 # Exported from the live mk4 cluster (namespace jithendar) on 2026-10-29; cluster-generated fields removed.
 ---
 apiVersion: apps/v1
@@ -81,8 +85,11 @@ spec:
         # SEO v3 (docs/seo/AGENTS.md): where the seo-agent service is, and the cluster-internal port its callbacks use.
         # The callback listener starts only when SEO_ORCHESTRATOR=crewai (or its v3 alias langgraph) (set in jithendar-com-env/-public, off by
         # default: legacy v2 path) and SEO_AGENT_CALLBACK_TOKEN is set.
+        # The agent is this pod's own `seo-agent` container (D-105): runs, LLM budget holds and Ask the Blog stay with
+        # the agent of the pod that serves the request. Its callbacks come back the same way (SEO_AGENT_CALLBACK_URL in
+        # seo-agent-config).
         - name: SEO_AGENT_URL
-          value: http://seo-agent.jithendar:8080
+          value: http://127.0.0.1:8080
         - name: SEO_AGENT_CALLBACK_PORT
           value: '9465'
         - name: GEMINI_IMAGE_SIZE
@@ -241,6 +248,92 @@ spec:
         - mountPath: "/app/practice"
           name: practice
           readOnly: true
+      # The SEO agent (moks-cms seo-agent/, D-105): the same image as `web`, its own command, user, environment, memory
+      # limit and probes, so a crew run that runs out of memory restarts this container and not the site. No readiness
+      # probe on purpose: the pod is ready when the site is (and this container has started), so an agent problem never
+      # takes the site out of the Service; liveness restarts the agent alone. Its environment is the former seo-agent
+      # Deployment's (seo-agent-40-seo-agent.yaml: ConfigMap seo-agent-config, Secrets seo-agent-env, seo-agent-rag).
+      - name: seo-agent
+        image: registry.jithendar.com/jithendar/moks-cms:latest
+        imagePullPolicy: Always
+        workingDir: /srv
+        command: ["python", "-m", "app.main"]
+        ports:
+        - containerPort: 8080
+          name: agent-http
+          protocol: TCP
+        - containerPort: 8090
+          name: agent-mcp
+          protocol: TCP
+        envFrom:
+        - configMapRef:
+            name: seo-agent-config
+        - secretRef:
+            name: seo-agent-env
+        env:
+        # Shared CloudNativePG cluster through PgBouncer (session mode), the same Secret the site uses.
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: postgres-db-credentials
+              key: uri
+        # Optional, and preferred when present: the agent's own database role with only the privileges its SQL needs
+        # (moks-cms seo-agent/scripts/db-role.sql; runbook in docs/seo/SECURITY.md). Unset until someone creates
+        # Secret seo-agent-db-credentials; then DATABASE_URL above is used.
+        - name: SEO_AGENT_DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: seo-agent-db-credentials
+              key: uri
+              optional: true
+        # The shared moks-rag service (rag-api). Optional: until scripts/create-seo-agent-rag-secret.sh has created
+        # Secret seo-agent-rag, neither is set and the agent runs with moks-rag off.
+        - name: RAG_API_URL
+          valueFrom:
+            secretKeyRef:
+              name: seo-agent-rag
+              key: RAG_API_URL
+              optional: true
+        - name: RAG_BEARER_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: seo-agent-rag
+              key: RAG_BEARER_TOKEN
+              optional: true
+        # Measured as its own Deployment (moks-cms docs/seo/FLOWS.md "Resources"): ~310 MiB idle with the model loaded,
+        # ~700 MiB peak during a full reindex; the limit leaves room for a crew run.
+        resources:
+          limits:
+            cpu: '1'
+            memory: 1280Mi
+          requests:
+            cpu: 250m
+            memory: 768Mi
+        startupProbe:
+          httpGet:
+            path: "/healthz"
+            port: agent-http
+          periodSeconds: 2
+          failureThreshold: 45
+          timeoutSeconds: 2
+        livenessProbe:
+          httpGet:
+            path: "/healthz"
+            port: agent-http
+          periodSeconds: 20
+          failureThreshold: 3
+          timeoutSeconds: 3
+        securityContext:
+          runAsUser: 10001
+          runAsGroup: 10001
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        volumeMounts:
+        - mountPath: "/tmp"
+          name: agent-tmp
       dnsPolicy: ClusterFirst
       enableServiceLinks: false
       imagePullSecrets:
@@ -296,6 +389,10 @@ spec:
       - emptyDir:
           sizeLimit: 16Mi
         name: practice
+      # The seo-agent container's /tmp (HOME, CrewAI's storage dir; nothing persistent).
+      - emptyDir:
+          sizeLimit: 256Mi
+        name: agent-tmp
 ---
 apiVersion: v1
 kind: Service
@@ -381,14 +478,15 @@ spec:
       podSelector:
         matchLabels:
           cnpg.io/cluster: postgres-cluster
-  # SEO v3 agent service (kubernetes/seo-agent-*.yaml): admin run API and the /api/ask proxy.
+  # The SEO agent's internal API (admin run API, /api/ask proxy): the site calls its own pod's agent on 127.0.0.1, which
+  # no NetworkPolicy sees; this admits the other site pods' agents too (Service seo-agent), as before the seo-agent pods.
   - ports:
     - port: 8080
       protocol: TCP
     to:
     - podSelector:
         matchLabels:
-          app: seo-agent
+          app: jithendar-com
   # Python practice executor API (kubernetes/practice-executor-*.yaml; PRACTICE_EXECUTOR_URL=http://practice-executor.jithendar).
   - ports:
     - port: 8080
@@ -459,11 +557,12 @@ spec:
     ports:
     - port: 9464
       protocol: TCP
-  # SEO v3: callbacks from the seo-agent service only (token-protected as well).
+  # SEO v3: callbacks from the SEO agent only (token-protected as well). Its own pod's agent calls 127.0.0.1 (no
+  # NetworkPolicy involved); this admits another site pod's agent through Service jithendar-com-internal.
   - from:
     - podSelector:
         matchLabels:
-          app: seo-agent
+          app: jithendar-com
     ports:
     - port: 9465
       protocol: TCP

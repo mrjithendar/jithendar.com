@@ -7,7 +7,7 @@ belongs to; each group is applied on its own, and `scripts/manifests.sh <group>`
 | Group | Files | Applied by |
 |---|---|---|
 | `site` | `00-…` to `85-…`, listed in `kustomization.yaml` | CI (`deploy-kubernetes.yml`) on merge: all of it except the two token Secrets and the ClusterRole/ClusterRoleBinding in `85-`, which `scripts/setup-ci-applier.sh` and `setup-ci-deployer.sh` apply |
-| `seo-agent` | `seo-agent-*.yaml` (SEO v4 agent service: internal API + MCP edge, and `seo-agent-60-dispatcher.yaml`: one CronJob that starts the flow schedules kept in the database every minute; the schedules are edited in Admin → CrewAI console → Schedules). Kong entities for `/mcp/*` are in `kong/seo-agent-mcp.deck.yaml` (decK, not kubectl) | a person the first time (`scripts/manifests.sh seo-agent \| kubectl apply -f -`), after `scripts/create-seo-agent-secrets.sh` and pgvector (moks-cms `services/www/docs/seo/MANUAL_SETUP.md` §13–15 and "v4"); then CI applies the application objects on merge (ConfigMap, Deployment, Services, NetworkPolicies) and restarts the agent when its ConfigMap changed. The CronJobs stay with a person |
+| `seo-agent` | `seo-agent-*.yaml` (SEO v4 agent: its ConfigMap, Services and NetworkPolicy, which select the site's pods since D-105 (the agent is their `seo-agent` container in `30-jithendar-com.yaml`, see "SEO agent in the site pod"), the retired Deployment at 0 replicas, and `seo-agent-60-dispatcher.yaml`: one CronJob that starts the flow schedules kept in the database every minute; the schedules are edited in Admin → CrewAI console → Schedules). Kong entities for `/mcp/*` are in `kong/seo-agent-mcp.deck.yaml` (decK, not kubectl) | a person the first time (`scripts/manifests.sh seo-agent \| kubectl apply -f -`), after `scripts/create-seo-agent-secrets.sh` and pgvector (moks-cms `services/www/docs/seo/MANUAL_SETUP.md` §13–15 and "v4"); then CI applies the application objects on merge (ConfigMap, Deployment, Services, NetworkPolicies) and restarts the agent when its ConfigMap changed. The CronJobs stay with a person |
 
 ## Site (`kustomization.yaml`)
 
@@ -60,11 +60,15 @@ deploys keep working and the site keeps the pods it has (2), without autoscaling
 skips the unset values and checks each one once it is set. Setting the last one turns autoscaling on at the next
 deploy. What bounds `maxReplicaCount`:
 
-- each pod requests 250m CPU and 512Mi memory, and the topology spread (`DoNotSchedule`, one skew across the three
-  workers) puts the third pod on whichever worker has none: that worker must have the room;
-- each pod opens up to `DATABASE_POOL_MAX` (5) connections through PgBouncer in session mode (20 server connections per
-  pooler pod, two pods; role `jithendar` limited to 50, the seo-agent included). Past that, requests queue for a
-  connection.
+- each pod requests 500m CPU and 1280Mi memory since the SEO agent became its second container (D-105; `web` 250m /
+  512Mi, `seo-agent` 250m / 768Mi; limits 2 CPU / 1536Mi and 1 CPU / 1280Mi), and the topology spread
+  (`DoNotSchedule`, one skew across the three workers) puts the third pod on whichever worker has none: that worker
+  must have the room;
+- each pod opens database connections through PgBouncer in session mode (20 server connections per pooler pod, two
+  pods; role `jithendar` limited to 50): `web` up to `DATABASE_POOL_MAX` (5), and its `seo-agent` up to 6 (async pool)
+  + 2 (CrewAI persistence) + 1 per flow run in progress (its advisory lock), 2 of them held even when idle. So 8 pods
+  can ask for more than 100, against 40 server connections: past that, requests queue for a connection. Not changed
+  here (no numbers are preset): lower `maxReplicaCount`, the pools, or raise the pooler's size, as the owner decides.
 
 **Once, before the first deploy without `replicas`.** `kubectl apply` (client-side) remembers the last applied
 manifest in an annotation. Applying one without `replicas` when the annotation still has `replicas: 2` deletes the
@@ -90,6 +94,39 @@ kubectl -n keda logs deploy/keda-operator -c keda-operator --tail=50
 `READY False` with a Prometheus error: KEDA's operator could not query `prometheus.monitoring` (its sidecar, or
 monitoring's AuthorizationPolicy in the miniKube repo). Pods `Pending` after a scale-up: no worker has the room the
 topology spread allows.
+
+## SEO agent in the site pod (D-105)
+
+Since 2026-11-26 the SEO agent is part of moks-cms (its `seo-agent/` folder) and there is one image,
+`moks-cms:latest`. Every `jithendar-com` pod runs it twice: container `web` (the site) and container `seo-agent`
+(workingDir `/srv`, `python -m app.main`, user 10001, its own `/tmp`, memory limit and liveness probe, no readiness
+probe, so the site's readiness never depends on the agent). The site calls its own pod's agent
+(`SEO_AGENT_URL=http://127.0.0.1:8080`) and the agent calls back the same way (`SEO_AGENT_CALLBACK_URL` in
+`seo-agent-config`). Services `seo-agent`, `seo-agent-mcp` and `seo-agent-metrics` (Prometheus job `seo-agent`) and
+NetworkPolicy `seo-agent` select the site's pods. There is one agent per site pod (KEDA: 2 to 8); moks-cms
+`seo-agent/app/runs.py` keeps several agents from failing each other's runs (D-105).
+
+Logs and commands: `kubectl -n jithendar logs deploy/jithendar-com -c seo-agent`, `kubectl -n jithendar exec
+deploy/jithendar-com -c seo-agent -- python -c ...`. A restart of the site restarts its agents: flow runs in a pod
+that stops are failed within a minute by another pod's agent ("interrupted by a restart"); rerun them.
+
+Switch-over, once (in this order):
+
+1. moks-cms #202 merged and its release pushed `moks-cms:latest` with the agent inside (job summary "moks-cms image
+   (web app + SEO agent)").
+2. moks-rag: bge-m3's NetworkPolicy also admits `app: jithendar-com` from namespace `jithendar` (the agent's embeddings).
+3. Merge this repository's pull request: the deploy applies both groups. The site rolls one pod at a time with the new
+   container; Deployment `seo-agent` goes to 0 replicas, so the old agent pod stops.
+4. A person applies the dispatcher CronJob (CI never applies CronJobs):
+   `scripts/manifests.sh seo-agent | kubectl apply -f -` (or just the CronJob from `seo-agent-60-dispatcher.yaml`).
+5. Check: `kubectl -n jithendar get pods -l app=jithendar-com` shows `2/2` containers (plus the sidecar: `3/3`),
+   `kubectl -n jithendar exec deploy/jithendar-com -c seo-agent -- python -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:8080/readyz').read().decode())"`,
+   Admin → AI & SEO opens, a flow run from the console finishes, Prometheus `up{job="seo-agent"}` has one series per pod.
+6. Then delete the retired Deployment: `kubectl -n jithendar delete deployment seo-agent` (and its manifest in a
+   follow-up pull request).
+
+Roll back: revert the pull request (the seo-agent Deployment comes back at 1 replica with `seo-agent:latest`, still in
+Harbor) and `kubectl -n jithendar scale deployment seo-agent --replicas=1` if the revert's deploy did not.
 
 ## Traefik (gone)
 

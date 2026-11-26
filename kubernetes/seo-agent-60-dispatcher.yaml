@@ -44,10 +44,12 @@ spec:
           securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
           containers:
             - name: trigger
-              image: registry.jithendar.com/jithendar/seo-agent:latest
-              # Always: a node may still hold an older seo-agent:latest from the per-flow CronJobs, whose trigger has
-              # no `dispatch` command.
+              # The one moks-cms image (D-105: the web app and the SEO agent); the agent's code is in /srv. Until a person
+              # applies this file, the CronJob keeps the old seo-agent:latest, which still works: it only POSTs to
+              # Service seo-agent, which now selects the site's pods.
+              image: registry.jithendar.com/jithendar/moks-cms:latest
               imagePullPolicy: Always
+              workingDir: /srv
               command: ["python", "-m", "app.trigger", "dispatch"]
               env:
                 - { name: SEO_AGENT_URL, value: "http://seo-agent.jithendar:8080" }
@@ -59,7 +61,8 @@ spec:
               securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
 ---
 # The dispatcher's pods (label app: seo-agent-trigger, as the per-flow trigger pods had) may reach only seo-agent's
-# internal API and DNS. seo-agent's own NetworkPolicy (seo-agent-40-seo-agent.yaml) admits them on 8080.
+# internal API and DNS: the site's pods on 8080, their seo-agent container (D-105). seo-agent's own NetworkPolicy
+# (seo-agent-40-seo-agent.yaml, on the site's pods) admits them on 8080.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -70,7 +73,7 @@ spec:
   podSelector: { matchLabels: { app: seo-agent-trigger } }
   policyTypes: ["Ingress", "Egress"]
   egress:
-    - to: [{ podSelector: { matchLabels: { app: seo-agent } } }]
+    - to: [{ podSelector: { matchLabels: { app: jithendar-com } } }]
       ports: [{ port: 8080, protocol: TCP }]
     - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
       ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
