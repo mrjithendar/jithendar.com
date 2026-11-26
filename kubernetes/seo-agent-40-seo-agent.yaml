@@ -44,12 +44,20 @@ data:
   SEO_CREW_MODELS: '{"optimization.analyst":"claude-haiku-5-5","editorial.writer":"claude-opus-5-5","editorial.reviewer":"claude-opus-5-5"}'
   # Covers one editorial crew run plus its validation retry (2 × CREW_TIMEOUT_SECONDS).
   SEO_FLOW_TIMEOUT_SECONDS: "2700"
-  EMBEDDINGS_PROVIDER: onnx
+  # Embeddings: bge-m3 (1024 dimensions) on mk4's shared Ollama, namespace embeddings (k8s-deployments repo,
+  # deploy/minikube/embeddings/bge-m3). OLLAMA_EMBED_MODEL is required: the agent's default is nomic-embed-text.
+  # A model change makes the stored vectors unusable: on start the agent builds seo_article_chunks_next beside the live
+  # table, and Ask the Blog falls back until a full reindex (Admin → AI & SEO → Reindex → Run now) swaps it in.
+  # Rollback: EMBEDDINGS_PROVIDER: onnx (bge-small, baked into the image); before the swap the old table serves again.
+  EMBEDDINGS_PROVIDER: ollama
+  OLLAMA_URL: http://bge-m3.embeddings:11434
+  OLLAMA_EMBED_MODEL: bge-m3:567m
   # v5 retrieval (docs/seo/RAG.md "Defaults"): decided by the eval set. Rollback for hybrid: RAG_MODE=vector.
   RAG_MODE: vector
   RAG_MAX_PER_ARTICLE: "3"
-  # Cosine pre-filter for bge-small, calibrated on the eval set (RAG.md "Score calibration"); was 0.15.
-  ASK_BLOG_MIN_SCORE: "0.66"
+  # No ASK_BLOG_MIN_SCORE here: Ask the Blog's cosine floor follows the embeddings model (seo-agent app/calibration.py):
+  # 0.66 for bge-small, 0.52 for bge-m3 (interim, mapped from bge-small's cutoff; rag_eval.py's calibrated floor
+  # replaces it). A value here would override it for every model. Admin → Retrieval → Lowest similarity can still set one.
   RAG_RERANKER_ENABLED: "false"
   # CrewAI's local storage directory (nothing should write there: flows persist to Postgres; tests assert no SQLite).
   CREWAI_STORAGE_DIR: /tmp/crewai
@@ -150,7 +158,7 @@ spec:
   ports: [{ name: http-mcp, port: 8090, targetPort: mcp, protocol: TCP }]
 ---
 # Allowed traffic (kindnet enforces NetworkPolicy on mk4). In on 8080: the site (admin API, review decisions, /api/ask
-# proxy), the flow-trigger CronJobs, Prometheus (/metrics). In on 8090 (MCP edge) only: the Kong gateway. Out: Postgres, the site's callback port, the OTel collector, DNS and HTTPS to public
+# proxy), the flow-trigger CronJobs, Prometheus (/metrics). In on 8090 (MCP edge) only: the Kong gateway. Out: Postgres, the site's callback port, the OTel collector, bge-m3 (embeddings), DNS and HTTPS to public
 # addresses (Anthropic API). The crew's documentation fetches go through the site's SSRF-safe fetcher, not from here.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -181,6 +189,10 @@ spec:
       ports: [{ port: 9465, protocol: TCP }]
     - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: observability } }, podSelector: { matchLabels: { app: otel-collector } } }]
       ports: [{ port: 4318, protocol: TCP }]
+    # The shared bge-m3 Ollama (EMBEDDINGS_PROVIDER above). Its own NetworkPolicy and AuthorizationPolicy already let
+    # this pod (jithendar/default service account) in on 11434.
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: embeddings } }, podSelector: { matchLabels: { app: bge-m3 } } }]
+      ports: [{ port: 11434, protocol: TCP }]
     - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16] } }]
       ports: [{ port: 443, protocol: TCP }]
 ---
