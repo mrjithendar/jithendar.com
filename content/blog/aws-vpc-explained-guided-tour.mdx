@@ -20,7 +20,7 @@ related: [blog/roboshop-ai-eks-system-design, blog/deploy-roboshop-ai-amazon-eks
 
 Ask ten engineers what a VPC is and you will get ten answers full of words like CIDR, NAT and route propagation. Those words are accurate, but they hide something simple. A VPC is a private building for your software. It has rooms, doors, corridors, signposts, guards and a visitor log. Once you can picture the building, every AWS networking feature becomes an ordinary thing you already understand.
 
-This article is a guided tour of one real building: the network that runs [RoboShop](https://github.com/moks-tech/aws-vpc), a demo online shop, in Amazon's `us-east-1` region. Every number, name and diagram below comes from its Terraform code, so nothing here is a textbook example. You do not need any networking background. Engineers will find the exact settings in each section too.
+This article is a guided tour of one real building: the network that runs [RoboShop](https://github.com/mrjithendar/aws-vpc), a demo online shop, in Amazon's `us-east-1` region. Every number, name and diagram below comes from its Terraform code, so nothing here is a textbook example. You do not need any networking background. Engineers will find the exact settings in each section too.
 
 ::toc
 
@@ -282,7 +282,7 @@ The same code builds both environments. Only a handful of settings differ, and e
 
 ## How the building is built and kept honest
 
-None of this was clicked together in the AWS console. The whole network is written as Terraform code in the [aws-vpc repository](https://github.com/moks-tech/aws-vpc), and a few habits keep it trustworthy:
+None of this was clicked together in the AWS console. The whole network is written as Terraform code in the [aws-vpc repository](https://github.com/mrjithendar/aws-vpc), and a few habits keep it trustworthy:
 
 - **Tests run without touching AWS.** A test suite runs against a simulated AWS. It checks the number of NAT gateways in each mode, that peering signposts exist on both sides, that no subnet ever hands out public addresses automatically, that the address tiers never overlap even with four zones, and that an overlapping peer range is refused.
 - **Every change is previewed.** A pull request produces a *plan*, a list of exactly what would change, for both dev and prod, and posts it for review. After approval, the pipeline applies that saved plan and nothing else. If anything changed in between, Terraform stops instead of applying something nobody reviewed.
@@ -334,4 +334,4 @@ If you are building your own VPC, these are the traps this one sidesteps:
 
 ## Use the diagrams yourself
 
-All thirteen diagrams were drawn in draw.io with the official AWS icon set, and their source files are in the [aws-vpc repository](https://github.com/moks-tech/aws-vpc) under `docs/diagrams/`. Open them at [app.diagrams.net](https://app.diagrams.net) or in the draw.io extension for VS Code, change the names and ranges, and use them to explain your own network.
+All thirteen diagrams were drawn in draw.io with the official AWS icon set, and their source files are in the [aws-vpc repository](https://github.com/mrjithendar/aws-vpc) under `docs/diagrams/`. Open them at [app.diagrams.net](https://app.diagrams.net) or in the draw.io extension for VS Code, change the names and ranges, and use them to explain your own network.

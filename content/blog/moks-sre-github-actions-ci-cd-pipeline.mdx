@@ -22,13 +22,13 @@ related:
   - blog/pytorch-rag-reranking-moks-sre-agent
 sources:
   - title: "MOKS workflow file (.github/workflows/ci.yml at cd2f58f)"
-    url: https://github.com/mrjithendar/moks-sre/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml
+    url: https://github.com/mrjithendar/moks-sre-agent/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml
     publisher: GitHub
   - title: "MOKS release process (docs/RELEASES.md)"
-    url: https://github.com/mrjithendar/moks-sre/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/docs/RELEASES.md
+    url: https://github.com/mrjithendar/moks-sre-agent/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/docs/RELEASES.md
     publisher: GitHub
   - title: "MOKS workflow runs"
-    url: https://github.com/mrjithendar/moks-sre/actions/workflows/ci.yml
+    url: https://github.com/mrjithendar/moks-sre-agent/actions/workflows/ci.yml
     publisher: GitHub
   - title: "Using jobs in a workflow (needs)"
     url: https://docs.github.com/en/actions/using-jobs/using-jobs-in-a-workflow
@@ -46,12 +46,12 @@ sources:
     url: https://github.com/aquasecurity/trivy-action
     publisher: GitHub
 ---
-MOKS is the SRE investigation portal I build and run on mk4, my three-node k3s cluster on Hetzner. Its code lives in one public repository, [mrjithendar/moks-sre](https://github.com/mrjithendar/moks-sre), and one GitHub Actions workflow, [`.github/workflows/ci.yml`](https://github.com/mrjithendar/moks-sre/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml), tests every change and ships five container images.
+MOKS is the SRE investigation portal I build and run on mk4, my three-node k3s cluster on Hetzner. Its code lives in one public repository, [mrjithendar/moks-sre](https://github.com/mrjithendar/moks-sre-agent), and one GitHub Actions workflow, [`.github/workflows/ci.yml`](https://github.com/mrjithendar/moks-sre-agent/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml), tests every change and ships five container images.
 
 I first wrote about this pipeline from a screenshot of the Actions page. That version guessed at what each job did and how they depended on each other. This one is written from the workflow file and from the GitHub Actions API: every job, every `needs`, and the timings and failures of real runs. Some of what I found surprised me, including two gaps that let untested code reach the registry.
 
 :::callout{type="info" title="Where the numbers come from"}
-The workflow as it is on `master` at [`cd2f58f`](https://github.com/mrjithendar/moks-sre/tree/cd2f58fd004ca0b37016a136b320db4ef14971b2) (the file last changed in [#91](https://github.com/mrjithendar/moks-sre/pull/91)). Timings: the **22 completed runs on `master` between 16 and 20 November 2026**, 14 green and 8 red, read job by job from the Actions API. Medians come from the 14 green runs.
+The workflow as it is on `master` at [`cd2f58f`](https://github.com/mrjithendar/moks-sre-agent/tree/cd2f58fd004ca0b37016a136b320db4ef14971b2) (the file last changed in [#91](https://github.com/mrjithendar/moks-sre-agent/pull/91)). Timings: the **22 completed runs on `master` between 16 and 20 November 2026**, 14 green and 8 red, read job by job from the Actions API. Medians come from the 14 green runs.
 :::
 
 ::toc
@@ -65,16 +65,16 @@ MOKS is not one image. The workflow builds five, all for arm64 because every mk4
 | `moks` | `release` | The product: FastAPI backend and React UI in one image. The API, worker, executor and terminal-service Deployments all run it. |
 | `moks-crewai` | `release-crewai` | The same Dockerfile with `MOKS_CREWAI=true`, which adds a pinned CrewAI. Only the CrewAI worker runs it. |
 | `moks-reranker` | `reranker-image` | A small model service around `cross-encoder/ms-marco-MiniLM-L6-v2`, revision pinned in `reranker/model.lock.json`, weights baked in. |
-| `moks-embedder` | `embedder-image` | The same service code built around `BAAI/bge-base-en-v1.5` (`reranker/embedder.lock.json`). Added in [#85](https://github.com/mrjithendar/moks-sre/pull/85). |
+| `moks-embedder` | `embedder-image` | The same service code built around `BAAI/bge-base-en-v1.5` (`reranker/embedder.lock.json`). Added in [#85](https://github.com/mrjithendar/moks-sre-agent/pull/85). |
 | `moks-terminal` | `terminal-image` | The diagnostic shell for terminal sessions (aws, kubectl, curl, jq, dig, tmux), for arm64 and amd64. Each new session pulls it. |
 
-Two names in the first draft of this article are gone. There is no OpenSearch image any more: MOKS has searched its knowledge base in PostgreSQL with pgvector since [#67](https://github.com/mrjithendar/moks-sre/pull/67) (19 November), and [#91](https://github.com/mrjithendar/moks-sre/pull/91) deleted the OpenSearch backend and the `opensearch-image` job the next day. [The bge-m3 article](/blog/bge-m3-ollama-pgvector-moks-sre-retire-opensearch) covers that move. And there's no separate "backend" image: the backend and the UI ship together as `moks`.
+Two names in the first draft of this article are gone. There is no OpenSearch image any more: MOKS has searched its knowledge base in PostgreSQL with pgvector since [#67](https://github.com/mrjithendar/moks-sre-agent/pull/67) (19 November), and [#91](https://github.com/mrjithendar/moks-sre-agent/pull/91) deleted the OpenSearch backend and the `opensearch-image` job the next day. [The bge-m3 article](/blog/bge-m3-ollama-pgvector-moks-sre-retire-opensearch) covers that move. And there's no separate "backend" image: the backend and the UI ship together as `moks`.
 
 Every image gets exactly one tag, `latest`. The commit is baked inside it instead (`--build-arg GIT_COMMIT`), and `/moks/api/health` reports it. More on that choice in [the release section](#release-one-tag-a-smoke-test-and-a-record).
 
 ## Triggers, permissions and concurrency
 
-The top of the file sets three things that shape everything below it ([lines 23 to 34](https://github.com/mrjithendar/moks-sre/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L23-L34)):
+The top of the file sets three things that shape everything below it ([lines 23 to 34](https://github.com/mrjithendar/moks-sre-agent/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L23-L34)):
 
 ```yaml
 on:
@@ -101,18 +101,18 @@ concurrency:
 
 | Job | Runs on | Runner | needs | Median |
 |---|---|---|---|---|
-| [`check`](https://github.com/mrjithendar/moks-sre/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L39-L114) | PR, push | `ubuntu-latest` | | 7:56 |
-| [`crewai`](https://github.com/mrjithendar/moks-sre/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L375-L401) | PR, push | `ubuntu-latest` | | 7:02 |
-| [`reranker`](https://github.com/mrjithendar/moks-sre/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L403-L414) | PR, push | `ubuntu-24.04` | | 1:00 |
-| [`image`](https://github.com/mrjithendar/moks-sre/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L118-L138) | PR, push | `ubuntu-24.04-arm` | | 1:00 |
-| [`e2e`](https://github.com/mrjithendar/moks-sre/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L143-L158) | PR, push | `ubuntu-24.04` | | 2:40 |
-| [`terminal`](https://github.com/mrjithendar/moks-sre/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L162-L208) (×2) | PR, push | `ubuntu-24.04`, `ubuntu-24.04-arm` | | 3:08 |
-| [`release`](https://github.com/mrjithendar/moks-sre/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L210-L250) | push to master | `ubuntu-24.04-arm` | check | 1:00 |
-| [`release-crewai`](https://github.com/mrjithendar/moks-sre/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L252-L293) | push to master | `ubuntu-24.04-arm` | check, crewai | 1:59 |
-| [`reranker-image`](https://github.com/mrjithendar/moks-sre/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L417-L465) | push to master | `ubuntu-24.04-arm` | reranker | 2:04 |
-| [`embedder-image`](https://github.com/mrjithendar/moks-sre/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L470-L522) | push to master | `ubuntu-24.04-arm` | reranker | 2:06 |
-| [`terminal-image`](https://github.com/mrjithendar/moks-sre/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L525-L548) | push to master | `ubuntu-24.04-arm` | | 2:12 |
-| [`deploy`](https://github.com/mrjithendar/moks-sre/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L295-L373) | push to master, if `MK4_DEPLOY` | `ubuntu-latest` | release, release-crewai | skipped |
+| [`check`](https://github.com/mrjithendar/moks-sre-agent/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L39-L114) | PR, push | `ubuntu-latest` | | 7:56 |
+| [`crewai`](https://github.com/mrjithendar/moks-sre-agent/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L375-L401) | PR, push | `ubuntu-latest` | | 7:02 |
+| [`reranker`](https://github.com/mrjithendar/moks-sre-agent/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L403-L414) | PR, push | `ubuntu-24.04` | | 1:00 |
+| [`image`](https://github.com/mrjithendar/moks-sre-agent/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L118-L138) | PR, push | `ubuntu-24.04-arm` | | 1:00 |
+| [`e2e`](https://github.com/mrjithendar/moks-sre-agent/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L143-L158) | PR, push | `ubuntu-24.04` | | 2:40 |
+| [`terminal`](https://github.com/mrjithendar/moks-sre-agent/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L162-L208) (×2) | PR, push | `ubuntu-24.04`, `ubuntu-24.04-arm` | | 3:08 |
+| [`release`](https://github.com/mrjithendar/moks-sre-agent/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L210-L250) | push to master | `ubuntu-24.04-arm` | check | 1:00 |
+| [`release-crewai`](https://github.com/mrjithendar/moks-sre-agent/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L252-L293) | push to master | `ubuntu-24.04-arm` | check, crewai | 1:59 |
+| [`reranker-image`](https://github.com/mrjithendar/moks-sre-agent/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L417-L465) | push to master | `ubuntu-24.04-arm` | reranker | 2:04 |
+| [`embedder-image`](https://github.com/mrjithendar/moks-sre-agent/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L470-L522) | push to master | `ubuntu-24.04-arm` | reranker | 2:06 |
+| [`terminal-image`](https://github.com/mrjithendar/moks-sre-agent/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L525-L548) | push to master | `ubuntu-24.04-arm` | | 2:12 |
+| [`deploy`](https://github.com/mrjithendar/moks-sre-agent/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/.github/workflows/ci.yml#L295-L373) | push to master, if `MK4_DEPLOY` | `ubuntu-latest` | release, release-crewai | skipped |
 
 The rule behind the `needs` lines is written into the release job itself: *nothing untested is pushed as latest*.
 
@@ -133,7 +133,7 @@ But read the graph again for what *isn't* there. Three test jobs, `image`, `e2e`
 
 `check` is the longest job and the only one `release` waits for. It starts a PostgreSQL service from `pgvector/pgvector:0.8.6-pg17`, the same pgvector version as the CloudNativePG image on mk4, so vector search is tested on the real extension and not only on the keyword fallback. Then it runs, in order:
 
-- a check that no symlink points outside the repository. [#90](https://github.com/mrjithendar/moks-sre/pull/90) added it after a committed `frontend/node_modules` link to a path on my laptop put every MOKS Argo CD Application into `ComparisonError`, because Argo CD refuses out-of-bounds symlinks;
+- a check that no symlink points outside the repository. [#90](https://github.com/mrjithendar/moks-sre-agent/pull/90) added it after a committed `frontend/node_modules` link to a path on my laptop put every MOKS Argo CD Application into `ComparisonError`, because Argo CD refuses out-of-bounds symlinks;
 - the backend tests, about 1,500 of them (run #228 reported 1,471 passed, 49 skipped and 1 failed);
 - `ruff` for undefined names and syntax errors only (`E9,F63,F7,F82`);
 - the frontend: `npm ci`, build, and its test suite;
@@ -147,7 +147,7 @@ In run #279 the backend tests took **7:43 of check's 9:33**. Everything else too
 
 The CrewAI image needs a different pydantic and the `crewai` package, which pull in their own versions of shared libraries. So `crewai` runs the whole backend suite a second time against `requirements.txt` minus its pydantic pin plus `requirements-crewai.txt`.
 
-Running 1,500 tests twice looks wasteful until it catches something. In run #234 `check` passed and `crewai` failed: on the CrewAI dependency set, a SQLAlchemy `text()` query raised *"This text() construct doesn't define a bound parameter named 're0'"*. And in runs #201 and #221 a Dependabot bump installed crewai 1.15.41 while MOKS pins and checks 1.15.36, so the suite reported *"CrewAI investigation unavailable"* until [#66](https://github.com/mrjithendar/moks-sre/pull/66) moved the pin. Neither failure could show up on the default dependency set.
+Running 1,500 tests twice looks wasteful until it catches something. In run #234 `check` passed and `crewai` failed: on the CrewAI dependency set, a SQLAlchemy `text()` query raised *"This text() construct doesn't define a bound parameter named 're0'"*. And in runs #201 and #221 a Dependabot bump installed crewai 1.15.41 while MOKS pins and checks 1.15.36, so the suite reported *"CrewAI investigation unavailable"* until [#66](https://github.com/mrjithendar/moks-sre-agent/pull/66) moved the pin. Neither failure could show up on the default dependency set.
 
 ### reranker: one test job, two images
 
@@ -176,7 +176,7 @@ assert abs(math.sqrt(sum(x * x for x in v)) - 1) < 1e-3, 'not unit length'
 
 It runs on both architectures because `terminal-image` publishes both. Each leg checks that the image runs read-only, without capabilities, as uid 10002, with every tool present; that a tmux session survives a detach (a browser reconnect depends on that); runs a Trivy scan; and then runs a real isolation test on kind. From inside a session pod, the instance metadata address `169.254.169.254`, the ECS and EKS credential endpoints, PostgreSQL, the kubelet and the internet must all be blocked, and only the Kubernetes API reachable.
 
-That isolation test has already paid for itself once. Dependabot bumped `helm/kind-action` ([#43](https://github.com/mrjithendar/moks-sre/pull/43)), which changed the default kind from v0.31.0 to v0.33.0, and in run #201 the test printed:
+That isolation test has already paid for itself once. Dependabot bumped `helm/kind-action` ([#43](https://github.com/mrjithendar/moks-sre-agent/pull/43)), which changed the default kind from v0.31.0 to v0.33.0, and in run #201 the test printed:
 
 ```text
 FAIL  instance metadata is reachable (169.254.169.254:80)
@@ -184,13 +184,13 @@ ok    ECS credentials endpoint is blocked (169.254.170.2:80)
 ok    EKS Pod Identity agent is blocked (169.254.170.23:80)
 ```
 
-[#56](https://github.com/mrjithendar/moks-sre/pull/56) pinned kind back to v0.31.0 (kubectl v1.35.0). The cause isn't understood yet, so the comment above the pin says to move it only once the isolation script passes on the newer kind. Unless you test the network policy on a real cluster, a dependency bump like that changes your security boundary without anyone noticing.
+[#56](https://github.com/mrjithendar/moks-sre-agent/pull/56) pinned kind back to v0.31.0 (kubectl v1.35.0). The cause isn't understood yet, so the comment above the pin says to move it only once the isolation script passes on the newer kind. Unless you test the network policy on a real cluster, a dependency bump like that changes your security boundary without anyone noticing.
 
 ## One real run, second by second
 
 ![Timeline of run 279, commit 7e09449, 20 November 2026, 11 min 48 s from push to last job. check 9:33 and release-crewai 2:07 form the critical path, outlined in red. crewai 7:00, reranker 1:03, image 1:04, e2e 2:17, terminal on ubuntu-24.04 3:27 and on ubuntu-24.04-arm 3:17, and terminal-image 2:06 all start within 5 seconds; reranker-image 2:02 and embedder-image 2:04 start after reranker, at about 1:10. Both release jobs start at 9:41, five seconds after check passed; release takes 1:00. deploy is skipped. The 13 jobs used 37 minutes of runner time (2,220 s) in 11 min 48 s of wall clock, about 3.1 times faster than running them one after another. Everything except check, crewai and the two release jobs had finished by 3:30.](/images/moks-ci-pipeline/moks-ci-run-timeline.svg)
 
-[Run #279](https://github.com/mrjithendar/moks-sre/actions/runs/44719059177), the merge of #91, is a typical green run. Every job without `needs` started within five seconds of the push, on GitHub-hosted runners that were never short. Jobs queued for 2 to 7 seconds in all runs except #221, where a burst of Dependabot runs made them wait 25 to 45 seconds.
+[Run #279](https://github.com/mrjithendar/moks-sre-agent/actions/runs/44719059177), the merge of #91, is a typical green run. Every job without `needs` started within five seconds of the push, on GitHub-hosted runners that were never short. Jobs queued for 2 to 7 seconds in all runs except #221, where a burst of Dependabot runs made them wait 25 to 45 seconds.
 
 Across the 14 green runs:
 
@@ -234,7 +234,7 @@ Why only `latest`? mk4 runs every MOKS Deployment with `image: …:latest` and `
 {"component":"moks","commit":"7e09449d…","repository":"moks","tag":"latest","digest":"sha256:…","run":"44719059177"}
 ```
 
-That record is also the rollback. [docs/RELEASES.md](https://github.com/mrjithendar/moks-sre/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/docs/RELEASES.md) points `latest` back at an earlier digest with `docker buildx imagetools create --tag …:latest …@sha256:…` and then restarts. Harbor keeps the last ten builds of each repository, so in practice the rollback window is ten builds.
+That record is also the rollback. [docs/RELEASES.md](https://github.com/mrjithendar/moks-sre-agent/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/docs/RELEASES.md) points `latest` back at an earlier digest with `docker buildx imagetools create --tag …:latest …@sha256:…` and then restarts. Harbor keeps the last ten builds of each repository, so in practice the rollback window is ten builds.
 
 `release-crewai` adds one more check before it pushes: inside the image, read-only and with no network, CrewAI must import at exactly the pinned version with its telemetry switched off. Otherwise MOKS would report the CrewAI capability as unavailable at run time.
 
@@ -245,7 +245,7 @@ The `deploy` job is the most careful part of the file, and it hasn't run once in
 When enabled, it would:
 
 1. install the argocd CLI v3.5.6 and check its SHA-256 before running it, because the CLI holds the token;
-2. authenticate as the Argo CD **project role `moks/ci`**, which may get, sync and restart Applications in project `moks` and nothing else. No delete, no exec, no logs, and no Kubernetes credentials in CI at all ([`deploy/argocd/hetzner/project.yaml`](https://github.com/mrjithendar/moks-sre/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/deploy/argocd/hetzner/project.yaml)). A Cloudflare Access service token is sent as two headers, because `/argocd` sits behind Access;
+2. authenticate as the Argo CD **project role `moks/ci`**, which may get, sync and restart Applications in project `moks` and nothing else. No delete, no exec, no logs, and no Kubernetes credentials in CI at all ([`deploy/argocd/hetzner/project.yaml`](https://github.com/mrjithendar/moks-sre-agent/blob/cd2f58fd004ca0b37016a136b320db4ef14971b2/deploy/argocd/hetzner/project.yaml)). A Cloudflare Access service token is sent as two headers, because `/argocd` sits behind Access;
 3. sync the nine MOKS Applications from Git in a fixed order (foundation, database, api, worker, crewai, executor, terminal, routing, reranker), never with `--prune`;
 4. restart the Deployments that run `moks:latest`, worker first so running investigations finish within its grace period, then the API, whose first pod runs pending migrations; then `moks-crewai`, but only if `release-crewai` succeeded for this commit;
 5. poll `https://jithendar.com/moks/api/health` until it reports the new commit, for up to five minutes.
@@ -258,7 +258,7 @@ Two things move MOKS on mk4 today. The Argo CD Applications auto-sync from Git (
 
 ![Timeline of 19 November 2026 in UTC across three lanes: GitHub Actions, the moks:latest tag in Harbor, and mk4. At 10:53 run 221 starts for the Dependabot commit 5b1e709. At 11:03 its release job pushes, because check passed even though crewai failed, so latest is 5b1e709 until 11:40. At 11:31 pull request 67 is merged as 982dd05 and run 225 starts, whose check takes about 8 minutes. At 11:33 Argo CD auto-syncs: 67's chart changed the pod templates, so the pods restart and pull latest, which is still 5b1e709. This is the failure point. At 11:40 release pushes latest as 982dd05, but nobody pulls it: the deploy job is skipped and the pods keep 5b1e709 until a restart. Result: new chart, old code. Rebuild index failed with pgvector is not installed, because 5b1e709 has no enable_vector, and bge-m3 got no traffic. It was found the next day. With MK4_DEPLOY true, the deploy job would have synced and restarted onto 982dd05 at about 11:40.](/images/moks-ci-pipeline/moks-ci-chart-image-race.svg)
 
-[#67](https://github.com/mrjithendar/moks-sre/pull/67) changed both the chart (switch search to PostgreSQL) and the code (add the pgvector column on the next index build). Argo CD applied the chart about two minutes after the merge. The pod-template change restarted the pods, and they pulled `latest`, which still pointed at the previous build, `5b1e709`. [Run #225](https://github.com/mrjithendar/moks-sre/actions/runs/44515576861) pushed the new image seven minutes later, and nothing restarted the pods again. The result was a new chart running old code: *Rebuild index* failed with "pgvector is not installed" because the old build had no `enable_vector()`, and I only found it the next day.
+[#67](https://github.com/mrjithendar/moks-sre-agent/pull/67) changed both the chart (switch search to PostgreSQL) and the code (add the pgvector column on the next index build). Argo CD applied the chart about two minutes after the merge. The pod-template change restarted the pods, and they pulled `latest`, which still pointed at the previous build, `5b1e709`. [Run #225](https://github.com/mrjithendar/moks-sre-agent/actions/runs/44515576861) pushed the new image seven minutes later, and nothing restarted the pods again. The result was a new chart running old code: *Rebuild index* failed with "pgvector is not installed" because the old build had no `enable_vector()`, and I only found it the next day.
 
 The `deploy` job exists for exactly this: it syncs and restarts *after* the image is pushed, then checks the running commit. Switching it on is the single change that would have prevented this.
 
@@ -268,14 +268,14 @@ Eight of the 22 runs on `master` were red. Here they are, with the job and step 
 
 | Run | Commit | Failed (step) | Cause | Pushed anyway |
 |---|---|---|---|---|
-| [#193](https://github.com/mrjithendar/moks-sre/actions/runs/43917876208) | `37b8238` ([#40](https://github.com/mrjithendar/moks-sre/pull/40)) | check (Argo CD split) | "moks-root trusts another repository": the old repository URL left in the AppProjects | opensearch, reranker, terminal |
-| [#201](https://github.com/mrjithendar/moks-sre/actions/runs/44505427403) | `92a34b3` ([#55](https://github.com/mrjithendar/moks-sre/pull/55)) | check, crewai, terminal ×2 | the same Argo CD check; crewai 1.15.41 against the 1.15.36 pin; metadata reachable on kind v0.33.0 | opensearch, reranker, terminal |
-| [#221](https://github.com/mrjithendar/moks-sre/actions/runs/44509863498) | `5b1e709` ([#65](https://github.com/mrjithendar/moks-sre/pull/65), Dependabot) | crewai (tests) | the crewai pin again | moks, opensearch, reranker, terminal |
-| [#228](https://github.com/mrjithendar/moks-sre/actions/runs/44663106518) | `73f8dff` (direct push) | check (backend tests) | `test_resize_reaches_the_pseudo_terminal` timed out: 1 of 1,521 tests | opensearch, reranker, terminal |
-| [#234](https://github.com/mrjithendar/moks-sre/actions/runs/44671097151) | `7954ce1` ([#72](https://github.com/mrjithendar/moks-sre/pull/72)) | crewai (tests) | SQLAlchemy bound parameter `re0`, on the CrewAI dependency set only | moks, opensearch, reranker, terminal |
-| [#245](https://github.com/mrjithendar/moks-sre/actions/runs/44684483982) | `ef90ed9` ([#76](https://github.com/mrjithendar/moks-sre/pull/76)) | terminal ×2 (isolation) | the test still looked for namespace `moks` after [#75](https://github.com/mrjithendar/moks-sre/pull/75) moved MOKS to `moks-sre` | everything |
-| [#257](https://github.com/mrjithendar/moks-sre/actions/runs/44697100024) | `4b90d13` ([#82](https://github.com/mrjithendar/moks-sre/pull/82)) | check (frontend), terminal ×2 (Trivy) | a failing `Terminal.test.tsx`; a HIGH Go standard library CVE in the terminal image, fixed in Go 1.26.11 | opensearch, reranker, **terminal** |
-| [#270](https://github.com/mrjithendar/moks-sre/actions/runs/44708947758) | `9b3176a` ([#86](https://github.com/mrjithendar/moks-sre/pull/86)) | check (Argo CD split) | "hetzner/reranker-off: group reranker should be empty", fixed in [#88](https://github.com/mrjithendar/moks-sre/pull/88) | opensearch, reranker, embedder, terminal |
+| [#193](https://github.com/mrjithendar/moks-sre-agent/actions/runs/43917876208) | `37b8238` ([#40](https://github.com/mrjithendar/moks-sre-agent/pull/40)) | check (Argo CD split) | "moks-root trusts another repository": the old repository URL left in the AppProjects | opensearch, reranker, terminal |
+| [#201](https://github.com/mrjithendar/moks-sre-agent/actions/runs/44505427403) | `92a34b3` ([#55](https://github.com/mrjithendar/moks-sre-agent/pull/55)) | check, crewai, terminal ×2 | the same Argo CD check; crewai 1.15.41 against the 1.15.36 pin; metadata reachable on kind v0.33.0 | opensearch, reranker, terminal |
+| [#221](https://github.com/mrjithendar/moks-sre-agent/actions/runs/44509863498) | `5b1e709` ([#65](https://github.com/mrjithendar/moks-sre-agent/pull/65), Dependabot) | crewai (tests) | the crewai pin again | moks, opensearch, reranker, terminal |
+| [#228](https://github.com/mrjithendar/moks-sre-agent/actions/runs/44663106518) | `73f8dff` (direct push) | check (backend tests) | `test_resize_reaches_the_pseudo_terminal` timed out: 1 of 1,521 tests | opensearch, reranker, terminal |
+| [#234](https://github.com/mrjithendar/moks-sre-agent/actions/runs/44671097151) | `7954ce1` ([#72](https://github.com/mrjithendar/moks-sre-agent/pull/72)) | crewai (tests) | SQLAlchemy bound parameter `re0`, on the CrewAI dependency set only | moks, opensearch, reranker, terminal |
+| [#245](https://github.com/mrjithendar/moks-sre-agent/actions/runs/44684483982) | `ef90ed9` ([#76](https://github.com/mrjithendar/moks-sre-agent/pull/76)) | terminal ×2 (isolation) | the test still looked for namespace `moks` after [#75](https://github.com/mrjithendar/moks-sre-agent/pull/75) moved MOKS to `moks-sre` | everything |
+| [#257](https://github.com/mrjithendar/moks-sre-agent/actions/runs/44697100024) | `4b90d13` ([#82](https://github.com/mrjithendar/moks-sre-agent/pull/82)) | check (frontend), terminal ×2 (Trivy) | a failing `Terminal.test.tsx`; a HIGH Go standard library CVE in the terminal image, fixed in Go 1.26.11 | opensearch, reranker, **terminal** |
+| [#270](https://github.com/mrjithendar/moks-sre-agent/actions/runs/44708947758) | `9b3176a` ([#86](https://github.com/mrjithendar/moks-sre-agent/pull/86)) | check (Argo CD split) | "hetzner/reranker-off: group reranker should be empty", fixed in [#88](https://github.com/mrjithendar/moks-sre-agent/pull/88) | opensearch, reranker, embedder, terminal |
 
 Three things stand out.
 
