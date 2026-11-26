@@ -16,7 +16,7 @@ related:
   - blog/roboshop-ai-microservices
 sources:
   - title: "RoboShop AI source at commit c81e85a"
-    url: https://github.com/mrjithendar/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b
+    url: https://github.com/mrjithendar/roboshop-ai-app/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b
     publisher: GitHub
   - title: Istio PeerAuthentication
     url: https://istio.io/latest/docs/reference/config/security/peer_authentication/
@@ -31,7 +31,7 @@ RoboShop AI is a demo robot store built from independent services, with two AI e
 
 That last property is the most useful thing about the architecture, and it is not theoretical. On 1 November 2026 the EKS deployment had no `moks` Deployment at all. The storefront returned 200, `/ready` reported every dependency ready, and the only visible failure was the assistant widget returning 502.
 
-I built this as a personal project to explore a specific question: how do you add a language model to an application that handles carts and payments without letting it near the parts that must be correct? This series answers that from the code at [commit c81e85a](https://github.com/mrjithendar/roboshop-ai/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b). It runs in test payment mode by default and its catalogue is demo data, so nothing here describes customers, revenue or production traffic.
+I built this as a personal project to explore a specific question: how do you add a language model to an application that handles carts and payments without letting it near the parts that must be correct? This series answers that from the code at [commit c81e85a](https://github.com/mrjithendar/roboshop-ai-app/tree/c81e85a1fd9d3552c69d4490be17ccf61d29437b). It runs in test payment mode by default and its catalogue is demo data, so nothing here describes customers, revenue or production traffic.
 
 The later articles go deeper into the [AI gateway](/blog/roboshop-ai-gateway), the [MCP server](/blog/roboshop-ai-mcp-server) and the [shopping agent](/blog/roboshop-ai-shopping-agent).
 
@@ -59,7 +59,7 @@ The system is easier to follow if you ask what each service is the only owner of
 | `mcp-server` | Python, FastMCP | The Model Context Protocol surface |
 | `kafka-bridge` | Python | Copying order events into Kafka for analytics |
 
-The credential boundaries are what make this list matter. Razorpay secrets exist only in `payment-service`, and the browser receives just a public key ID. The [gateway README](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/ai-gateway/README.md) records that it holds no SMTP, MFA or Turnstile credentials. Moks has no MongoDB connection, so a bug in the assistant cannot query the user database, because the process has nothing to query it with.
+The credential boundaries are what make this list matter. Razorpay secrets exist only in `payment-service`, and the browser receives just a public key ID. The [gateway README](https://github.com/mrjithendar/roboshop-ai-app/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/ai-gateway/README.md) records that it holds no SMTP, MFA or Turnstile credentials. Moks has no MongoDB connection, so a bug in the assistant cannot query the user database, because the process has nothing to query it with.
 
 ## Why microservices, and what they cost
 
@@ -131,7 +131,7 @@ Compare that with Figure 4. The route is longer, and it is also structured so th
 
 The odd-looking loop is deliberate. The browser talks to the widget half of `moks`, which calls the gateway so that identity, history, provider configuration and stock stay in one place. The gateway then calls the engine half of `moks`, which never sees a user ID.
 
-There is a second AI path that does not appear in this figure. MCP clients go through `mcp-server` to the gateway using the caller's own session. Moks does not use it: the [MCP server README](https://github.com/mrjithendar/roboshop-ai/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/mcp-server/README.md) explains that routing Moks through MCP would create a gateway to Moks to MCP to gateway loop with no authorization gain.
+There is a second AI path that does not appear in this figure. MCP clients go through `mcp-server` to the gateway using the caller's own session. Moks does not use it: the [MCP server README](https://github.com/mrjithendar/roboshop-ai-app/blob/c81e85a1fd9d3552c69d4490be17ccf61d29437b/services/mcp-server/README.md) explains that routing Moks through MCP would create a gateway to Moks to MCP to gateway loop with no authorization gain.
 
 | Question | Traditional request | Assistant request | MCP request |
 | --- | --- | --- | --- |

@@ -50,7 +50,7 @@ sources:
     url: https://developers.cloudflare.com/speed/optimization/content/rocket-loader/
     publisher: Cloudflare
   - title: "moks-tech/kubernetes (Terraform, values and charts for mk4)"
-    url: https://github.com/moks-tech/kubernetes
+    url: https://github.com/mrjithendar/k8s-deployments
     publisher: GitHub
 ---
 <Todo>Drafted 2026-11-20 from moks-tech/kubernetes b74771b, mrjithendar/moks-sre cd2f58f, mrjithendar/roboshop-ai d33b00d, the argo-cd 10.10.5 chart rendered with our values, and read-only kubectl and helm on mk4 the same day. Before publishing: (1) decide whether "Loose ends" should stay public or be fixed first (the dead applicationSet key, the leftover argocd-redis Secret, the mk-platform AppProject that is not on the cluster); (2) "What's next" says /argocd is not behind Cloudflare Access yet: keep or drop that; (3) re-read the pod numbers if you publish much later; (4) then set status to published with a publishedAt time.</Todo>
@@ -309,11 +309,11 @@ REVISION  UPDATED                   STATUS      CHART            APP VERSION
 | Revision (UTC) | What changed | Applied by | Git |
 |---|---|---|---|
 | 1, 10 Nov 13:40 | First install: the chart's own Redis pod, no VirtualService in the release | hand (scripts) | |
-| 2, 10 Nov 15:00 | Terraform adopts it: Redis pod gone, cache on Valkey database 7, VirtualService and NetworkPolicy from `extraObjects`, `checksum/redis` on every pod | hand (Terraform) | [`5a8ec33`](https://github.com/moks-tech/kubernetes/commit/5a8ec3381f7fd4bc356f30da66bf142fc3a997f9) |
-| 3, 19 Nov 12:27 | `Accept: text/html` for `/argocd/` | CI, push to master | [`8f5eb06`](https://github.com/moks-tech/kubernetes/commit/8f5eb06ca6226bd00b3283ab7db789d83ad3c585) |
-| 4, 19 Nov 12:41 | `Cache-Control: no-store` on `/argocd/api/` | CI, push to master | [`fe3efdd`](https://github.com/moks-tech/kubernetes/commit/fe3efdd2021388a5cfddba63eed25b94aeefd125) |
-| 5, 19 Nov 12:48 | `Accept: text/html` on every page, not just the entry page | CI, push to master | [`6f93d92`](https://github.com/moks-tech/kubernetes/commit/6f93d923906bbf0f1f54951a555249d1857fe3fc) |
-| 6, 19 Nov 13:05 | `no-transform` on every answer | CI, push to master | [`1f76443`](https://github.com/moks-tech/kubernetes/commit/1f76443cd42353189ac9f1a167ceeba4175f4370) |
+| 2, 10 Nov 15:00 | Terraform adopts it: Redis pod gone, cache on Valkey database 7, VirtualService and NetworkPolicy from `extraObjects`, `checksum/redis` on every pod | hand (Terraform) | [`5a8ec33`](https://github.com/mrjithendar/k8s-deployments/commit/5a8ec3381f7fd4bc356f30da66bf142fc3a997f9) |
+| 3, 19 Nov 12:27 | `Accept: text/html` for `/argocd/` | CI, push to master | [`8f5eb06`](https://github.com/mrjithendar/k8s-deployments/commit/8f5eb06ca6226bd00b3283ab7db789d83ad3c585) |
+| 4, 19 Nov 12:41 | `Cache-Control: no-store` on `/argocd/api/` | CI, push to master | [`fe3efdd`](https://github.com/mrjithendar/k8s-deployments/commit/fe3efdd2021388a5cfddba63eed25b94aeefd125) |
+| 5, 19 Nov 12:48 | `Accept: text/html` on every page, not just the entry page | CI, push to master | [`6f93d92`](https://github.com/mrjithendar/k8s-deployments/commit/6f93d923906bbf0f1f54951a555249d1857fe3fc) |
+| 6, 19 Nov 13:05 | `no-transform` on every answer | CI, push to master | [`1f76443`](https://github.com/mrjithendar/k8s-deployments/commit/1f76443cd42353189ac9f1a167ceeba4175f4370) |
 
 The chart version never moved. Every revision after the second is a values change, and each one maps to exactly one commit. Each workflow run started within seconds of its push, and the Helm revision landed less than a minute later. That's the payoff of keeping values in Git and letting a pipeline apply them.
 
@@ -353,7 +353,7 @@ Helm merges values in order: the chart's defaults first, then each document in `
 
 ## Step 5: values.yaml, block by block
 
-The whole file is at [`deploy/minikube/argocd/values.yaml`](https://github.com/moks-tech/kubernetes/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/deploy/minikube/argocd/values.yaml). Here it is in the order it's written.
+The whole file is at [`deploy/minikube/argocd/values.yaml`](https://github.com/mrjithendar/k8s-deployments/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/deploy/minikube/argocd/values.yaml). Here it is in the order it's written.
 
 ### Names and Argo CD's own settings
 
@@ -532,10 +532,10 @@ None of these were Argo CD bugs. They came from how Cloudflare caches: **by URL 
 
 | Symptom | Cause | Fix | Commit |
 |---|---|---|---|
-| Blank page at `/argocd/` | Argo CD answers a request that accepts `text/html` with `index.html` rewritten to `<base href="/argocd/">` and `no-cache, private`. Any other request (curl, a probe) gets the file as built, with `<base href="/">` and no cache header. Cloudflare cached that one, so browsers loaded `main.*.js` from `/` and got a 404. | Set `Accept: text/html` on requests to the entry page | [`8f5eb06`](https://github.com/moks-tech/kubernetes/commit/8f5eb06ca6226bd00b3283ab7db789d83ad3c585) |
-| Login loop, and a signed-in API answer served to everyone | The API answers GETs without `Cache-Control`. Cloudflare cached a signed-out `/api/v1/session/userinfo` (every reload went back to the login page) and a signed-in `/api/v1/clusters`. | `Cache-Control: no-store` on every `/argocd/api/` response | [`fe3efdd`](https://github.com/moks-tech/kubernetes/commit/fe3efdd2021388a5cfddba63eed25b94aeefd125) |
-| 404 on `/argocd/applications` | The same two-way answer on **every** UI route, not only the entry page. Cloudflare served a curl's cached 404 to browsers. | Set `Accept: text/html` on every request outside the API. Files with a `.` in the path are served as before. | [`6f93d92`](https://github.com/moks-tech/kubernetes/commit/6f93d923906bbf0f1f54951a555249d1857fe3fc) |
-| Blank page, no API calls at all | Cloudflare's Rocket Loader rewrote the `main.*.js` script tag so its own loader would run it. Where that loader didn't run (an extension, a race), the UI never started. | `Cache-Control: no-transform` on every response, which Cloudflare honours by leaving the bytes alone | [`1f76443`](https://github.com/moks-tech/kubernetes/commit/1f76443cd42353189ac9f1a167ceeba4175f4370) |
+| Blank page at `/argocd/` | Argo CD answers a request that accepts `text/html` with `index.html` rewritten to `<base href="/argocd/">` and `no-cache, private`. Any other request (curl, a probe) gets the file as built, with `<base href="/">` and no cache header. Cloudflare cached that one, so browsers loaded `main.*.js` from `/` and got a 404. | Set `Accept: text/html` on requests to the entry page | [`8f5eb06`](https://github.com/mrjithendar/k8s-deployments/commit/8f5eb06ca6226bd00b3283ab7db789d83ad3c585) |
+| Login loop, and a signed-in API answer served to everyone | The API answers GETs without `Cache-Control`. Cloudflare cached a signed-out `/api/v1/session/userinfo` (every reload went back to the login page) and a signed-in `/api/v1/clusters`. | `Cache-Control: no-store` on every `/argocd/api/` response | [`fe3efdd`](https://github.com/mrjithendar/k8s-deployments/commit/fe3efdd2021388a5cfddba63eed25b94aeefd125) |
+| 404 on `/argocd/applications` | The same two-way answer on **every** UI route, not only the entry page. Cloudflare served a curl's cached 404 to browsers. | Set `Accept: text/html` on every request outside the API. Files with a `.` in the path are served as before. | [`6f93d92`](https://github.com/mrjithendar/k8s-deployments/commit/6f93d923906bbf0f1f54951a555249d1857fe3fc) |
+| Blank page, no API calls at all | Cloudflare's Rocket Loader rewrote the `main.*.js` script tag so its own loader would run it. Where that loader didn't run (an extension, a race), the UI never started. | `Cache-Control: no-transform` on every response, which Cloudflare honours by leaving the bytes alone | [`1f76443`](https://github.com/mrjithendar/k8s-deployments/commit/1f76443cd42353189ac9f1a167ceeba4175f4370) |
 
 The result is two routes, each commented with the reason for it:
 
@@ -611,7 +611,7 @@ spec:
       selfHeal: true
 ```
 
-The root's project, `moks-root`, may only create `Application` objects in namespace `argocd`. A root can't widen a project, because AppProjects are applied by hand. The children run under project `moks`, which lists the namespaces the MOKS chart may deploy to (`moks-sre` and its diagnostics, terminal and lab namespaces, among others). RoboShop keeps one Application per service in [`argocd-k3s/`](https://github.com/mrjithendar/roboshop-ai/tree/d33b00d703a46864fa2e90c474cfdd26baba4f27/argocd-k3s), under project `roboshop`, which denies `Secret` objects outright (secrets are created outside Git).
+The root's project, `moks-root`, may only create `Application` objects in namespace `argocd`. A root can't widen a project, because AppProjects are applied by hand. The children run under project `moks`, which lists the namespaces the MOKS chart may deploy to (`moks-sre` and its diagnostics, terminal and lab namespaces, among others). RoboShop keeps one Application per service in [`argocd-k3s/`](https://github.com/mrjithendar/roboshop-ai-app/tree/d33b00d703a46864fa2e90c474cfdd26baba4f27/argocd-k3s), under project `roboshop`, which denies `Secret` objects outright (secrets are created outside Git).
 
 ```text
 $ kubectl -n argocd get applications            # summarised
@@ -670,26 +670,26 @@ None of them affects what's running, which is exactly why they went unnoticed.
 
 Everything above was read on 20 November 2026 from these commits. All three repositories are public.
 
-**moks-tech/kubernetes** at [`b74771b`](https://github.com/moks-tech/kubernetes/tree/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347):
+**moks-tech/kubernetes** at [`b74771b`](https://github.com/mrjithendar/k8s-deployments/tree/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347):
 
-- [`hetzner-k3s.yaml`](https://github.com/moks-tech/kubernetes/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/hetzner-k3s.yaml): the cluster
-- [`minikube-infrastructure/argocd.tf`](https://github.com/moks-tech/kubernetes/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/minikube-infrastructure/argocd.tf): namespace, Secret, `helm_release`
-- [`deploy/minikube/argocd/values.yaml`](https://github.com/moks-tech/kubernetes/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/deploy/minikube/argocd/values.yaml): the values, VirtualService and NetworkPolicy
-- [`deploy/minikube/argocd/README.md`](https://github.com/moks-tech/kubernetes/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/deploy/minikube/argocd/README.md): access, sign-in and troubleshooting
-- [`minikube-infrastructure/redis.tf`](https://github.com/moks-tech/kubernetes/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/minikube-infrastructure/redis.tf): Valkey tenants and ACLs
-- [`deploy/minikube/istio/edge/values.yaml`](https://github.com/moks-tech/kubernetes/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/deploy/minikube/istio/edge/values.yaml): the routing table
-- [`deploy/minikube/istio/ingressgateway.yaml`](https://github.com/moks-tech/kubernetes/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/deploy/minikube/istio/ingressgateway.yaml): the Hetzner load balancer annotations
+- [`hetzner-k3s.yaml`](https://github.com/mrjithendar/k8s-deployments/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/hetzner-k3s.yaml): the cluster
+- [`minikube-infrastructure/argocd.tf`](https://github.com/mrjithendar/k8s-deployments/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/minikube-infrastructure/argocd.tf): namespace, Secret, `helm_release`
+- [`deploy/minikube/argocd/values.yaml`](https://github.com/mrjithendar/k8s-deployments/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/deploy/minikube/argocd/values.yaml): the values, VirtualService and NetworkPolicy
+- [`deploy/minikube/argocd/README.md`](https://github.com/mrjithendar/k8s-deployments/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/deploy/minikube/argocd/README.md): access, sign-in and troubleshooting
+- [`minikube-infrastructure/redis.tf`](https://github.com/mrjithendar/k8s-deployments/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/minikube-infrastructure/redis.tf): Valkey tenants and ACLs
+- [`deploy/minikube/istio/edge/values.yaml`](https://github.com/mrjithendar/k8s-deployments/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/deploy/minikube/istio/edge/values.yaml): the routing table
+- [`deploy/minikube/istio/ingressgateway.yaml`](https://github.com/mrjithendar/k8s-deployments/blob/b74771b2b618e4e8c6b5bacc1b57ad5ffcbe1347/deploy/minikube/istio/ingressgateway.yaml): the Hetzner load balancer annotations
 
 Commits that changed Argo CD:
 
 | Commit | Date | Change |
 |---|---|---|
-| [`5a8ec33`](https://github.com/moks-tech/kubernetes/commit/5a8ec3381f7fd4bc356f30da66bf142fc3a997f9) | 10 Nov 2026 | `argocd.tf`: Argo CD installed by Terraform, cache on Valkey |
-| [`8f5eb06`](https://github.com/moks-tech/kubernetes/commit/8f5eb06ca6226bd00b3283ab7db789d83ad3c585) | 19 Nov 2026 | Argo CD's entry page is never cached with the wrong base |
-| [`fe3efdd`](https://github.com/moks-tech/kubernetes/commit/fe3efdd2021388a5cfddba63eed25b94aeefd125) | 19 Nov 2026 | Argo CD's API answers are never cached by Cloudflare |
-| [`6f93d92`](https://github.com/moks-tech/kubernetes/commit/6f93d923906bbf0f1f54951a555249d1857fe3fc) | 19 Nov 2026 | Every Argo CD page is served rewritten and uncacheable |
-| [`1f76443`](https://github.com/moks-tech/kubernetes/commit/1f76443cd42353189ac9f1a167ceeba4175f4370) | 19 Nov 2026 | Cloudflare passes Argo CD's pages through unmodified |
+| [`5a8ec33`](https://github.com/mrjithendar/k8s-deployments/commit/5a8ec3381f7fd4bc356f30da66bf142fc3a997f9) | 10 Nov 2026 | `argocd.tf`: Argo CD installed by Terraform, cache on Valkey |
+| [`8f5eb06`](https://github.com/mrjithendar/k8s-deployments/commit/8f5eb06ca6226bd00b3283ab7db789d83ad3c585) | 19 Nov 2026 | Argo CD's entry page is never cached with the wrong base |
+| [`fe3efdd`](https://github.com/mrjithendar/k8s-deployments/commit/fe3efdd2021388a5cfddba63eed25b94aeefd125) | 19 Nov 2026 | Argo CD's API answers are never cached by Cloudflare |
+| [`6f93d92`](https://github.com/mrjithendar/k8s-deployments/commit/6f93d923906bbf0f1f54951a555249d1857fe3fc) | 19 Nov 2026 | Every Argo CD page is served rewritten and uncacheable |
+| [`1f76443`](https://github.com/mrjithendar/k8s-deployments/commit/1f76443cd42353189ac9f1a167ceeba4175f4370) | 19 Nov 2026 | Cloudflare passes Argo CD's pages through unmodified |
 
-**mrjithendar/moks-sre** at [`cd2f58f`](https://github.com/mrjithendar/moks-sre/tree/cd2f58fd004ca0b37016a136b320db4ef14971b2/deploy/argocd): `deploy/argocd/hetzner/root.yaml`, `apps/`, `project-root.yaml`.
+**mrjithendar/moks-sre** at [`cd2f58f`](https://github.com/mrjithendar/moks-sre-agent/tree/cd2f58fd004ca0b37016a136b320db4ef14971b2/deploy/argocd): `deploy/argocd/hetzner/root.yaml`, `apps/`, `project-root.yaml`.
 
-**mrjithendar/roboshop-ai** at [`d33b00d`](https://github.com/mrjithendar/roboshop-ai/tree/d33b00d703a46864fa2e90c474cfdd26baba4f27/argocd-k3s): `argocd-k3s/`, the RoboShop Applications and project.
+**mrjithendar/roboshop-ai** at [`d33b00d`](https://github.com/mrjithendar/roboshop-ai-app/tree/d33b00d703a46864fa2e90c474cfdd26baba4f27/argocd-k3s): `argocd-k3s/`, the RoboShop Applications and project.
