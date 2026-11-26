@@ -56,10 +56,10 @@ spec:
         serverAddress: http://prometheus.monitoring:9090/prometheus
         query: sum(rate(istio_requests_total{reporter="destination",destination_workload_namespace="jithendar",destination_workload="jithendar-com",destination_service_name="jithendar-com"}[2m]))
         # Requests per second one pod should take; KEDA runs ceil(total / threshold) pods.
-        threshold: "5"
+        threshold: "10"
     - type: cpu
       metricType: Utilization
       metadata:
         containerName: web
         # Percent of the web container's CPU request (250m).
-        value: "200"
+        value: "400"
