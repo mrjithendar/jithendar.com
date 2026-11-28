@@ -1,0 +1,36 @@
+# kubelet configuration as the API reports it (kubectl get --raw /api/v1/nodes/<node>/proxy/configz), 2026-11-28 11:45Z.
+# Every node: evictionHard has disk thresholds only (no memory.available), and systemReserved/kubeReserved are unset,
+# so allocatable memory = all of the machine's memory.
+
+{
+ "evictionHard": {
+  "imagefs.available": "5%",
+  "nodefs.available": "5%"
+ },
+ "evictionSoft": null,
+ "evictionSoftGracePeriod": null,
+ "evictionPressureTransitionPeriod": "5m0s",
+ "systemReserved": null,
+ "kubeReserved": null,
+ "enforceNodeAllocatable": [
+  "pods"
+ ],
+ "memorySwap": {},
+ "failSwapOn": false,
+ "maxPods": 110,
+ "memoryThrottlingFactor": null,
+ "nodeStatusUpdateFrequency": "10s",
+ "nodeStatusReportFrequency": "5m0s"
+}
+capacity=7915012Ki allocatable=7915012Ki kubelet=v1.37.2+k3s1 kernel=6.8.0-138-generic
+jithendar-master1 evictionHard= {'imagefs.available': '5%', 'nodefs.available': '5%'} systemReserved= None kubeReserved= None
+jithendar-pool-workers-worker2 evictionHard= {'imagefs.available': '5%', 'nodefs.available': '5%'} systemReserved= None kubeReserved= None
+jithendar-pool-workers-worker3 evictionHard= {'imagefs.available': '5%', 'nodefs.available': '5%'} systemReserved= None kubeReserved= None
+
+# memory requests and limits per node now (kubectl describe nodes, 11:45Z):
+jithendar-master1 requests 220Mi (5%) limits 170Mi (4%)
+jithendar-pool-workers-worker1 requests 6852Mi (88%) limits 18688Mi (241%)
+jithendar-pool-workers-worker2 requests 6280Mi (81%) limits 23144Mi (299%)
+jithendar-pool-workers-worker3 requests 7052Mi (91%) limits 21840Mi (282%)
+
+# memory requests on worker1 at 10:25Z (before the rollout): 5406Mi (69%), limits 20688Mi (267%); working set 6250Mi (80%)

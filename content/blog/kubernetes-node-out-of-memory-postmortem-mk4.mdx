@@ -1,0 +1,268 @@
+---
+title: "Postmortem: My kubectl rollout restart Ran a Kubernetes Node Out of Memory"
+slug: kubernetes-node-out-of-memory-postmortem-mk4
+description: "On 28 November 2026 a restart I ran put a second LiteLLM pod on a full k3s node. worker1 went NotReady for 11 minutes. What broke and how it recovered."
+seoTitle: "Kubernetes Node Out of Memory After a Rollout Restart: Postmortem"
+seoDescription: "Why the scheduler put a pod on a node with no free memory, why the kubelet never evicted, how the node recovered step by step, and the fixes I am making."
+author: jithendar-dharmapuri
+category: devops-sre
+tags: [Postmortem, Incident Response, Kubernetes, k3s, Memory, OOM, Scheduling, SRE, LiteLLM]
+contentType: analysis
+status: review
+featuredImage:
+  src: /images/worker1-oom/worker1-oom-memory.png
+  alt: "Memory on worker1 at 11:10:23 UTC, on a scale from 0 to 8 GiB. Top bar, what the scheduler counts, memory requests: other pods 5.28 GiB at 10:25, LiteLLM 1 one GiB, LiteLLM 2 one GiB, 7.28 GiB in total, so it fits. Bottom bar, what the node had in use, working set: everything else 5.86 GiB, LiteLLM 1 1.02 GiB, LiteLLM 2 about 1.05 GiB, about 7.9 GiB in total, 0.4 GiB more than exists. A red line at 7.55 GiB marks the machine's memory, which is also its allocatable memory because nothing is reserved for the OS, kubelet or k3s; a failure marker sits where the second bar crosses it. Three notes below: measured at 11:10:15, worker1's working set was 6.88 GiB (91%) and LiteLLM 1 alone 1.02 GiB, and LiteLLM 2 was never scraped so its size is LiteLLM 1's; the kubelet has no memory eviction because evictionHard has disk thresholds only, so the node thrashed instead; and the scheduler ranks nodes by requests, so worker1, with the most unrequested memory and already the most used, was chosen twice."
+  width: 1922
+  height: 1122
+related:
+  - blog/cloudflare-520-home-page-postmortem-jithendar-com
+  - blog/keda-autoscaling-requests-per-second-jithendar-com
+  - blog/shared-hybrid-rag-platform-qdrant-bge-m3-k3s-hetzner
+  - blog/valkey-redis-sentinel-minikube-terraform
+sources:
+  - title: "Node-pressure Eviction"
+    url: https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/
+    publisher: Kubernetes
+  - title: "Reserve Compute Resources for System Daemons"
+    url: https://kubernetes.io/docs/tasks/administer-cluster/reserve-compute-resources/
+    publisher: Kubernetes
+  - title: "Resource Management for Pods and Containers"
+    url: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+    publisher: Kubernetes
+  - title: "Taints and Tolerations: taint-based evictions"
+    url: https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/#taint-based-evictions
+    publisher: Kubernetes
+  - title: "kubectl rollout restart"
+    url: https://kubernetes.io/docs/reference/kubectl/generated/kubectl_rollout/kubectl_rollout_restart/
+    publisher: Kubernetes
+  - title: "Postmortem Culture: Learning from Failure"
+    url: https://sre.google/sre-book/postmortem-culture/
+    publisher: Google SRE
+---
+
+<Todo>Drafted 2026-11-28 from read-only checks on mk4: Kubernetes events captured at 11:39 UTC (they expire after an hour), Prometheus samples, the kubelet's configz and the site's own log. The raw evidence is in docs/knowledge-sharing/worker1-oom/evidence. Before publishing: (1) Look at Cloudflare Analytics for 11:10–11:19 UTC. One of the two ingress gateway replicas ran on worker1 until it was replaced at 11:18:14; requests that reached it, or that came in through worker1, may have failed, and nothing in the cluster recorded them. Fill in the "Impact" row for the site with what you find. (2) Mark each follow-up done as it lands, and update the follow-ups figure (build_diagrams.py, FIXES). (3) Decide whether to say this work was done with an AI assistant (see the AI use policy). (4) Then set status to published with a publishedAt time.</Todo>
+
+On 28 November 2026, one worker node of mk4, the k3s cluster that runs jithendar.com, stopped responding for almost eleven minutes. Argo CD, Grafana, Prometheus, Open WebUI, docling and the LiteLLM proxy went down with it, and Harbor, the image registry, followed a minute later because the Valkey instance it depends on was stuck on the same node. The blog itself kept answering: its pods happened to be on the other two workers.
+
+It was my fault. I ran `kubectl rollout restart` on a Deployment whose previous rollout had only just finished, on a node that already had 91% of its memory in use. The scheduler put the new pod on that same node because, by its accounting, there was plenty of room. There wasn't. This is what happened, how the cluster recovered step by step, why nothing stopped it, and what I am changing.
+
+## Summary
+
+| | |
+|---|---|
+| **What broke** | worker1 (one of three k3s workers, 4 vCPU, 7.55 GiB) ran out of memory, stopped heartbeating and was marked NotReady. Everything on it stopped answering. |
+| **What kept working** | jithendar.com: its two pods were on worker2 and worker3, and its log shows 215 answers with 200, 4 with 404 and no errors between 11:10 and 11:22 UTC. |
+| **Duration** | The node was unresponsive from 11:10:22 to 11:21:05 UTC (10 min 42 s). Every pod in the cluster was running again at 11:25:47, 15 minutes after the trigger. |
+| **Detected by** | Me, by accident: a log stream in k9s failed with a 502 from worker1's kubelet while I was looking at something else. No alert fired. |
+| **Trigger** | `kubectl rollout restart deploy/litellm` at 11:10:23, while the first LiteLLM pod of the morning's rollout (1 GiB) was already on worker1. The restart put a second one there. |
+| **Root cause** | Memory requests on worker1 were well below real use (69% requested, 80% used), so the scheduler saw room that did not exist; and the kubelet has no memory eviction threshold and nothing reserved for the system, so the node thrashed instead of evicting a pod. |
+| **Recovery** | On its own: the kernel's OOM killer killed docling-serve at 11:20:54 and the kubelet reported Ready eleven seconds later. I avoided further restarts and checked each layer as it came back. |
+| **Data lost** | None found. |
+
+![Memory on worker1 at 11:10:23 UTC, on a scale from 0 to 8 GiB. Top bar, what the scheduler counts, memory requests: other pods 5.28 GiB at 10:25, LiteLLM 1 one GiB, LiteLLM 2 one GiB, 7.28 GiB in total, so it fits. Bottom bar, what the node had in use, working set: everything else 5.86 GiB, LiteLLM 1 1.02 GiB, LiteLLM 2 about 1.05 GiB, about 7.9 GiB in total, 0.4 GiB more than exists. A red line at 7.55 GiB marks the machine's memory, which is also its allocatable memory because nothing is reserved for the OS, kubelet or k3s; a failure marker sits where the second bar crosses it. Three notes below: measured at 11:10:15, worker1's working set was 6.88 GiB (91%) and LiteLLM 1 alone 1.02 GiB, and LiteLLM 2 was never scraped so its size is LiteLLM 1's; the kubelet has no memory eviction because evictionHard has disk thresholds only, so the node thrashed instead; and the scheduler ranks nodes by requests, so worker1, with the most unrequested memory and already the most used, was chosen twice.](/images/worker1-oom/worker1-oom-memory.svg)
+
+## What I was doing that morning
+
+I was moving the cluster's LiteLLM proxy (the OpenAI-compatible gateway in front of Claude, in namespace `rag`) onto PostgreSQL, so that models and keys could be managed from its admin UI. That change also raised LiteLLM's memory request from 384 MiB to 1 GiB and its limit from 1.5 GiB to 2 GiB, because I had measured it at 1.16 GiB without a database.
+
+The new pod was scheduled at 10:56:19 and then waited ten minutes for three new keys in its Secret, which I had not created yet. Once I added them, it started at 11:06:36 on worker1, ran its database migrations, and was serving by 11:07:33. The old LiteLLM pod, on worker2, went away.
+
+Then I noticed that one of the keys, the admin user name, had been saved empty (the shell I pasted the command into did not prompt for it). I fixed the value in the Secret and, because LiteLLM reads its environment only at start-up, ran:
+
+```bash
+kubectl rollout restart deploy/litellm
+```
+
+That was the mistake. Not the restart itself, but where it put the new pod and when.
+
+## Timeline
+
+![A timeline of 28 November 2026 from 10:54 to 11:27 UTC in four lanes. What I did: moks-rag 14 merged at 10:55:43, Secret keys added at 11:06:22, and the rollout restart at 11:10:23, marked as the trigger. worker1: LiteLLM 1 waits for its Secret from 10:56:19 to 11:06:22, runs from 11:06:36, then the node is thrashing and NotReady for 10 minutes 42 seconds from 11:10:23 to 11:21:05, then healthy. Other services: Harbor is down from 11:11:16 to 11:23:52, with image pulls from registry.jithendar.com failing, and everything is running again at 11:25:47. Visitors: jithendar.com answers throughout, 215 times 200 and 4 times 404 with no errors in the site's log between 11:10 and 11:22, while /llm, /chat, /argocd, /grafana and docling are down from about 11:10 to 11:21. A numbered list below the axis repeats twelve events.](/images/worker1-oom/worker1-oom-timeline.svg)
+
+| # | Time (UTC) | Event |
+|---|---|---|
+| 1 | 10:55:43 | The LiteLLM change is merged: PostgreSQL, request 1 GiB, limit 2 GiB |
+| 2 | 10:56:19 | LiteLLM 1 is scheduled on worker1 and waits for its Secret keys (47 attempts until 11:06:22) |
+| 3 | 11:06:22 | I add the keys; LiteLLM 1 starts at 11:06:36, uses 1.05 GiB by 11:07:21, and is ready by 11:07:33 |
+| | 11:10:15 | Last memory sample from worker1: **6.88 GiB of 7.55 (91%)** in use |
+| | 11:10:22 | Last heartbeat from worker1's kubelet |
+| 4 | 11:10:23 | **`kubectl rollout restart deploy/litellm`.** LiteLLM 2 is scheduled on worker1; its containers start 11:10:24–27 |
+| 5 | 11:10:33 | Probes on worker1 start timing out: LiteLLM, Valkey, docling-serve, Open WebUI |
+| 6 | 11:11:16 | Harbor core (on worker3) fails its liveness probe and is restarted: it has lost Valkey, whose `valkey-0` is on worker1. From 11:11:40 the kubelet restarts containers on worker1 that miss their liveness probes (Argo CD, Prometheus, KEDA, the CSI driver) |
+| 7 | 11:13:11 | The node controller marks worker1 **NotReady** |
+| 8 | 11:18:11 | Taint-based eviction, five minutes later: pods on worker1 are marked for deletion. Their replacements stay Pending: "Insufficient memory" on the other workers, or a volume pinned to worker1. Pulls from registry.jithendar.com fail from 11:18:18 |
+| 9 | 11:20:54 | The kernel's OOM killer kills `docling-serve` on worker1 (event `SystemOOM`) |
+| 10 | 11:21:05 | worker1 **Ready**. Pending deletions are cancelled at 11:21:07; the kubelet finishes stopping the pods it had been told to delete |
+| 11 | 11:23:52 | Harbor core starts cleanly; `valkey-0` had been recreated at 11:22:03 |
+| 12 | 11:25:47 | Every pod in the cluster is Running or Completed |
+
+The node did not reboot: the Istio CNI pod on it, which would restart with the node, still showed its last restart from the day before.
+
+## Impact
+
+| What | Effect | Until |
+|---|---|---|
+| **jithendar.com** | Kept answering from worker2 and worker3: 215 × 200, 4 × 404, no error or warning lines in its log, 11:10–11:22. But one of the two ingress gateway replicas was on worker1 until it was replaced at 11:18:14; requests that reached it may have failed, and nothing in the cluster recorded them (to be checked in Cloudflare's analytics). | n/a |
+| **LiteLLM** (`/llm`) and rag-api's answers | The only LiteLLM pod was on worker1. Its replacement was scheduled on worker2 at 11:19:08. | about 11:21 |
+| **Open WebUI** (`/chat`), **Prometheus**, **Grafana**, **pgAdmin** | On worker1, each with a `local-path` volume pinned to that node, so they could not move. Prometheus recorded nothing from worker1 between 11:10:15 and 11:21:46. | about 11:22 |
+| **Argo CD** (`/argocd`) | Controller, repo server and UI were all on worker1: no syncs, no UI. | about 11:22 |
+| **docling-serve** | Unresponsive from 11:10:46, OOM-killed at 11:20:54; a replacement was scheduled on worker2 at 11:19:16. | about 11:21 |
+| **Harbor** (registry.jithendar.com) | Core crash-looped without Valkey; every image pull from it failed, so the replacements for the practice runner and a MOKS API pod could not start. | 11:23:52 |
+| **Practice code runner** | `practice-dispatcher` and `practice-executor-api` were on worker1; their replacements could not pull their images. | about 11:24 |
+| **Cluster plumbing** | KEDA's webhooks and metrics API, Hetzner's cloud controller and CSI controller, Jaeger and the OpenTelemetry collector were on worker1. | about 11:22 |
+
+## How it recovered, step by step
+
+![How worker1 and the services on it recovered, in seven steps. 1, notice, 11:20: k9s could not stream logs, a 502 from worker1's kubelet, and kubectl get nodes shows worker1 NotReady. 2, size the damage, 11:21: the site answers 200 because its pods are elsewhere, the gateway's second replica is on worker3, and list what runs on worker1. 3, do no more harm, from 11:21: no restarts, no pod deletes, no rollouts, because a restart is how this started. 4, look from outside, 11:21: node conditions Unknown since 11:10:22, CPU 3.9 of 4 cores, read the event stream. 5, the node comes back, 11:20:54: the kernel kills docling-serve, the kubelet is Ready at 11:21:05 and stops the evicted pods. 6, dependents recover, 11:22 to 11:25: valkey-0 recreated at 11:22:03, Harbor core up at 11:23:52, image pulls work again. 7, confirm the cause, 11:25 to 11:45: SystemOOM event and no reboot, the ReplicaSet created at 11:10:23, memory samples and the kubelet's configz. A dashed box: if it had stayed down, the next step was to reboot it from the Hetzner console; no shell access was used. A note: the node recovered on its own; my part was to stop making it worse and to check each layer as it came back.](/images/worker1-oom/worker1-oom-recovery.svg)
+
+### 1. Notice
+
+At about 11:20 a log stream in k9s for the new LiteLLM pod kept failing with `proxy error … while dialing <worker1>:10250, code 502`: the API server could not reach worker1's kubelet. One command showed why:
+
+```bash
+kubectl get nodes
+# jithendar-pool-workers-worker1   NotReady
+```
+
+### 2. Size the damage
+
+Before touching anything I wanted to know what was down and what was not:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://jithendar.com/                      # 200
+kubectl -n istio-ingress get pods -o wide                                            # one of two replicas on worker3
+kubectl get pods -A -o wide --field-selector spec.nodeName=jithendar-pool-workers-worker1
+```
+
+The site was up, and the gateway still had a healthy replica on worker3. The list of pods on worker1 was long: most of the admin tools, Valkey's `valkey-0`, docling, Open WebUI and the new LiteLLM pods.
+
+### 3. Do no more harm
+
+The cluster was in the middle of evicting pods from an unreachable node, and the other workers were already short of requested memory. Every action I could take (another restart, deleting the stuck pods, scaling something up) would add load or another pod start. A pod start was exactly what had caused this. So I did none of them.
+
+### 4. Look at the node from outside
+
+The node's conditions had been `Unknown` since its last heartbeat:
+
+```bash
+kubectl get node jithendar-pool-workers-worker1 \
+  -o jsonpath='{range .status.conditions[*]}{.type}={.status} {.lastHeartbeatTime}{"\n"}{end}'
+# Ready=Unknown 2026-11-28T11:10:22Z  (and the same for MemoryPressure, DiskPressure, PIDPressure)
+```
+
+By the time I was looking, it was coming back: at 11:21:16, eleven seconds after it reported Ready again, metrics-server read its CPU at 3.9 of 4 cores. A node that is alive but spends all its CPU getting nowhere looks like memory thrashing. The events said the rest:
+
+```bash
+kubectl get events -A --field-selector involvedObject.kind=Node --sort-by=.lastTimestamp
+kubectl get events -A --field-selector reason=SystemOOM
+# SystemOOM  node/jithendar-pool-workers-worker1  System OOM encountered, victim process: docling-serve
+```
+
+If it had not come back, the next step would have been a reboot from the Hetzner console. I had no shell on the node, and the Hetzner CLI on my laptop had no context configured, so that would have been slower than it should be.
+
+### 5. The node comes back
+
+At 11:20:54 the kernel's OOM killer finally killed a process: docling-serve, the biggest pod on the node at 1.73 GiB. That freed enough memory for the kubelet and the k3s agent to work again: the node reported Ready at 11:21:05. The kubelet then stopped the pods that had been marked for deletion at 11:18:11, and the node controller cancelled the deletions it had not started.
+
+### 6. Dependents recover
+
+Harbor was the slowest. Its core had given up at 11:21:11 (`failed to initialize cache: retry timeout: EOF`) and was in crash-loop back-off. Once `valkey-0` was recreated at 11:22:03, the next restart of Harbor core at 11:23:52 came up cleanly, image pulls from registry.jithendar.com worked again, and the pods waiting on images started. At 11:25:47 nothing in the cluster was in any state other than Running or Completed:
+
+```bash
+kubectl get pods -A --no-headers | awk '$4!="Running" && $4!="Completed"'   # empty
+```
+
+### 7. Confirm the cause
+
+With everything back, I collected what would expire first (events last an hour on k3s) and checked the story against it:
+
+```bash
+kubectl get events -A -o json > events.json
+kubectl -n rag get rs -l app=litellm -o custom-columns=NAME:.metadata.name,CREATED:.metadata.creationTimestamp
+# litellm-68dcddb4dd   2026-11-28T11:10:23Z   <- the ReplicaSet my restart created, one second after the last heartbeat
+kubectl get --raw /api/v1/nodes/jithendar-pool-workers-worker1/proxy/configz \
+  | jq '.kubeletconfig | {evictionHard, systemReserved, kubeReserved}'
+```
+
+And in Prometheus, worker1's memory before the gap:
+
+```promql
+container_memory_working_set_bytes{id="/", node="jithendar-pool-workers-worker1"}
+# 11:06:12  6.05 GiB
+# 11:07:13  6.86 GiB   <- LiteLLM 1 has started
+# 11:10:15  6.88 GiB   <- the last sample until 11:21:46
+```
+
+## Root cause
+
+### The arithmetic
+
+worker1 has 7.55 GiB. At 11:10:15, 6.88 GiB of it was in use, 1.02 GiB of that by the first LiteLLM pod. The second LiteLLM pod needed about as much again to start: it imports a large Python application and runs the Prisma CLI for its migrations. 6.88 + 1.05 is about 7.9 GiB on a machine with 7.55. Something had to give, and nothing was set up to give gracefully.
+
+### Why the scheduler said yes
+
+The scheduler does not look at memory in use. It adds up memory **requests**, the amount each pod asks for, and compares that with the node's allocatable memory. On worker1 at 10:25, pods requested 5.28 GiB (69%) but used 6.1 GiB (80%). Many of the cluster's workloads ask for less than they use (worker1's pods' limits added up to 267% of the node). Two LiteLLM pods at 1 GiB each took the requested total to about 7.3 GiB: under 7.55, so it fits.
+
+worker1 was also the node with the most unrequested memory, which is why the scheduler preferred it, twice. It was, at the same time, the node with the least real headroom. Ten minutes later the same accounting worked the other way: the replacements for worker1's pods could not be placed on worker2 or worker3 ("Insufficient memory"), because by requests those were full. The cluster has no spare node's worth of capacity.
+
+### Why the kubelet didn't evict anything
+
+The kubelet can evict pods before a node runs out of memory, if it has a memory threshold. mk4's kubelets have only disk thresholds:
+
+```json
+{
+  "evictionHard": { "imagefs.available": "5%", "nodefs.available": "5%" },
+  "systemReserved": null,
+  "kubeReserved": null
+}
+```
+
+That is the same on all four nodes. With no `memory.available` threshold the kubelet never evicts for memory, and with nothing reserved, allocatable memory is the whole machine: the scheduler can promise every byte to pods and leave nothing for the kernel, the kubelet, the k3s agent and containerd.
+
+### Why it took ten minutes
+
+This part is my reading, not something I measured on the node. When memory runs out, the kernel first reclaims what it can: page cache, including the pages of the programs that are running. Programs then have to read their own code back from disk, the next one evicts it again, and everything slows to a crawl. That is thrashing, and it fits a node at full CPU that answers nothing. The kubelet and the k3s agent were starved too, which is why heartbeats and probes stopped. The OOM killer only acts when reclaim fails outright, which here took about ten minutes. Then it picked the biggest process, docling-serve.
+
+### The near miss I walked past
+
+At 10:23 the same morning I had run a command (`prisma --version`) inside the old LiteLLM container to check its version. The container was using about 1.2 GiB of its 1.5 GiB limit, the extra process pushed it over, and it was killed with exit code 137; it came back within a minute. That was the same lesson at container scale: LiteLLM sits close to its memory, and starting one more thing next to it is enough. I raised its limit and moved on, without looking at the node it would land on.
+
+## What went well, and what didn't
+
+**Went well:**
+
+- **The blog stayed up.** Both site replicas were on nodes other than worker1, and the ingress gateway had a second replica on worker3.
+- **The node recovered without a reboot,** and I found nothing lost: Valkey came back with its data, PostgreSQL was never on worker1, and no volume was damaged.
+- **I didn't make it worse.** No second restart, no force-deleted pods, no rescheduling by hand while the cluster was already short of room.
+- **The evidence was collected before it expired.** Events, memory samples and the kubelet's configuration were saved within half an hour.
+
+**Didn't go well:**
+
+- **A person found it, by chance.** No rule watches node readiness or node memory, mk4 has no Alertmanager, and Prometheus itself ran on the node that failed, so it could not have alerted anyway.
+- **I restarted without looking.** One `kubectl top nodes` would have shown worker1 at 91%.
+- **Requests that understate use** let the scheduler place a 1 GiB pod on a node with 0.67 GiB free.
+- **One node carried too much that others depend on:** Valkey's `valkey-0`, Prometheus, Grafana, Argo CD and Open WebUI, several with volumes pinned to it.
+- **I had no quick way into the node:** no shell, and no Hetzner CLI context for a reboot.
+
+## Follow-ups
+
+![What let one restart take a node down, and the follow-up for each. Restart during a rollout, a second LiteLLM pod while the first one was still settling: wait, then look, then restart, with rollout status first, kubectl top nodes, and one change at a time. Requests below real use, worker1 at 69% requested and 80% used while the scheduler sees requests only: requests that match reality, comparing working set with requests and raising the ones that lie. No memory guardrail, no memory eviction threshold and nothing reserved for the system: reserve memory and evict early, with system-reserved, kube-reserved and memory.available on every node. Nobody was told, no node or memory alert, no Alertmanager, and Prometheus was on worker1: alerts that reach me, NotReady and node memory rules, Alertmanager, and a watch from outside. Single points on one node, the Valkey primary path, Prometheus and Open WebUI's volume on worker1: spread what others depend on, with anti-affinity and placement for Valkey, Prometheus and Open WebUI. All follow-ups are open.](/images/worker1-oom/worker1-oom-followups.svg)
+
+| # | Follow-up | Addresses | Status |
+|---|---|---|---|
+| 1 | Reserve memory for the system and evict early on every node: `system-reserved`, `kube-reserved` and a `memory.available` eviction threshold in the kubelet arguments of the cluster's k3s configuration (`hetzner-k3s.yaml`). Re-running the cluster tool has side effects on mk4, so this needs its own careful change. | Kubelet | Open |
+| 2 | Find the pods whose requests lie: compare each workload's working set with its request in Prometheus, and raise the requests that are far below. Without this, follow-up 1 only moves the problem. | Scheduler | Open |
+| 3 | Alerts that reach me: a rule for nodes NotReady, one for node memory in use, an Alertmanager with a notification channel, and something outside the cluster that notices when Prometheus itself goes quiet. | Detection | Open |
+| 4 | A habit before any restart: `kubectl rollout status` (wait for the previous rollout), `kubectl top nodes`, then one change at a time. I have added it to the LiteLLM README (pull request open). | Trigger | Open |
+| 5 | Spread what others depend on: keep Valkey's pods, Prometheus and the admin tools from piling onto one node, and know which volumes pin a service to a node. | Blast radius | Open |
+| 6 | A node runbook: what to check from outside, when to reboot from the Hetzner console, and a working Hetzner CLI context. | Recovery | Open |
+
+Follow-up 1 alone would have turned this into one evicted pod instead of a stuck node. Follow-up 4 alone would have avoided it this time.
+
+## Key takeaways
+
+1. **The scheduler counts requests, not memory in use.** If requests are low, "it fits" means nothing. Check `kubectl top nodes` before you add a pod by hand.
+2. **A node with no memory eviction threshold and nothing reserved will thrash, not evict.** Kubernetes protects a node from memory pressure only if you tell the kubelet where the line is.
+3. **`kubectl rollout restart` starts a new pod before it stops the old one.** On a tight cluster, that extra pod is the risk, and a rollout that has just finished is the worst moment for it.
+4. **Your monitoring has to live somewhere else.** A Prometheus on the failing node sees nothing at the moment it matters.
+5. **When a node is unreachable, stop changing things.** Size the damage, look from outside, and let the cluster settle before you act. Here, waiting was the recovery.
