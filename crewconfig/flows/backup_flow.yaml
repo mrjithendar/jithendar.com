@@ -1,0 +1,40 @@
+# Flow Website backup: defined in code by the SEO agent (backup_flow). Its name, categories, tags and switch are editable; `runtime` is read-only.
+key: backup_flow
+label: Website backup
+description: Has the web app make a complete backup of the site (every database table, every file in the bucket, configuration, a signed manifest and checksums), follows it until it is verified, and reports the archive, its size and where it is stored. The web app builds and checks the archive; no model is called.
+categories:
+  - automation
+  - monitoring
+tags: []
+enabled: true
+disabled_reason: null
+definition: code
+flow_name: backup_flow
+start: manual
+crews: []
+runtime:
+  inputs_schema:
+    additionalProperties: false
+    description: "backup_flow (D-108): what to back up, and when to email the report (to the SEO report recipients, if email is set up)."
+    properties:
+      type:
+        default: full
+        enum:
+          - full
+          - database
+        title: Type
+        type: string
+      notify:
+        default: always
+        enum:
+          - always
+          - failures
+          - never
+        title: Notify
+        type: string
+    title: BackupInput
+    type: object
+  schedulable: true
+  approval_only: false
+  mcp: false
+  flow_step: true
