@@ -15,8 +15,8 @@ repository editor; `manifest.json` is rewritten by both (an import only warns wh
 | `agents/` | Agents | 17 | imported |
 | `tasks/` | Tasks | 18 | imported |
 | `skills/` | Skills | 22 | imported |
-| `flows/` | Flows | 21 | imported |
-| `schedules/schedules.yaml` | Schedules | 15 | imported |
+| `flows/` | Flows | 22 | imported |
+| `schedules/schedules.yaml` | Schedules | 16 | imported |
 | `tools/tools.yaml` | Tools | 12 | read-only |
 | `prompts/guardrails.yaml` | Prompt guardrails | 3 | read-only |
 | `providers/providers.yaml` | Model providers | 0 | read-only |
