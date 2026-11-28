@@ -148,6 +148,14 @@ spec:
               name: jithendar-com-rag
               key: token
               optional: true
+        # LLM gateway (moks-cms D-109, docs/LLM_GATEWAY.md): LiteLLM in namespace rag (moks-rag) for the web app's drafts,
+        # keyword intents, SEO enrichment and the Python practice tutor. On only with a key too: LITELLM_API_KEY and
+        # LITELLM_PRACTICE_API_KEY in jithendar-com-env (envFrom), written by moks-rag scripts/issue-litellm-keys.sh. Models
+        # and budgets are LiteLLM's (its aliases moks-cms-default / moks-cms-fast; the team jithendar.com and each key).
+        - name: LITELLM_BASE_URL
+          value: http://litellm.rag.svc.cluster.local:4000/v1
+        - name: LITELLM_UI_URL
+          value: https://jithendar.com/llm/ui
         # Shared CloudNativePG cluster (namespace postgres-db, role and database jithendar), through its PgBouncer
         # pooler (session mode, so the migrations' advisory lock works). Secret written by Terraform in the miniKube
         # repo (minikube-infrastructure/postgres.tf, postgres_databases.jithendar); env wins over the stale
@@ -271,6 +279,11 @@ spec:
         - secretRef:
             name: seo-agent-env
         env:
+        # LLM gateway (moks-cms D-109): every flow, crew and Ask the Blog answer through LiteLLM. On only with the keys in
+        # seo-agent-env (LITELLM_API_KEY, LITELLM_ASK_API_KEY: moks-rag scripts/issue-litellm-keys.sh); without them the
+        # agent calls Anthropic directly as before.
+        - name: LITELLM_BASE_URL
+          value: http://litellm.rag.svc.cluster.local:4000/v1
         # Shared CloudNativePG cluster through PgBouncer (session mode), the same Secret the site uses.
         - name: DATABASE_URL
           valueFrom:
@@ -496,7 +509,7 @@ spec:
         matchLabels:
           app: practice-executor-api
   # Hybrid RAG: rag-api in namespace rag (RAG_API_URL above), over the mesh's mTLS. moks-rag's AuthorizationPolicy
-  # rag-api-callers admits namespace jithendar on port 8000; every other rag service stays closed to this namespace.
+  # rag-api-callers admits namespace jithendar on port 8000.
   - ports:
     - port: 8000
       protocol: TCP
@@ -507,6 +520,19 @@ spec:
       podSelector:
         matchLabels:
           app: rag-api
+  # LiteLLM, the LLM gateway (LITELLM_BASE_URL above, moks-cms D-109), for both containers of the pod. moks-rag's
+  # AuthorizationPolicy litellm-callers admits namespace jithendar on port 4000. Every other rag service stays closed
+  # to this namespace (the agent's bge-m3 rule is in seo-agent-40-seo-agent.yaml).
+  - ports:
+    - port: 4000
+      protocol: TCP
+    to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: rag
+      podSelector:
+        matchLabels:
+          app: litellm
   - ports:
     - port: 4318
       protocol: TCP

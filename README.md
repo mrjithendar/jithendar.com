@@ -85,6 +85,20 @@ with checksums. No secrets: providers say where their key is, never the key.
   catalogue edits that are not here yet: after the release, run Write to Git once. Until then a deployment only adds
   what is missing and keeps every difference (they are conflicts without an earlier sync).
 
+## The LLM gateway (LiteLLM)
+
+Every text model call of the site goes through LiteLLM in namespace `rag` (moks-cms D-109, moks-cms
+`docs/LLM_GATEWAY.md`): the SEO agent's flows and crews, Ask the Blog, the web app's drafts and enrichment, and the
+Python practice tutor. LiteLLM chooses the model behind each alias and holds the budgets, at https://jithendar.com/llm/ui
+(a team `jithendar.com` and one key per caller).
+
+- `kubernetes/30-jithendar-com.yaml` sets `LITELLM_BASE_URL` on both containers and allows egress to `rag/litellm:4000`.
+- The keys are not in Git. moks-rag `scripts/issue-litellm-keys.sh` writes them into `jithendar-com-env`
+  (`LITELLM_API_KEY`, `LITELLM_PRACTICE_API_KEY`) and `seo-agent-env` (`LITELLM_API_KEY`, `LITELLM_ASK_API_KEY`).
+  Then run `kubectl -n jithendar rollout restart deploy/jithendar-com`.
+- Without the keys, the site calls Anthropic directly as before. To go back, remove `LITELLM_API_KEY` from both Secrets
+  and restart.
+
 ## Setting up this repository (once)
 
 The workflows need these, which moved here from moks-cms:
